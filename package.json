@@ -1,0 +1,23 @@
+{
+  "name": "collabboard",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -k -n web,server -c cyan,magenta \"npm run dev --workspace=@collabboard/web\" \"npm run dev --workspace=@collabboard/server\"",
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1",
+    "eslint": "^9.0.0",
+    "eslint-config-next": "^16.0.0",
+    "prettier": "^3.6.2",
+    "typescript": "^5.9.3"
+  }
+}

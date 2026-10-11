@@ -1,0 +1,12 @@
+{
+  "name": "@collabboard/canvas-adapter",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@collabboard/shared": "*"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  }
+}
