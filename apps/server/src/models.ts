@@ -29,38 +29,25 @@ export type BoardObject = {
 
 export type Operation = {
   id: string;
-  boardId: string;
-  actorId: string;
-  createdAt: string;
   type: 'create' | 'update' | 'delete';
   objectId: string;
   object?: BoardObject;
   fields?: Partial<BoardObject>;
-  revision: number;
 };
 
-export type BoardRecord = {
+export type Member = { role: Role; name: string };
+
+/** Board settings and membership. Objects, chat, and snapshots are stored separately. */
+export type BoardMeta = {
   id: string;
   title: string;
   ownerId: string;
   createdAt: string;
   updatedAt: string;
   locked: boolean;
-  members: Record<string, { role: Role; name: string }>;
   inviteToken: string;
   inviteRevoked: boolean;
-  objects: Record<string, BoardObject>;
-  deletedObjectIds: string[];
-  operations: Operation[];
-  seenOperationIds: string[];
-  messages: ChatMessage[];
-  snapshots: {
-    id: string;
-    createdAt: string;
-    title: string;
-    objects: BoardObject[];
-  }[];
-  revision: number;
+  members: Record<string, Member>;
 };
 
 export type ChatMessage = {
@@ -70,14 +57,23 @@ export type ChatMessage = {
   text: string;
   createdAt: string;
 };
+
+export type Snapshot = {
+  id: string;
+  createdAt: string;
+  title: string;
+  objects: BoardObject[];
+};
+
 export type User = { id: string; name: string };
+
+/** One connected tab. `peerId` is stable across reconnects so audio peers survive them. */
 export type Presence = {
+  peerId: string;
   userId: string;
   name: string;
   color: string;
-  x?: number;
-  y?: number;
+  inCall: boolean;
+  muted: boolean;
   updatedAt: number;
 };
-
-export type PersistedState = { boards: Record<string, BoardRecord> };

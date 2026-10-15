@@ -31,13 +31,17 @@ export type ChatMessage = {
   name: string;
   text: string;
   createdAt: string;
+  /** Set while a message this tab sent is still on its way to the server. */
+  pending?: boolean;
 };
+/** One open tab in the room. */
 export type Peer = {
+  peerId: string;
   userId: string;
   name: string;
   color: string;
-  x?: number;
-  y?: number;
+  inCall: boolean;
+  muted: boolean;
 };
 export type Board = {
   id: string;
@@ -47,15 +51,12 @@ export type Board = {
   locked: boolean;
   createdAt: string;
   updatedAt: string;
-  revision: number;
-  objects: BoardObject[];
-  messages: ChatMessage[];
-  members: { userId: string; role: Role; name: string; online?: boolean }[];
+  members: { userId: string; role: Role; name: string }[];
   inviteToken?: string;
   inviteRevoked?: boolean;
 };
 export type Session = { token: string; user: { id: string; name: string } };
-export type PendingOperation = {
+export type Operation = {
   id: string;
   type: 'create' | 'update' | 'delete';
   objectId: string;
@@ -64,8 +65,8 @@ export type PendingOperation = {
 };
 
 const SESSION_KEY = 'collabboard.session';
-const outboxKey = (boardId: string) => `canvasroom.outbox.${boardId}`;
-const boardCacheKey = (boardId: string) => `canvasroom.board.${boardId}`;
+const outboxKey = (boardId: string) => `collabboard.outbox.${boardId}`;
+
 export function readSession(): Session | null {
   try {
     return JSON.parse(
@@ -78,34 +79,25 @@ export function readSession(): Session | null {
 export function writeSession(session: Session) {
   localStorage.setItem(SESSION_KEY, JSON.stringify(session));
 }
-export function readOutbox(boardId: string): PendingOperation[] {
+export function clearSession() {
+  localStorage.removeItem(SESSION_KEY);
+}
+export function readOutbox(boardId: string): Operation[] {
   try {
     return JSON.parse(
       localStorage.getItem(outboxKey(boardId)) ?? '[]',
-    ) as PendingOperation[];
+    ) as Operation[];
   } catch {
     return [];
   }
 }
-export function writeOutbox(boardId: string, operations: PendingOperation[]) {
-  if (operations.length)
-    localStorage.setItem(outboxKey(boardId), JSON.stringify(operations));
-  else localStorage.removeItem(outboxKey(boardId));
-}
-export function readCachedBoard(boardId: string): Board | null {
+export function writeOutbox(boardId: string, operations: Operation[]) {
   try {
-    return JSON.parse(
-      localStorage.getItem(boardCacheKey(boardId)) ?? 'null',
-    ) as Board | null;
+    if (operations.length)
+      localStorage.setItem(outboxKey(boardId), JSON.stringify(operations));
+    else localStorage.removeItem(outboxKey(boardId));
   } catch {
-    return null;
-  }
-}
-export function writeCachedBoard(board: Board) {
-  try {
-    localStorage.setItem(boardCacheKey(board.id), JSON.stringify(board));
-  } catch {
-    /* The server copy remains authoritative if browser storage is full. */
+    /* Storage full or blocked: unsent edits stay in memory for this tab. */
   }
 }
 

@@ -1,9 +1,11 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "regions": ["bom1"],
   "services": {
     "server": {
       "root": "apps/server",
-      "framework": "fastify"
+      "framework": "fastify",
+      "entrypoint": "src/index.ts"
     },
     "web": {
       "root": "apps/web",

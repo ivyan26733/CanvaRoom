@@ -2,420 +2,181 @@
 
 import Link from 'next/link';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useEffectEvent,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import {
   api,
   ApiError,
-  filename,
+  clearSession,
   id,
-  readOutbox,
-  readCachedBoard,
   readSession,
   send,
-  writeOutbox,
-  writeCachedBoard,
   writeSession,
   type Board,
   type BoardObject,
   type ChatMessage,
+  type Operation,
   type Peer,
-  type PendingOperation,
   type Session,
 } from '../../lib/api';
+import { AudioCall, type CallState } from '../../lib/audio';
+import {
+  applyOperations,
+  defaultFontSize,
+  FONT_FAMILY,
+  intersects,
+  layoutText,
+  LINE_HEIGHT,
+  objectBounds,
+  round,
+  STICKY_PADDING,
+  unionBounds,
+  type Bounds,
+  type Point,
+} from '../../lib/canvas';
+import { exportBoard, prepareImage } from '../../lib/export';
+import {
+  RealtimeClient,
+  type ConnectionStatus,
+  type ServerMessage,
+} from '../../lib/realtime';
 import { ThemeToggle } from '../../components/theme-toggle';
-import { SvgCanvasAdapter } from '@collabboard/canvas-adapter';
+import { BoardShape } from './board-shape';
+import { CallControls } from './call-controls';
+import { ChatPanel } from './chat-panel';
+import {
+  LocalOverlay,
+  RemoteActivity,
+  RemoteLayer,
+  type LocalOverlayHandle,
+} from './live-layers';
 
 type Tool =
   | 'select'
   | 'hand'
   | 'pen'
   | 'highlighter'
+  | 'eraser'
   | 'rect'
   | 'ellipse'
   | 'diamond'
   | 'line'
   | 'arrow'
   | 'text'
-  | 'sticky'
-  | 'eraser';
-type Point = { x: number; y: number };
-type HistoryEntry = {
+  | 'sticky';
+type View = { x: number; y: number; zoom: number };
+type Change = {
   objectId: string;
   before: BoardObject | null;
   after: BoardObject | null;
 };
-type DragState = {
-  id: string;
-  ids?: string[];
-  start: Point;
-  origins?: Record<string, Point>;
-  before?: Record<string, BoardObject>;
-  origin: Point;
-  size?: Point;
-  mode?: 'pan' | 'move' | 'resize';
-};
-type Snapshot = { id: string; title: string; createdAt: string };
-const canvasWidth = 1600;
-const canvasHeight = 1000;
-const colors = [
-  '#283c35',
-  '#458a72',
-  '#e58b58',
-  '#e1b94e',
-  '#8e79bd',
-  '#de7380',
-  '#6d9db4',
-  '#f6f0df',
-];
-const cursorColors = ['#4c9d7a', '#d98b48', '#8d79bd', '#df6c7a', '#5591af'];
-
-function objectFields(object: BoardObject): Partial<BoardObject> {
-  return Object.fromEntries(
-    Object.entries(object).filter(([key]) => key !== 'id'),
-  ) as Partial<BoardObject>;
-}
-
-function applyPendingOperations(
-  objects: BoardObject[],
-  pending: PendingOperation[],
-) {
-  let next = [...objects];
-  for (const operation of pending) {
-    if (operation.type === 'create' && operation.object) {
-      next = [
-        ...next.filter((item) => item.id !== operation.objectId),
-        operation.object,
-      ];
-    } else if (operation.type === 'delete') {
-      next = next.filter((item) => item.id !== operation.objectId);
-    } else {
-      next = next.map((item) =>
-        item.id === operation.objectId
-          ? { ...item, ...operation.fields }
-          : item,
-      );
+type Draft = Omit<Operation, 'id'>;
+type Gesture =
+  | { kind: 'pan'; start: Point; origin: View }
+  | { kind: 'pinch'; distance: number; mid: Point; origin: View }
+  | { kind: 'draw'; object: BoardObject; last: Point }
+  | { kind: 'shape'; object: BoardObject; start: Point }
+  | {
+      kind: 'move';
+      start: Point;
+      originals: BoardObject[];
+      moved: BoardObject[];
     }
+  | {
+      kind: 'resize';
+      start: Point;
+      original: BoardObject;
+      moved: BoardObject;
+    }
+  | { kind: 'marquee'; start: Point; base: string[] }
+  | { kind: 'erase'; erased: Set<string> };
+type TextEditor = { object: BoardObject; isNew: boolean };
+
+const TOOLS: { tool: Tool; icon: string; label: string; key?: string }[] = [
+  { tool: 'select', icon: '↖', label: 'Select', key: 'V' },
+  { tool: 'hand', icon: '✋', label: 'Pan', key: 'H' },
+  { tool: 'pen', icon: '✎', label: 'Pen', key: 'P' },
+  { tool: 'highlighter', icon: '▰', label: 'Marker', key: 'K' },
+  { tool: 'eraser', icon: '⌫', label: 'Eraser', key: 'E' },
+  { tool: 'rect', icon: '▭', label: 'Box', key: 'R' },
+  { tool: 'ellipse', icon: '◯', label: 'Ellipse', key: 'O' },
+  { tool: 'diamond', icon: '◇', label: 'Diamond', key: 'D' },
+  { tool: 'line', icon: '／', label: 'Line', key: 'L' },
+  { tool: 'arrow', icon: '↗', label: 'Arrow', key: 'A' },
+  { tool: 'text', icon: 'T', label: 'Text', key: 'T' },
+  { tool: 'sticky', icon: '▤', label: 'Note', key: 'N' },
+];
+const TOOL_KEYS = Object.fromEntries(
+  TOOLS.filter((item) => item.key).map((item) => [
+    item.key!.toLowerCase(),
+    item.tool,
+  ]),
+) as Record<string, Tool>;
+const COLORS = [
+  '#1f2d27',
+  '#2f8f68',
+  '#2f6fb0',
+  '#7a5cc4',
+  '#d1495b',
+  '#e58b3a',
+  '#d6a21e',
+  '#7d8a83',
+];
+const STICKY_COLORS = ['#f5cf4b', '#f59e8b', '#8fd1a6', '#8ec5f0', '#c8a8f0'];
+const PEER_COLORS = [
+  '#2f8f68',
+  '#d9772e',
+  '#7a5cc4',
+  '#d1495b',
+  '#2f6fb0',
+  '#b08300',
+];
+const MIN_ZOOM = 0.1;
+const MAX_ZOOM = 4;
+const EMPTY_CALL: CallState = {
+  joined: false,
+  joining: false,
+  muted: false,
+  speaking: new Set(),
+  connected: new Set(),
+  error: '',
+};
+
+const clampZoom = (zoom: number) =>
+  Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom));
+
+function colorFor(userId: string) {
+  let hash = 0;
+  for (const char of userId) hash = (hash * 31 + char.charCodeAt(0)) | 0;
+  return PEER_COLORS[Math.abs(hash) % PEER_COLORS.length]!;
+}
+
+function diffFields(target: BoardObject, current: BoardObject) {
+  const fields: Partial<BoardObject> = {};
+  for (const [key, value] of Object.entries(target)) {
+    if (key === 'id') continue;
+    if (
+      JSON.stringify(value) !==
+      JSON.stringify(current[key as keyof BoardObject])
+    )
+      (fields as Record<string, unknown>)[key] = value;
   }
-  return next;
+  return fields;
 }
 
-function shapePath(item: BoardObject) {
-  const points = item.points ?? [];
-  if (points.length < 4) return '';
-  return `M ${points[0]} ${points[1]} L ${points[2]} ${points[3]}`;
-}
-
-function BoardShape({
-  item,
-  selected,
-  readonly,
-  handTool,
-  onSelect,
-  onDragStart,
-  onResizeStart,
-  onUpdateText,
-  onDelete,
-}: {
-  item: BoardObject;
-  selected: boolean;
-  readonly: boolean;
-  handTool: boolean;
-  onSelect: () => void;
-  onDragStart: (
-    event: React.PointerEvent<SVGGElement>,
-    item: BoardObject,
-  ) => void;
-  onResizeStart: (
-    event: React.PointerEvent<SVGCircleElement>,
-    item: BoardObject,
-  ) => void;
-  onUpdateText: (text: string) => void;
-  onDelete: () => void;
-}) {
-  const stroke = item.color;
-  const shape =
-    item.kind === 'path' ? (
-      <polyline
-        points={(item.points ?? [])
-          .reduce<string[]>((acc, point, index, points) => {
-            if (index % 2 === 0) acc.push(`${point},${points[index + 1]}`);
-            return acc;
-          }, [])
-          .join(' ')}
-        fill="none"
-        stroke={stroke}
-        strokeWidth={item.strokeWidth}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    ) : item.kind === 'line' ? (
-      <path
-        d={shapePath(item)}
-        fill="none"
-        stroke={stroke}
-        strokeWidth={item.strokeWidth}
-      />
-    ) : item.kind === 'diamond' ? (
-      <polygon
-        points={`${(item.width ?? 1) / 2},0 ${item.width ?? 1},${(item.height ?? 1) / 2} ${(item.width ?? 1) / 2},${item.height ?? 1} 0,${(item.height ?? 1) / 2}`}
-        fill={item.fillColor ?? `${stroke}14`}
-        stroke={stroke}
-        strokeWidth={item.strokeWidth}
-      />
-    ) : item.kind === 'rect' ? (
-      <rect
-        x="0"
-        y="0"
-        width={Math.max(1, item.width ?? 1)}
-        height={Math.max(1, item.height ?? 1)}
-        rx="4"
-        fill={item.fillColor ?? `${stroke}14`}
-        stroke={stroke}
-        strokeWidth={item.strokeWidth}
-      />
-    ) : item.kind === 'ellipse' ? (
-      <ellipse
-        cx={(item.width ?? 1) / 2}
-        cy={(item.height ?? 1) / 2}
-        rx={Math.max(1, (item.width ?? 1) / 2)}
-        ry={Math.max(1, (item.height ?? 1) / 2)}
-        fill={item.fillColor ?? `${stroke}12`}
-        stroke={stroke}
-        strokeWidth={item.strokeWidth}
-      />
-    ) : item.kind === 'arrow' ? (
-      <path
-        d={shapePath(item)}
-        fill="none"
-        stroke={stroke}
-        strokeWidth={item.strokeWidth}
-        markerEnd="url(#arrowhead)"
-      />
-    ) : item.kind === 'sticky' ? (
-      <g>
-        <rect
-          width={item.width ?? 188}
-          height={item.height ?? 164}
-          rx="5"
-          fill={stroke === '#f6f0df' ? '#f6f0df' : `${stroke}35`}
-          stroke={`${stroke}55`}
-        />
-        <path
-          d={`M 18 28 H ${(item.width ?? 188) - 18}`}
-          stroke={`${stroke}70`}
-          strokeWidth="1"
-        />
-        <text
-          x="18"
-          y="55"
-          fill="#33433c"
-          fontSize={item.fontSize ?? 18}
-          fontFamily="Arial, sans-serif"
-        >
-          {(item.text ?? '')
-            .split('\n')
-            .slice(0, 5)
-            .map((line, index) => (
-              <tspan key={`${line}-${index}`} x="18" dy={index === 0 ? 0 : 24}>
-                {line}
-              </tspan>
-            ))}
-        </text>
-      </g>
-    ) : item.kind === 'image' ? (
-      <image
-        role="img"
-        aria-label="Uploaded image"
-        href={item.src}
-        x="0"
-        y="0"
-        width={item.width ?? 180}
-        height={item.height ?? 140}
-        preserveAspectRatio="xMidYMid meet"
-      />
-    ) : (
-      <text
-        x="0"
-        y="0"
-        fill={stroke}
-        fontSize={item.fontSize ?? 30}
-        fontFamily="Arial, sans-serif"
-        dominantBaseline="hanging"
-      >
-        {item.text}
-      </text>
-    );
+function isEditable(target: EventTarget | null) {
   return (
-    <g
-      transform={`translate(${item.x} ${item.y}) rotate(${item.rotation ?? 0})`}
-      opacity={item.opacity ?? 1}
-      onPointerDown={(event) => {
-        event.stopPropagation();
-        if (!readonly || handTool) onDragStart(event, item);
-        else onSelect();
-      }}
-      onDoubleClick={(event) => {
-        event.stopPropagation();
-        if (!readonly && (item.kind === 'text' || item.kind === 'sticky')) {
-          const next = window.prompt('Edit text', item.text ?? '');
-          if (next !== null) onUpdateText(next);
-        }
-      }}
-      onContextMenu={(event) => {
-        if (!readonly) {
-          event.preventDefault();
-          onDelete();
-        }
-      }}
-      className={readonly ? 'canvas-object readonly' : 'canvas-object'}
-      role="button"
-      tabIndex={0}
-      aria-label={`Canvas object: ${item.kind}${item.text ? `, ${item.text.slice(0, 80)}` : ''}`}
-      onKeyDown={(event) => {
-        if (event.key === 'Enter' || event.key === ' ') {
-          event.preventDefault();
-          onSelect();
-        }
-      }}
-    >
-      {shape}
-      {selected && (
-        <>
-          <rect
-            x="-7"
-            y="-7"
-            width={Math.max(item.width ?? 150, 18) + 14}
-            height={Math.max(item.height ?? item.fontSize ?? 40, 24) + 14}
-            fill="none"
-            stroke="#3c9672"
-            strokeWidth="1.5"
-            strokeDasharray="6 5"
-            pointerEvents="none"
-          />
-          {!readonly &&
-            ['rect', 'ellipse', 'diamond', 'image'].includes(item.kind) && (
-              <circle
-                cx={Math.max(item.width ?? 180, 18) + 7}
-                cy={Math.max(item.height ?? 140, 24) + 7}
-                r="7"
-                fill="#fff"
-                stroke="#3c9672"
-                strokeWidth="2"
-                className="resize-handle"
-                aria-hidden="true"
-                onPointerDown={(event) => {
-                  event.stopPropagation();
-                  onResizeStart(event, item);
-                }}
-              />
-            )}
-        </>
-      )}
-    </g>
-  );
-}
-
-function downloadBlob(blob: Blob, name: string) {
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = name;
-  anchor.click();
-  URL.revokeObjectURL(url);
-}
-
-async function exportImage(
-  objects: BoardObject[],
-  title: string,
-  format: 'png' | 'pdf',
-) {
-  const markup = `<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000"><rect width="100%" height="100%" fill="#fffefa"/><defs><marker id="arrowhead" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0 0L10 4L0 8z" fill="#283c35"/></marker></defs>${objects
-    .map((item) => {
-      const text = (item.text ?? '')
-        .replaceAll('&', '&amp;')
-        .replaceAll('<', '&lt;')
-        .replaceAll('>', '&gt;');
-      const stroke = item.color;
-      const transform = `translate(${item.x} ${item.y}) rotate(${item.rotation ?? 0})`;
-      if (item.kind === 'path') {
-        const points = item.points ?? [];
-        const path = points
-          .reduce<string[]>((list, value, index) => {
-            if (index % 2 === 0) list.push(`${value},${points[index + 1]}`);
-            return list;
-          }, [])
-          .join(' ');
-        return `<polyline transform="${transform}" points="${path}" fill="none" stroke="${stroke}" stroke-width="${item.strokeWidth}" stroke-linecap="round" stroke-linejoin="round"/>`;
-      }
-      if (item.kind === 'line')
-        return `<path transform="${transform}" d="${shapePath(item)}" fill="none" stroke="${stroke}" stroke-width="${item.strokeWidth}"/>`;
-      if (item.kind === 'diamond')
-        return `<polygon transform="${transform}" points="${(item.width ?? 1) / 2},0 ${item.width ?? 1},${(item.height ?? 1) / 2} ${(item.width ?? 1) / 2},${item.height ?? 1} 0,${(item.height ?? 1) / 2}" fill="${item.fillColor ?? `${stroke}14`}" stroke="${stroke}" stroke-width="${item.strokeWidth}"/>`;
-      if (item.kind === 'rect')
-        return `<rect transform="${transform}" width="${item.width ?? 1}" height="${item.height ?? 1}" rx="4" fill="${item.fillColor ?? `${stroke}14`}" stroke="${stroke}" stroke-width="${item.strokeWidth}"/>`;
-      if (item.kind === 'ellipse')
-        return `<ellipse transform="${transform}" cx="${(item.width ?? 1) / 2}" cy="${(item.height ?? 1) / 2}" rx="${(item.width ?? 1) / 2}" ry="${(item.height ?? 1) / 2}" fill="${item.fillColor ?? `${stroke}14`}" stroke="${stroke}" stroke-width="${item.strokeWidth}"/>`;
-      if (item.kind === 'arrow')
-        return `<path transform="${transform}" d="${shapePath(item)}" fill="none" stroke="${stroke}" stroke-width="${item.strokeWidth}" marker-end="url(#arrowhead)"/>`;
-      if (item.kind === 'sticky')
-        return `<g transform="${transform}"><rect width="${item.width ?? 188}" height="${item.height ?? 164}" rx="5" fill="${stroke}35"/><text x="18" y="38" fill="#33433c" font-size="18" font-family="Arial">${text.split('\n').join('&#10;')}</text></g>`;
-      if (item.kind === 'image')
-        return `<image transform="${transform}" href="${item.src ?? ''}" width="${item.width ?? 180}" height="${item.height ?? 140}" preserveAspectRatio="xMidYMid meet"/>`;
-      return `<text transform="${transform}" fill="${stroke}" font-size="${item.fontSize ?? 30}" font-family="Arial">${text}</text>`;
-    })
-    .join('')}</svg>`;
-  const image = new Image();
-  image.src = URL.createObjectURL(
-    new Blob([markup], { type: 'image/svg+xml' }),
-  );
-  await new Promise<void>((resolve, reject) => {
-    image.onload = () => resolve();
-    image.onerror = () =>
-      reject(new Error('Unable to render this board for export.'));
-  });
-  const canvas = document.createElement('canvas');
-  canvas.width = 1600;
-  canvas.height = 1000;
-  const context = canvas.getContext('2d');
-  if (!context)
-    throw new Error('Canvas export is unavailable in this browser.');
-  context.fillStyle = '#fffefa';
-  context.fillRect(0, 0, 1600, 1000);
-  context.drawImage(image, 0, 0);
-  URL.revokeObjectURL(image.src);
-  if (format === 'png') {
-    canvas.toBlob((blob) => {
-      if (blob) downloadBlob(blob, filename(title, 'png'));
-    }, 'image/png');
-    return;
-  }
-  const jpeg = canvas.toDataURL('image/jpeg', 0.94).split(',')[1]!;
-  const binary = atob(jpeg);
-  const content = `q\n960 0 0 600 0 0 cm\n/Im0 Do\nQ`;
-  const pdfObjects = [
-    '<< /Type /Catalog /Pages 2 0 R >>',
-    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
-    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 960 600] /Resources << /XObject << /Im0 4 0 R >> >> /Contents 5 0 R >>',
-    `<< /Type /XObject /Subtype /Image /Width 1600 /Height 1000 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${binary.length} >>\nstream\n${binary}\nendstream`,
-    `<< /Length ${content.length} >>\nstream\n${content}\nendstream`,
-  ];
-  let pdf = '%PDF-1.4\n';
-  const offsets = [0];
-  pdfObjects.forEach((object, index) => {
-    offsets.push(pdf.length);
-    pdf += `${index + 1} 0 obj\n${object}\nendobj\n`;
-  });
-  const xref = pdf.length;
-  pdf += `xref\n0 ${pdfObjects.length + 1}\n0000000000 65535 f \n`;
-  for (const offset of offsets.slice(1))
-    pdf += `${String(offset).padStart(10, '0')} 00000 n \n`;
-  pdf += `trailer\n<< /Size ${pdfObjects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
-  const bytes = new Uint8Array(pdf.length);
-  for (let index = 0; index < pdf.length; index++)
-    bytes[index] = pdf.charCodeAt(index);
-  downloadBlob(
-    new Blob([bytes], { type: 'application/pdf' }),
-    filename(title, 'pdf'),
+    target instanceof HTMLElement &&
+    (target.closest('input,textarea,select,[contenteditable="true"]') !==
+      null ||
+      target.closest('.modal') !== null)
   );
 }
 
@@ -424,624 +185,583 @@ export default function BoardPage() {
   const search = useSearchParams();
   const router = useRouter();
   const boardId = params.id;
-  const isLocalBoard = boardId.startsWith('local-');
+  const isLocal = boardId.startsWith('local-');
+
+  // ---- Session and board ----
   const [session, setSession] = useState<Session | null>(null);
+  const [sessionChecked, setSessionChecked] = useState(false);
   const [nameInput, setNameInput] = useState('');
   const [board, setBoard] = useState<Board | null>(null);
+  const [loadError, setLoadError] = useState('');
   const [objects, setObjects] = useState<BoardObject[]>([]);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [peersState, setPeersState] = useState<Peer[]>([]);
-  const [tool, setTool] = useState<Tool>('select');
+  const [peers, setPeers] = useState<Peer[]>([]);
+  const [status, setStatus] = useState<ConnectionStatus>('connecting');
+  const [pending, setPending] = useState(0);
+  const [selfPeerId, setSelfPeerId] = useState('');
+
+  // ---- Editor ----
+  const [tool, setTool] = useState<Tool>('pen');
   const [selected, setSelected] = useState<string[]>([]);
-  const [color, setColor] = useState(colors[1]!);
-  const [strokeWidth, setStrokeWidth] = useState(4);
-  const [chatOpen, setChatOpen] = useState(false);
-  const [messageInput, setMessageInput] = useState('');
+  const [color, setColor] = useState(COLORS[0]!);
+  const [stickyColor, setStickyColor] = useState(STICKY_COLORS[0]!);
+  const [strokeWidth, setStrokeWidth] = useState(3);
+  const [view, setView] = useState<View>({ x: 0, y: 0, zoom: 1 });
+  const [size, setSize] = useState({ width: 1, height: 1 });
+  const [textEditor, setTextEditorState] = useState<TextEditor | null>(null);
+  const [canUndo, setCanUndo] = useState(false);
+  const [canRedo, setCanRedo] = useState(false);
+  const [spaceHeld, setSpaceHeld] = useState(false);
+  const [panning, setPanning] = useState(false);
+
+  // ---- Panels ----
   const [notice, setNotice] = useState('');
+  const [chatOpen, setChatOpen] = useState(false);
+  const [unread, setUnread] = useState(0);
+  const [typing, setTyping] = useState<
+    { peerId: string; name: string; until: number }[]
+  >([]);
+  const [call, setCall] = useState<CallState>(EMPTY_CALL);
   const [shareOpen, setShareOpen] = useState(false);
   const [membersOpen, setMembersOpen] = useState(false);
   const [snapshotsOpen, setSnapshotsOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
   const [propertiesOpen, setPropertiesOpen] = useState(false);
-  const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
-  const [status, setStatus] = useState<'connecting' | 'live' | 'offline'>(
-    'connecting',
-  );
-  const [zoom, setZoom] = useState(1);
-  const [viewport, setViewport] = useState({ x: 0, y: 0 });
-  const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | 'error'>(
-    'saved',
-  );
-  const [draft, setDraft] = useState<Point[] | null>(null);
-  const [drag, setDrag] = useState<DragState | null>(null);
-  const [canUndo, setCanUndo] = useState(false);
-  const [canRedo, setCanRedo] = useState(false);
-  const [lastCursor, setLastCursor] = useState<Point | null>(null);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [snapshots, setSnapshots] = useState<
+    { id: string; title: string; createdAt: string }[]
+  >([]);
+
   const stageRef = useRef<SVGSVGElement>(null);
-  const canvasAdapter = useRef(new SvgCanvasAdapter<BoardObject>());
+  const objectLayerRef = useRef<SVGGElement>(null);
+  const overlayRef = useRef<LocalOverlayHandle>(null);
   const imagePicker = useRef<HTMLInputElement>(null);
-  const boardRef = useRef<Board | null>(null);
-  const localObjects = useRef<BoardObject[]>([]);
-  const history = useRef<HistoryEntry[]>([]);
-  const redoHistory = useRef<HistoryEntry[]>([]);
-  const propertyEditOrigin = useRef<BoardObject | null>(null);
-  const textEditOrigins = useRef<Record<string, BoardObject>>({});
+  const clientRef = useRef<RealtimeClient | null>(null);
+  const callRef = useRef<AudioCall | null>(null);
+  const remote = useMemo(() => new RemoteActivity(), []);
+  const objectsRef = useRef<BoardObject[]>([]);
+  const viewRef = useRef(view);
+  const gesture = useRef<Gesture | null>(null);
+  const pointers = useRef(new Map<number, Point>());
+  const history = useRef<Change[][]>([]);
+  const redoStack = useRef<Change[][]>([]);
   const clipboard = useRef<BoardObject[]>([]);
-  const pendingOperations = useRef(0);
-  const flushingOutbox = useRef(false);
-  const offlineOperations = useRef<PendingOperation[]>([]);
-  const readonly = board?.role === 'viewer' || board?.locked;
-  const boardReady = board !== null;
-  const selectedObject = useMemo(
-    () => objects.find((item) => selected.at(-1) === item.id),
+  const propertyOrigin = useRef<BoardObject | null>(null);
+  const fittedOnce = useRef(false);
+  const callPeers = useRef(new Set<string>());
+  // Mirrors `textEditor` so finishing is idempotent when both a click on the
+  // canvas and the textarea's blur try to finish the same edit.
+  const editorRef = useRef<TextEditor | null>(null);
+  const setTextEditor = useCallback(
+    (
+      next:
+        TextEditor | null | ((current: TextEditor | null) => TextEditor | null),
+    ) => {
+      editorRef.current =
+        typeof next === 'function' ? next(editorRef.current) : next;
+      setTextEditorState(editorRef.current);
+    },
+    [],
+  );
+
+  const readonly = !board || board.role === 'viewer' || board.locked;
+  const selectedObjects = useMemo(
+    () => objects.filter((item) => selected.includes(item.id)),
     [objects, selected],
   );
+  const selectedObject =
+    selectedObjects.length === 1 ? selectedObjects[0] : undefined;
+  const onlinePeople = useMemo(() => {
+    const byUser = new Map<string, Peer>();
+    for (const peer of peers)
+      if (!byUser.has(peer.userId)) byUser.set(peer.userId, peer);
+    return [...byUser.values()];
+  }, [peers]);
 
-  useEffect(() => {
-    canvasAdapter.current.load(objects);
+  useLayoutEffect(() => {
+    objectsRef.current = objects;
   }, [objects]);
+  useLayoutEffect(() => {
+    viewRef.current = view;
+  }, [view]);
+  useEffect(() => () => remote.dispose(), [remote]);
 
-  useEffect(() => () => canvasAdapter.current.destroy(), []);
-
-  function chooseTool(next: Tool) {
-    setDraft(null);
-    setDrag(null);
-    setTool(next);
-  }
-
+  // ---- Session ----
   useEffect(() => {
-    if (isLocalBoard) {
-      const localSession = {
+    if (isLocal) {
+      setSession({
         token: 'local-only',
         user: { id: 'local-user', name: 'You' },
-      };
-      setSession(localSession);
-      setNameInput(localSession.user.name);
+      });
+    } else {
+      const existing = readSession();
+      if (existing) {
+        setSession(existing);
+        setNameInput(existing.user.name);
+      }
+    }
+    setSessionChecked(true);
+  }, [isLocal]);
+
+  // ---- Board access (and joining through an invite link) ----
+  useEffect(() => {
+    if (!session) return;
+    if (isLocal) {
+      const now = new Date().toISOString();
+      setBoard({
+        id: boardId,
+        title: 'Untitled local board',
+        ownerId: 'local-user',
+        role: 'owner',
+        locked: false,
+        createdAt: now,
+        updatedAt: now,
+        members: [{ userId: 'local-user', role: 'owner', name: 'You' }],
+      });
+      setStatus('live');
       return;
     }
-    const existing = readSession();
-    if (existing) {
-      setSession(existing);
-      setNameInput(existing.user.name);
-    }
-  }, [isLocalBoard]);
-
-  useEffect(() => {
-    if (!isLocalBoard) return;
-    const now = new Date().toISOString();
-    const localBoard: Board = {
-      id: boardId,
-      title: 'Untitled local board',
-      ownerId: 'local-user',
-      role: 'owner',
-      locked: false,
-      createdAt: now,
-      updatedAt: now,
-      revision: 0,
-      objects: [],
-      messages: [],
-      members: [
-        { userId: 'local-user', role: 'owner', name: 'You', online: true },
-      ],
-    };
-    boardRef.current = localBoard;
-    setBoard(localBoard);
-    setObjects([]);
-    localObjects.current = [];
-    setMessages([]);
-    setStatus('live');
-    setNotice(
-      'This local board only lives in this tab. Copy or export your work before refreshing or closing it.',
-    );
-  }, [boardId, isLocalBoard]);
-
-  const loadBoard = useCallback(
-    async (current: Session) => {
-      try {
-        const invite = search.get('invite');
-        let value: Board;
-        try {
-          value = await api<Board>(`/boards/${boardId}`);
-        } catch (error) {
-          if (!invite) throw error;
-          await send(`/boards/${boardId}/join`, 'POST', {
-            inviteToken: invite,
-          });
-          value = await api<Board>(`/boards/${boardId}`);
-        }
-        boardRef.current = value;
-        setBoard(value);
-        offlineOperations.current = readOutbox(boardId);
-        setObjects(
-          applyPendingOperations(value.objects, offlineOperations.current),
-        );
-        setMessages(value.messages);
-        setStatus('connecting');
-        setNotice('');
-        return current;
-      } catch (error) {
-        const cached =
-          error instanceof ApiError ? null : readCachedBoard(boardId);
-        if (cached) {
-          boardRef.current = cached;
-          setBoard(cached);
-          offlineOperations.current = readOutbox(boardId);
-          setObjects(
-            applyPendingOperations(cached.objects, offlineOperations.current),
-          );
-          setMessages(cached.messages);
-          setStatus('offline');
-          setNotice(
-            'Offline mode. New edits are saved in this browser and will sync when you reconnect.',
-          );
-          return current;
-        }
-        setNotice((error as Error).message);
-        setStatus('offline');
-        return current;
-      }
-    },
-    [boardId, search],
-  );
-
-  useEffect(() => {
-    if (session && !isLocalBoard) void loadBoard(session);
-  }, [session, loadBoard, isLocalBoard]);
-
-  useEffect(() => {
-    if (!session || !boardReady || isLocalBoard) return;
     let cancelled = false;
-    const controller = new AbortController();
-    const consume = async () => {
-      while (!cancelled) {
-        try {
-          const response = await fetch(`/api/boards/${boardId}/events`, {
-            headers: { Authorization: `Bearer ${session.token}` },
-            signal: controller.signal,
-          });
-          if (!response.ok || !response.body)
-            throw new Error('Connection unavailable');
-          setStatus('live');
-          const reader = response.body.getReader();
-          const decoder = new TextDecoder();
-          let carry = '';
-          while (!cancelled) {
-            const { value, done } = await reader.read();
-            if (done) break;
-            carry += decoder.decode(value, { stream: true });
-            const parts = carry.split('\n\n');
-            carry = parts.pop() ?? '';
-            for (const part of parts) {
-              const line = part
-                .split('\n')
-                .find((value) => value.startsWith('data: '));
-              if (!line) continue;
-              const event = JSON.parse(line.slice(6)) as {
-                type: string;
-                board?: Board;
-                operation?: {
-                  type: 'create' | 'update' | 'delete';
-                  objectId: string;
-                  object?: BoardObject;
-                  fields?: Partial<BoardObject>;
-                };
-                message?: ChatMessage;
-                peers?: Peer[];
-                members?: Board['members'];
-              };
-              if (
-                event.type === 'snapshot' ||
-                event.type === 'reset' ||
-                event.type === 'board'
-              ) {
-                if (event.board) {
-                  boardRef.current = event.board;
-                  setBoard(event.board);
-                  setObjects(
-                    applyPendingOperations(
-                      event.board.objects,
-                      offlineOperations.current,
-                    ),
-                  );
-                  if (event.type === 'snapshot')
-                    setMessages(event.board.messages);
-                }
-                if (event.peers) setPeersState(event.peers);
-              } else if (event.type === 'operation' && event.operation) {
-                const op = event.operation;
-                setObjects((current) =>
-                  op.type === 'create' && op.object
-                    ? [
-                        ...current.filter((item) => item.id !== op.objectId),
-                        op.object,
-                      ]
-                    : op.type === 'delete'
-                      ? current.filter((item) => item.id !== op.objectId)
-                      : current.map((item) =>
-                          item.id === op.objectId
-                            ? { ...item, ...op.fields }
-                            : item,
-                        ),
-                );
-              } else if (event.type === 'message' && event.message)
-                setMessages((current) =>
-                  current.some((item) => item.id === event.message!.id)
-                    ? current
-                    : [...current, event.message!],
-                );
-              else if (event.type === 'presence' && event.peers)
-                setPeersState(event.peers);
-              else if (
-                event.type === 'members' &&
-                boardRef.current &&
-                event.members
-              ) {
-                const next = { ...boardRef.current, members: event.members };
-                boardRef.current = next;
-                setBoard(next);
-              } else if (event.type === 'deleted') {
-                router.push('/');
-              }
-            }
-          }
-          if (!cancelled) throw new Error('Connection closed');
-        } catch {
-          if (cancelled) break;
-          setStatus('offline');
-          await new Promise((resolve) => setTimeout(resolve, 1800));
+    const invite = search.get('invite');
+    (async () => {
+      try {
+        const value = invite
+          ? await send<Board>(`/boards/${boardId}/join`, 'POST', {
+              inviteToken: invite,
+            })
+          : await api<Board>(`/boards/${boardId}`);
+        if (cancelled) return;
+        setBoard(value);
+        setLoadError('');
+        // Keep the invite token out of the address bar once it is used.
+        if (invite) window.history.replaceState(null, '', `/board/${boardId}`);
+      } catch (error) {
+        if (cancelled) return;
+        if (error instanceof ApiError && error.status === 401) {
+          clearSession();
+          setSession(null);
+          return;
         }
+        setLoadError((error as Error).message);
       }
-    };
-    void consume();
+    })();
     return () => {
       cancelled = true;
-      controller.abort();
     };
-  }, [session, boardId, boardReady, router, isLocalBoard]);
+    // `search` is read once: replacing the URL must not reload the board.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session, boardId, isLocal]);
 
-  useEffect(() => {
-    if (!session || !board || !lastCursor || isLocalBoard) return;
-    const timer = setTimeout(() => {
-      void send(`/boards/${boardId}/presence`, 'POST', {
-        ...lastCursor,
-        color:
-          cursorColors[session.user.id.charCodeAt(0) % cursorColors.length],
-      }).catch(() => undefined);
-    }, 120);
-    return () => clearTimeout(timer);
-  }, [session, board, boardId, lastCursor, isLocalBoard]);
+  // ---- Realtime connection ----
+  const onServerMessage = useEffectEvent((message: ServerMessage) => {
+    const client = clientRef.current;
+    switch (message.t) {
+      case 'welcome': {
+        setSelfPeerId(message.self.peerId);
+        setBoard(message.board);
+        remote.clear();
+        setObjects(
+          applyOperations(message.objects, client?.pendingOperations ?? []),
+        );
+        setMessages((current) => [
+          ...message.messages,
+          ...current.filter((item) => item.pending),
+        ]);
+        setPeers(message.peers);
+        callRef.current?.setIceServers(message.iceServers);
+        callRef.current?.syncPeers(message.peers);
+        callPeers.current = new Set(
+          message.peers
+            .filter((peer) => peer.inCall)
+            .map((peer) => peer.peerId),
+        );
+        return;
+      }
+      case 'op': {
+        const { op } = message;
+        remote.settle(op.objectId);
+        setObjects((current) => applyOperations(current, [op]));
+        if (op.type === 'delete') {
+          setSelected((current) =>
+            current.includes(op.objectId)
+              ? current.filter((item) => item !== op.objectId)
+              : current,
+          );
+          setTextEditor((current) =>
+            current?.object.id === op.objectId ? null : current,
+          );
+        }
+        return;
+      }
+      case 'nack':
+        setNotice(message.message);
+        client?.resync();
+        return;
+      case 'live':
+        remote.apply(message);
+        return;
+      case 'chat': {
+        const chat = message.message;
+        setMessages((current) => {
+          const index = current.findIndex(
+            (item) => item.id === message.clientId,
+          );
+          if (index >= 0)
+            return current.map((item, at) => (at === index ? chat : item));
+          return current.some((item) => item.id === chat.id)
+            ? current
+            : [...current, chat];
+        });
+        if (chat.userId !== session?.user.id) {
+          if (!chatOpen) setUnread((count) => count + 1);
+          setTyping((current) =>
+            current.filter((item) => item.name !== chat.name),
+          );
+        }
+        return;
+      }
+      case 'typing':
+        setTyping((current) => [
+          ...current.filter((item) => item.peerId !== message.peerId),
+          {
+            peerId: message.peerId,
+            name: message.name,
+            until: Date.now() + 4000,
+          },
+        ]);
+        return;
+      case 'presence': {
+        setPeers(message.peers);
+        const present = new Set(message.peers.map((peer) => peer.peerId));
+        for (const peerId of remote.cursors.keys())
+          if (!present.has(peerId)) remote.dropPeer(peerId);
+        callRef.current?.syncPeers(message.peers);
+        const nowInCall = message.peers.filter(
+          (peer) => peer.inCall && peer.peerId !== client?.peerId,
+        );
+        const started = nowInCall.find(
+          (peer) => !callPeers.current.has(peer.peerId),
+        );
+        if (started && !call.joined && callPeers.current.size === 0)
+          setNotice(`${started.name} started audio. Join from the top bar.`);
+        callPeers.current = new Set(nowInCall.map((peer) => peer.peerId));
+        return;
+      }
+      case 'signal':
+        void callRef.current?.handleSignal(message.from, message.data);
+        return;
+      case 'board':
+        setBoard(message.board);
+        return;
+      case 'reset':
+        remote.clear();
+        setObjects(message.objects);
+        setSelected([]);
+        history.current = [];
+        redoStack.current = [];
+        setCanUndo(false);
+        setCanRedo(false);
+        return;
+      case 'deleted':
+        router.push('/');
+        return;
+      case 'error':
+        if (message.fatal) setLoadError(message.message);
+        else setNotice(message.message);
+        return;
+    }
+  });
 
+  const boardReady = board !== null;
   useEffect(() => {
-    if (!session || !board || isLocalBoard) return;
-    const color =
-      cursorColors[session.user.id.charCodeAt(0) % cursorColors.length];
-    const announce = () => {
-      void send(`/boards/${boardId}/presence`, 'POST', { color }).catch(
-        () => undefined,
-      );
+    if (!session || !boardReady || isLocal) return;
+    const client = new RealtimeClient(
+      boardId,
+      session.token,
+      colorFor(session.user.id),
+      {
+        onMessage: (message) => onServerMessage(message),
+        onStatus: setStatus,
+        onPending: setPending,
+      },
+    );
+    clientRef.current = client;
+    setPending(client.pendingOperations.length);
+    const audio = new AudioCall(client, [], setCall);
+    callRef.current = audio;
+    return () => {
+      audio.leave();
+      client.close();
+      clientRef.current = null;
+      callRef.current = null;
     };
-    announce();
-    const timer = setInterval(announce, 5000);
+  }, [session, boardReady, boardId, isLocal]);
+
+  // Expire "is typing" hints.
+  useEffect(() => {
+    if (!typing.length) return;
+    const timer = setInterval(() => {
+      const now = Date.now();
+      setTyping((current) => current.filter((item) => item.until > now));
+    }, 1000);
     return () => clearInterval(timer);
-  }, [session, board, boardId, isLocalBoard]);
+  }, [typing.length]);
 
   useEffect(() => {
-    if (!board || isLocalBoard) return;
-    writeCachedBoard({ ...board, objects, messages });
-  }, [board, objects, messages, isLocalBoard]);
+    if (call.error) setNotice(call.error);
+  }, [call.error]);
 
+  // Local boards only live in this tab.
   useEffect(() => {
-    if (!isLocalBoard || objects.length === 0) return;
-    const warnBeforeLeaving = (event: BeforeUnloadEvent) => {
+    if (!isLocal || objects.length === 0) return;
+    const warn = (event: BeforeUnloadEvent) => {
       event.preventDefault();
       event.returnValue = '';
     };
-    window.addEventListener('beforeunload', warnBeforeLeaving);
-    return () => window.removeEventListener('beforeunload', warnBeforeLeaving);
-  }, [isLocalBoard, objects.length]);
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [isLocal, objects.length]);
 
-  const flushOfflineOperations = useCallback(
-    async (currentSession: Session, currentBoardId: string) => {
-      if (flushingOutbox.current) return;
-      flushingOutbox.current = true;
-      const queued = [...offlineOperations.current];
-      while (queued.length) {
-        const operation = queued[0]!;
-        try {
-          await send(`/boards/${currentBoardId}/operations`, 'POST', operation);
-          queued.shift();
-          offlineOperations.current = [...queued];
-          writeOutbox(currentBoardId, queued);
-        } catch (error) {
-          if (
-            error instanceof ApiError &&
-            error.status >= 400 &&
-            error.status < 500
-          ) {
-            queued.shift();
-            offlineOperations.current = [...queued];
-            writeOutbox(currentBoardId, queued);
-            setNotice((error as Error).message);
-            void loadBoard(currentSession);
-            continue;
-          }
-          break;
-        }
+  // ---- Viewport ----
+  useLayoutEffect(() => {
+    const stage = stageRef.current;
+    if (!stage) return;
+    const observer = new ResizeObserver(([entry]) => {
+      if (!entry) return;
+      setSize({
+        width: Math.max(1, entry.contentRect.width),
+        height: Math.max(1, entry.contentRect.height),
+      });
+    });
+    observer.observe(stage);
+    return () => observer.disconnect();
+  }, [boardReady]);
+
+  const fitTo = useCallback(
+    (bounds: Bounds | null) => {
+      if (!bounds) {
+        setView({ x: -size.width / 2, y: -size.height / 2, zoom: 1 });
+        return;
       }
-      flushingOutbox.current = false;
-      if (queued.length === 0) {
-        setStatus('live');
-        if (pendingOperations.current === 0) setSaveStatus('saved');
-      } else setStatus('offline');
+      const padding = 80;
+      const zoom = clampZoom(
+        Math.min(
+          1.5,
+          (size.width - padding * 2) / Math.max(bounds.width, 1),
+          (size.height - padding * 2) / Math.max(bounds.height, 1),
+        ),
+      );
+      setView({
+        x: bounds.x + bounds.width / 2 - size.width / zoom / 2,
+        y: bounds.y + bounds.height / 2 - size.height / zoom / 2,
+        zoom,
+      });
     },
-    [loadBoard],
+    [size],
   );
 
+  // Frame the content the first time the board appears.
   useEffect(() => {
-    if (
-      !session ||
-      isLocalBoard ||
-      !boardReady ||
-      status !== 'live' ||
-      !offlineOperations.current.length
-    )
-      return;
-    void flushOfflineOperations(session, boardId);
-  }, [
-    session,
-    boardReady,
-    status,
-    boardId,
-    flushOfflineOperations,
-    isLocalBoard,
-  ]);
+    if (fittedOnce.current || size.width <= 1 || !boardReady) return;
+    if (!isLocal && status !== 'live') return;
+    fittedOnce.current = true;
+    fitTo(unionBounds(objects));
+  }, [size, boardReady, status, isLocal, objects, fitTo]);
 
-  useEffect(() => {
-    if (!session || isLocalBoard) return;
-    const retry = () => {
-      if (offlineOperations.current.length)
-        void flushOfflineOperations(session, boardId);
-    };
-    window.addEventListener('online', retry);
-    return () => window.removeEventListener('online', retry);
-  }, [session, boardId, flushOfflineOperations, isLocalBoard]);
-
-  function pointAt(event: React.PointerEvent<Element>): Point {
-    const bounds = stageRef.current?.getBoundingClientRect();
-    if (!bounds || !bounds.width || !bounds.height) return { x: 0, y: 0 };
-    return canvasAdapter.current.toCanvasPoint(
-      event.clientX,
-      event.clientY,
-      bounds,
-      {
-        x: viewport.x,
-        y: viewport.y,
-        width: canvasWidth / zoom,
-        height: canvasHeight / zoom,
-      },
-    );
-  }
-
-  function fitCanvas() {
-    const bounds = canvasAdapter.current.getBounds();
-    const stage = stageRef.current?.getBoundingClientRect();
-    if (!bounds || !stage?.width || !stage.height) {
-      setZoom(1);
-      setViewport({ x: 0, y: 0 });
-      return;
-    }
-    const padding = 80;
-    const nextZoom = Math.min(
-      2,
-      Math.max(
-        0.1,
-        Math.min(
-          (canvasWidth * (stage.width - padding)) / stage.width / bounds.width,
-          (canvasHeight * (stage.height - padding)) /
-            stage.height /
-            bounds.height,
-        ),
-      ),
-    );
-    const viewWidth = canvasWidth / nextZoom;
-    const viewHeight = canvasHeight / nextZoom;
-    setZoom(nextZoom);
-    setViewport({
-      x: bounds.x + bounds.width / 2 - viewWidth / 2,
-      y: bounds.y + bounds.height / 2 - viewHeight / 2,
+  function zoomAt(factor: number, screen?: Point) {
+    setView((current) => {
+      const zoom = clampZoom(current.zoom * factor);
+      const sx = screen?.x ?? size.width / 2;
+      const sy = screen?.y ?? size.height / 2;
+      const wx = current.x + sx / current.zoom;
+      const wy = current.y + sy / current.zoom;
+      return { x: wx - sx / zoom, y: wy - sy / zoom, zoom };
     });
   }
 
-  async function rawOperation(
-    type: 'create' | 'update' | 'delete',
-    objectId: string,
-    object?: BoardObject,
-    fields?: Partial<BoardObject>,
-  ) {
-    if (!board || !session) return;
-    if (isLocalBoard) {
-      const nextObjects =
-        type === 'create' && object
-          ? [...localObjects.current, object]
-          : type === 'delete'
-            ? localObjects.current.filter((item) => item.id !== objectId)
-            : localObjects.current.map((item) =>
-                item.id === objectId ? { ...item, ...fields } : item,
-              );
-      localObjects.current = nextObjects;
-      setObjects(nextObjects);
-      const nextBoard = { ...board, objects: nextObjects };
-      boardRef.current = nextBoard;
-      setBoard(nextBoard);
-      return;
-    }
-    pendingOperations.current += 1;
-    setSaveStatus('saving');
-    const operationId = id();
-    const operation: PendingOperation = {
-      id: operationId,
-      type,
-      objectId,
-      ...(object ? { object } : {}),
-      ...(fields ? { fields } : {}),
-    };
-    setObjects((current) =>
-      type === 'create' && object
-        ? [...current, object]
-        : type === 'delete'
-          ? current.filter((item) => item.id !== objectId)
-          : current.map((item) =>
-              item.id === objectId ? { ...item, ...fields } : item,
-            ),
-    );
-    try {
-      await send(`/boards/${board.id}/operations`, 'POST', operation);
-      pendingOperations.current -= 1;
-      if (pendingOperations.current === 0) setSaveStatus('saved');
-    } catch (error) {
-      pendingOperations.current = Math.max(0, pendingOperations.current - 1);
-      if (!(error instanceof ApiError) || error.status >= 500) {
-        if (
-          !offlineOperations.current.some((item) => item.id === operation.id)
-        ) {
-          offlineOperations.current = [...offlineOperations.current, operation];
-          writeOutbox(board.id, offlineOperations.current);
-        }
-        setSaveStatus('saving');
-        setStatus('offline');
-        setNotice(
-          'Connection lost. Your change is saved in this browser and will retry when you reconnect.',
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage) return;
+    const onWheel = (event: WheelEvent) => {
+      event.preventDefault();
+      const rect = stage.getBoundingClientRect();
+      if (event.ctrlKey || event.metaKey) {
+        const factor = Math.exp(
+          -event.deltaY * (event.deltaMode ? 0.05 : 0.0075),
         );
+        setView((current) => {
+          const zoom = clampZoom(current.zoom * factor);
+          const sx = event.clientX - rect.left;
+          const sy = event.clientY - rect.top;
+          return {
+            x: current.x + sx / current.zoom - sx / zoom,
+            y: current.y + sy / current.zoom - sy / zoom,
+            zoom,
+          };
+        });
       } else {
-        setSaveStatus('error');
-        setNotice((error as Error).message);
-        void loadBoard(session);
+        const unit =
+          event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? rect.height : 1;
+        const dx = (event.shiftKey ? event.deltaY : event.deltaX) * unit;
+        const dy = (event.shiftKey ? 0 : event.deltaY) * unit;
+        setView((current) => ({
+          ...current,
+          x: current.x + dx / current.zoom,
+          y: current.y + dy / current.zoom,
+        }));
       }
-    }
+    };
+    stage.addEventListener('wheel', onWheel, { passive: false });
+    return () => stage.removeEventListener('wheel', onWheel);
+  }, [boardReady]);
+
+  function toWorld(clientX: number, clientY: number): Point {
+    const rect = stageRef.current!.getBoundingClientRect();
+    const current = viewRef.current;
+    return {
+      x: current.x + (clientX - rect.left) / current.zoom,
+      y: current.y + (clientY - rect.top) / current.zoom,
+    };
   }
 
-  async function commit(
-    type: 'create' | 'update' | 'delete',
-    objectId: string,
-    object?: BoardObject,
-    fields?: Partial<BoardObject>,
-    historyBefore?: BoardObject,
+  // ---- Applying and sharing edits ----
+  function perform(
+    drafts: Draft[],
+    options: { record?: boolean; origins?: Record<string, BoardObject> } = {},
   ) {
-    if (
-      !isLocalBoard &&
-      ((type === 'create' && object?.kind === 'image') ||
-        fields?.src !== undefined)
-    ) {
-      setNotice(
-        'Images stay on your device and can only be added to a local board.',
-      );
-      return;
+    const current = objectsRef.current;
+    const changes: Change[] = [];
+    const operations: Operation[] = [];
+    for (const draft of drafts) {
+      const before =
+        options.origins?.[draft.objectId] ??
+        current.find((item) => item.id === draft.objectId) ??
+        null;
+      let after: BoardObject | null = null;
+      if (draft.type === 'create') after = draft.object ?? null;
+      else if (draft.type === 'update') {
+        if (!before || !draft.fields) continue;
+        after = { ...before, ...draft.fields };
+        if (!Object.keys(diffFields(after, before)).length) continue;
+      } else if (!before) continue;
+      changes.push({ objectId: draft.objectId, before, after });
+      operations.push({ ...draft, id: id() });
     }
-    const before =
-      historyBefore ?? objects.find((item) => item.id === objectId) ?? null;
-    let after = before;
-    if (type === 'create') after = object ?? null;
-    if (type === 'update' && before && fields) after = { ...before, ...fields };
-    if (type === 'delete') after = null;
-    if (
-      type === 'update' &&
-      before &&
-      fields &&
-      Object.entries(fields).every(([key, value]) =>
-        Object.is(before[key as keyof BoardObject], value),
-      )
-    )
-      return;
-    history.current.push({ objectId, before, after });
-    redoHistory.current = [];
-    setCanUndo(true);
-    setCanRedo(false);
-    await rawOperation(type, objectId, object, fields);
-  }
-
-  function previewObjectFields(objectId: string, fields: Partial<BoardObject>) {
-    setObjects((current) =>
-      current.map((item) =>
-        item.id === objectId ? { ...item, ...fields } : item,
-      ),
-    );
-  }
-
-  function beginPropertyEdit(item: BoardObject) {
-    if (!propertyEditOrigin.current) propertyEditOrigin.current = { ...item };
-  }
-
-  function finishPropertyEdit(item: BoardObject, fields: Partial<BoardObject>) {
-    const origin = propertyEditOrigin.current ?? item;
-    propertyEditOrigin.current = null;
-    void commit('update', item.id, undefined, fields, origin);
-  }
-
-  async function restoreEntry(
-    entry: HistoryEntry,
-    snapshot: BoardObject | null,
-  ) {
-    const current = objects.find((item) => item.id === entry.objectId) ?? null;
-    if (snapshot === null) {
-      if (current) await rawOperation('delete', current.id);
-      return;
+    if (!operations.length) return;
+    const next = applyOperations(current, operations);
+    objectsRef.current = next;
+    setObjects(next);
+    if (options.record !== false) {
+      history.current.push(changes);
+      if (history.current.length > 200) history.current.shift();
+      redoStack.current = [];
+      setCanUndo(true);
+      setCanRedo(false);
     }
-    if (current === null) {
-      const replacement = { ...snapshot, id: id() };
-      entry.objectId = replacement.id;
-      await rawOperation('create', replacement.id, replacement);
-      return;
+    const client = clientRef.current;
+    if (client) {
+      client.flushLive();
+      for (const operation of operations) client.sendOperation(operation);
     }
-    const other = entry.before === snapshot ? entry.after : entry.before;
-    const keys = new Set([
-      ...Object.keys(objectFields(snapshot)),
-      ...(other ? Object.keys(objectFields(other)) : []),
-    ]);
-    const changedKeys = [...keys].filter((key) => {
-      const left = snapshot[key as keyof BoardObject];
-      const right = other?.[key as keyof BoardObject];
-      return JSON.stringify(left) !== JSON.stringify(right);
-    });
-    const fields = Object.fromEntries(
-      changedKeys
-        .filter((key) => snapshot[key as keyof BoardObject] !== undefined)
-        .map((key) => [key, snapshot[key as keyof BoardObject]]),
-    ) as Partial<BoardObject>;
-    await rawOperation('update', current.id, undefined, fields);
   }
 
-  async function undo() {
+  function restore(entry: Change[], side: 'before' | 'after') {
+    const drafts: Draft[] = [];
+    const ordered = side === 'before' ? [...entry].reverse() : entry;
+    for (const change of ordered) {
+      const target = change[side];
+      const current =
+        objectsRef.current.find((item) => item.id === change.objectId) ?? null;
+      if (!target) {
+        if (current) drafts.push({ type: 'delete', objectId: current.id });
+        continue;
+      }
+      if (!current) {
+        // Deleted objects stay deleted on the server, so recreate under a new ID.
+        const freshId = id();
+        change.objectId = freshId;
+        if (change.before) change.before = { ...change.before, id: freshId };
+        if (change.after) change.after = { ...change.after, id: freshId };
+        const object = change[side]!;
+        drafts.push({ type: 'create', objectId: freshId, object });
+        continue;
+      }
+      const fields = diffFields(target, current);
+      if (Object.keys(fields).length)
+        drafts.push({ type: 'update', objectId: current.id, fields });
+    }
+    perform(drafts, { record: false });
+  }
+
+  function undo() {
+    if (readonly) return;
     const entry = history.current.pop();
     if (!entry) return;
-    redoHistory.current.push(entry);
+    redoStack.current.push(entry);
+    restore(entry, 'before');
     setCanUndo(history.current.length > 0);
     setCanRedo(true);
-    await restoreEntry(entry, entry.before);
-  }
-  async function redo() {
-    const entry = redoHistory.current.pop();
-    if (!entry) return;
-    history.current.push(entry);
-    setCanUndo(true);
-    setCanRedo(redoHistory.current.length > 0);
-    await restoreEntry(entry, entry.after);
+    setSelected([]);
   }
 
-  async function duplicateSelected() {
-    const sources = objects.filter((item) => selected.includes(item.id));
+  function redo() {
+    if (readonly) return;
+    const entry = redoStack.current.pop();
+    if (!entry) return;
+    history.current.push(entry);
+    restore(entry, 'after');
+    setCanUndo(true);
+    setCanRedo(redoStack.current.length > 0);
+  }
+
+  function deleteObjects(ids: string[]) {
+    if (readonly || !ids.length) return;
+    perform(ids.map((objectId) => ({ type: 'delete', objectId })));
+    setSelected((current) => current.filter((item) => !ids.includes(item)));
+  }
+
+  function pasteObjects(sources: BoardObject[], offset = 24) {
+    if (readonly || !sources.length) return;
     const copies = sources.map((item) => ({
       ...item,
       id: id(),
-      x: item.x + 24,
-      y: item.y + 24,
+      x: round(item.x + offset),
+      y: round(item.y + offset),
     }));
-    for (const copy of copies) await commit('create', copy.id, copy);
+    perform(
+      copies.map((object) => ({ type: 'create', objectId: object.id, object })),
+    );
     setSelected(copies.map((item) => item.id));
+    return copies;
   }
 
-  async function deleteSelected() {
-    const ids = [...selected];
-    for (const objectId of ids) await commit('delete', objectId);
-    setSelected([]);
+  function updateSelected(fields: Partial<BoardObject>) {
+    perform(
+      selectedObjects.map((item) => ({
+        type: 'update',
+        objectId: item.id,
+        fields,
+      })),
+    );
+  }
+
+  /** Live preview for sliders: peers see it move, history records one step. */
+  function previewProperty(item: BoardObject, fields: Partial<BoardObject>) {
+    if (!propertyOrigin.current) propertyOrigin.current = item;
+    const next = { ...item, ...fields };
+    setObjects((current) =>
+      current.map((object) => (object.id === item.id ? next : object)),
+    );
+    clientRef.current?.liveUpsert([next]);
+  }
+
+  function commitProperty(item: BoardObject, fields: Partial<BoardObject>) {
+    const origin = propertyOrigin.current ?? item;
+    propertyOrigin.current = null;
+    perform([{ type: 'update', objectId: item.id, fields }], {
+      origins: { [item.id]: origin },
+    });
   }
 
   function newObject(
@@ -1052,440 +772,638 @@ export default function BoardPage() {
     return {
       id: id(),
       kind,
-      x: point.x,
-      y: point.y,
+      x: round(point.x),
+      y: round(point.y),
       color,
       strokeWidth,
       ...extra,
     };
   }
 
-  function chooseImage(file: File | undefined) {
-    if (file && !isLocalBoard) {
-      setNotice(
-        'Images are kept on your device. Open a local board to add one.',
-      );
-      return;
-    }
-    if (
-      !file ||
-      !board ||
-      !['image/png', 'image/jpeg', 'image/webp'].includes(file.type)
-    ) {
-      if (file) setNotice('Choose a PNG, JPEG, or WebP image.');
-      return;
-    }
-    if (file.size > 500_000) {
-      setNotice('Images must be 500 KB or smaller.');
-      return;
-    }
-    const reader = new FileReader();
-    reader.onerror = () => setNotice('This image could not be opened.');
-    reader.onload = () => {
-      if (typeof reader.result !== 'string') return;
-      const image = new Image();
-      image.onerror = () => setNotice('This image could not be opened.');
-      image.onload = () => {
-        const scale = Math.min(1, 520 / image.width, 380 / image.height);
-        const width = Math.max(1, image.width * scale);
-        const height = Math.max(1, image.height * scale);
-        const point = {
-          x: viewport.x + canvasWidth / zoom / 2 - width / 2,
-          y: viewport.y + canvasHeight / zoom / 2 - height / 2,
-        };
-        const item = newObject('image', point, {
-          width,
-          height,
-          src: reader.result as string,
-        });
-        void commit('create', item.id, item);
-        setSelected([item.id]);
-        chooseTool('select');
+  function shapeFrom(
+    object: BoardObject,
+    start: Point,
+    end: Point,
+    square: boolean,
+  ) {
+    let dx = end.x - start.x;
+    let dy = end.y - start.y;
+    if (object.kind === 'line' || object.kind === 'arrow') {
+      if (square) {
+        // Snap to 45° steps.
+        const angle =
+          Math.round(Math.atan2(dy, dx) / (Math.PI / 4)) * (Math.PI / 4);
+        const length = Math.hypot(dx, dy);
+        dx = Math.cos(angle) * length;
+        dy = Math.sin(angle) * length;
+      }
+      return {
+        ...object,
+        x: round(start.x),
+        y: round(start.y),
+        points: [0, 0, round(dx), round(dy)],
       };
-      image.src = reader.result;
+    }
+    if (square) {
+      const side = Math.max(Math.abs(dx), Math.abs(dy));
+      dx = Math.sign(dx || 1) * side;
+      dy = Math.sign(dy || 1) * side;
+    }
+    return {
+      ...object,
+      x: round(Math.min(start.x, start.x + dx)),
+      y: round(Math.min(start.y, start.y + dy)),
+      width: round(Math.max(1, Math.abs(dx))),
+      height: round(Math.max(1, Math.abs(dy))),
     };
-    reader.readAsDataURL(file);
   }
 
-  function onStageDown(event: React.PointerEvent<SVGSVGElement>) {
-    if (readonly && tool !== 'hand') return;
-    const point = pointAt(event);
-    setLastCursor(point);
-    if (tool === 'pen' || tool === 'highlighter') {
-      setDraft([point]);
-      event.currentTarget.setPointerCapture(event.pointerId);
-      return;
-    }
-    if (
-      tool === 'rect' ||
-      tool === 'ellipse' ||
-      tool === 'diamond' ||
-      tool === 'line' ||
-      tool === 'arrow'
-    ) {
-      setDraft([point, point]);
-      event.currentTarget.setPointerCapture(event.pointerId);
-      return;
-    }
-    if (tool === 'text' || tool === 'sticky') {
-      const text =
-        tool === 'sticky'
-          ? (window.prompt('Add a thought to this note', 'Add your thought…') ??
-            '')
-          : (window.prompt('Write something', '') ?? '');
-      if (!text.trim()) return;
-      const item = newObject(
-        tool === 'sticky' ? 'sticky' : 'text',
-        point,
-        tool === 'sticky'
-          ? { width: 188, height: 164, text, color: '#e1b94e', strokeWidth: 1 }
-          : { text, fontSize: 30 },
-      );
-      void commit('create', item.id, item);
-      setSelected([item.id]);
-      chooseTool('select');
-      return;
-    }
+  // ---- Text editing ----
+  function openText(object: BoardObject, isNew: boolean) {
     setSelected([]);
-    if (tool === 'hand') {
-      setDrag({ id: '$pan', start: point, origin: point, mode: 'pan' });
-      event.currentTarget.setPointerCapture(event.pointerId);
+    setTextEditor({ object, isNew });
+    clientRef.current?.liveUpsert([object]);
+  }
+
+  function finishText() {
+    const editor = editorRef.current;
+    if (!editor) return;
+    setTextEditor(null);
+    const object = editor.object;
+    const text = (object.text ?? '').replace(/\s+$/, '');
+    if (editor.isNew && !text.trim() && object.kind === 'text') {
+      clientRef.current?.liveRemove([object.id]);
+      return;
     }
+    if (editor.isNew)
+      perform([
+        { type: 'create', objectId: object.id, object: { ...object, text } },
+      ]);
+    else {
+      perform([{ type: 'update', objectId: object.id, fields: { text } }]);
+      clientRef.current?.liveRemove([object.id]);
+    }
+    setSelected([object.id]);
   }
 
-  function onStageMove(event: React.PointerEvent<SVGSVGElement>) {
-    const point = pointAt(event);
-    setLastCursor(point);
-    if (draft)
-      setDraft((current) => {
-        if (!current) return current;
-        const first = current[0]!;
-        if (tool === 'pen' || tool === 'highlighter')
-          return [...current, point];
-        return [first, point];
-      });
-    if (drag?.mode === 'pan' || drag?.id === '$pan')
-      setViewport((current) => ({
-        x: current.x - (point.x - drag.start.x),
-        y: current.y - (point.y - drag.start.y),
-      }));
-    else if (drag?.mode === 'resize')
-      setObjects((current) =>
-        current.map((item) =>
-          item.id === drag.id
-            ? {
-                ...item,
-                width: Math.max(
-                  24,
-                  (drag.size?.x ?? 100) + point.x - drag.start.x,
-                ),
-                height: Math.max(
-                  24,
-                  (drag.size?.y ?? 70) + point.y - drag.start.y,
-                ),
-              }
-            : item,
-        ),
-      );
-    else if (drag)
-      setObjects((current) =>
-        current.map((item) =>
-          drag.ids?.includes(item.id) || item.id === drag.id
-            ? {
-                ...item,
-                x:
-                  (drag.origins?.[item.id]?.x ?? drag.origin.x) +
-                  point.x -
-                  drag.start.x,
-                y:
-                  (drag.origins?.[item.id]?.y ?? drag.origin.y) +
-                  point.y -
-                  drag.start.y,
-              }
-            : item,
-        ),
+  // ---- Pointer gestures ----
+  function setOverlay(state: Parameters<LocalOverlayHandle['set']>[0]) {
+    overlayRef.current?.set(state);
+  }
+
+  function cancelGesture() {
+    const current = gesture.current;
+    gesture.current = null;
+    setPanning(false);
+    setOverlay({});
+    if (current && (current.kind === 'draw' || current.kind === 'shape'))
+      clientRef.current?.liveRemove([current.object.id]);
+    if (current && (current.kind === 'move' || current.kind === 'resize'))
+      clientRef.current?.liveRemove(
+        current.kind === 'move'
+          ? current.moved.map((item) => item.id)
+          : [current.moved.id],
       );
   }
 
-  function onStageUp() {
-    if (draft?.length) {
-      const [start, end] = [draft[0]!, draft[draft.length - 1]!];
-      if (tool === 'pen' || tool === 'highlighter') {
-        const item = newObject('path', start, {
-          points: draft
-            .map((point) => [point.x - start.x, point.y - start.y])
-            .flat(),
-          strokeWidth: tool === 'highlighter' ? strokeWidth * 4 : strokeWidth,
-          color: tool === 'highlighter' ? `${color}77` : color,
+  function objectIdAt(clientX: number, clientY: number) {
+    for (const element of document.elementsFromPoint(clientX, clientY)) {
+      const oid = element.closest('[data-oid]')?.getAttribute('data-oid');
+      if (oid) return oid;
+      if (element === stageRef.current) break;
+    }
+    return null;
+  }
+
+  function eraseAt(clientX: number, clientY: number) {
+    const current = gesture.current;
+    if (current?.kind !== 'erase') return;
+    const oid = objectIdAt(clientX, clientY);
+    if (!oid || current.erased.has(oid)) return;
+    current.erased.add(oid);
+    setOverlay({ hide: [...current.erased] });
+  }
+
+  function onPointerDown(event: React.PointerEvent<SVGSVGElement>) {
+    if (editorRef.current) {
+      // The first click outside an open text box just finishes it.
+      finishText();
+      return;
+    }
+    if (event.button === 2) return;
+    // Stop the browser's mousedown focus change, which would immediately blur
+    // a text box opened by this click. Clicking the canvas still leaves chat
+    // and other fields so that shortcuts work.
+    event.preventDefault();
+    if (document.activeElement instanceof HTMLElement)
+      document.activeElement.blur();
+    const stage = event.currentTarget;
+    pointers.current.set(event.pointerId, {
+      x: event.clientX,
+      y: event.clientY,
+    });
+
+    if (event.pointerType === 'touch' && pointers.current.size === 2) {
+      cancelGesture();
+      const [a, b] = [...pointers.current.values()] as [Point, Point];
+      gesture.current = {
+        kind: 'pinch',
+        distance: Math.hypot(a.x - b.x, a.y - b.y),
+        mid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
+        origin: viewRef.current,
+      };
+      return;
+    }
+    if (pointers.current.size > 1) return;
+
+    const point = toWorld(event.clientX, event.clientY);
+    const target = event.target as Element;
+    const oid = target.closest('[data-oid]')?.getAttribute('data-oid') ?? null;
+    const onHandle = target.closest('[data-handle]') !== null;
+    stage.setPointerCapture(event.pointerId);
+
+    const pan = () => {
+      gesture.current = {
+        kind: 'pan',
+        start: { x: event.clientX, y: event.clientY },
+        origin: viewRef.current,
+      };
+      setPanning(true);
+    };
+    if (event.button === 1 || spaceHeld || tool === 'hand' || readonly) {
+      if (readonly && oid && tool === 'select') setSelected([oid]);
+      return pan();
+    }
+
+    switch (tool) {
+      case 'select': {
+        if (onHandle && selectedObject) {
+          gesture.current = {
+            kind: 'resize',
+            start: point,
+            original: selectedObject,
+            moved: selectedObject,
+          };
+          return;
+        }
+        if (oid) {
+          if (event.shiftKey) {
+            setSelected((current) =>
+              current.includes(oid)
+                ? current.filter((item) => item !== oid)
+                : [...current, oid],
+            );
+            return;
+          }
+          const ids = selected.includes(oid) ? selected : [oid];
+          setSelected(ids);
+          const originals = objectsRef.current.filter((item) =>
+            ids.includes(item.id),
+          );
+          gesture.current = {
+            kind: 'move',
+            start: point,
+            originals,
+            moved: originals,
+          };
+          return;
+        }
+        const base = event.shiftKey ? selected : [];
+        setSelected(base);
+        gesture.current = { kind: 'marquee', start: point, base };
+        return;
+      }
+      case 'eraser':
+        gesture.current = { kind: 'erase', erased: new Set() };
+        eraseAt(event.clientX, event.clientY);
+        return;
+      case 'pen':
+      case 'highlighter': {
+        const highlighter = tool === 'highlighter';
+        const object = newObject('path', point, {
+          points: [0, 0],
+          color: highlighter ? `${color.slice(0, 7)}66` : color,
+          strokeWidth: highlighter
+            ? Math.max(12, strokeWidth * 4)
+            : strokeWidth,
         });
-        void commit('create', item.id, item);
-      } else {
-        const x = Math.min(start.x, end.x),
-          y = Math.min(start.y, end.y),
-          width = Math.max(2, Math.abs(end.x - start.x)),
-          height = Math.max(2, Math.abs(end.y - start.y));
-        const item = newObject(
-          tool === 'rect'
-            ? 'rect'
-            : tool === 'ellipse'
-              ? 'ellipse'
-              : tool === 'diamond'
-                ? 'diamond'
-                : tool === 'line'
-                  ? 'line'
-                  : 'arrow',
-          { x, y },
+        gesture.current = { kind: 'draw', object, last: point };
+        setOverlay({ objects: [object] });
+        clientRef.current?.liveUpsert([object]);
+        return;
+      }
+      case 'rect':
+      case 'ellipse':
+      case 'diamond':
+      case 'line':
+      case 'arrow': {
+        const object = shapeFrom(newObject(tool, point), point, point, false);
+        gesture.current = { kind: 'shape', object, start: point };
+        return;
+      }
+      case 'text': {
+        const existing = oid
+          ? objectsRef.current.find((item) => item.id === oid)
+          : undefined;
+        if (existing?.kind === 'text' || existing?.kind === 'sticky')
+          return openText(existing, false);
+        return openText(
+          newObject(
+            'text',
+            { x: point.x, y: point.y - 16 },
+            { text: '', fontSize: 28 },
+          ),
+          true,
+        );
+      }
+      case 'sticky':
+        return openText(
+          newObject(
+            'sticky',
+            { x: point.x - 100, y: point.y - 100 },
+            {
+              width: 200,
+              height: 200,
+              text: '',
+              color: stickyColor,
+              strokeWidth: 1,
+              fontSize: 18,
+            },
+          ),
+          true,
+        );
+    }
+  }
+
+  function onPointerMove(event: React.PointerEvent<SVGSVGElement>) {
+    if (pointers.current.has(event.pointerId))
+      pointers.current.set(event.pointerId, {
+        x: event.clientX,
+        y: event.clientY,
+      });
+    const current = gesture.current;
+    const point = toWorld(event.clientX, event.clientY);
+    clientRef.current?.liveCursor({ x: round(point.x), y: round(point.y) });
+    if (!current) return;
+
+    switch (current.kind) {
+      case 'pan': {
+        const { origin } = current;
+        setView({
+          ...origin,
+          x: origin.x - (event.clientX - current.start.x) / origin.zoom,
+          y: origin.y - (event.clientY - current.start.y) / origin.zoom,
+        });
+        return;
+      }
+      case 'pinch': {
+        const values = [...pointers.current.values()];
+        if (values.length < 2) return;
+        const [a, b] = values as [Point, Point];
+        const rect = stageRef.current!.getBoundingClientRect();
+        const { origin } = current;
+        const zoom = clampZoom(
+          origin.zoom *
+            (Math.hypot(a.x - b.x, a.y - b.y) / Math.max(1, current.distance)),
+        );
+        const mid = {
+          x: (a.x + b.x) / 2 - rect.left,
+          y: (a.y + b.y) / 2 - rect.top,
+        };
+        const startMid = {
+          x: current.mid.x - rect.left,
+          y: current.mid.y - rect.top,
+        };
+        const wx = origin.x + startMid.x / origin.zoom;
+        const wy = origin.y + startMid.y / origin.zoom;
+        setView({ x: wx - mid.x / zoom, y: wy - mid.y / zoom, zoom });
+        return;
+      }
+      case 'draw': {
+        const samples =
+          typeof event.nativeEvent.getCoalescedEvents === 'function'
+            ? event.nativeEvent.getCoalescedEvents()
+            : [];
+        const added: number[] = [];
+        const minStep = 0.75 / viewRef.current.zoom;
+        for (const sample of samples.length ? samples : [event.nativeEvent]) {
+          const next = toWorld(sample.clientX, sample.clientY);
+          if (
+            Math.hypot(next.x - current.last.x, next.y - current.last.y) <
+            minStep
+          )
+            continue;
+          current.last = next;
+          added.push(
+            round(next.x - current.object.x),
+            round(next.y - current.object.y),
+          );
+        }
+        if (!added.length) return;
+        current.object = {
+          ...current.object,
+          points: [...(current.object.points ?? []), ...added],
+        };
+        setOverlay({ objects: [current.object] });
+        clientRef.current?.liveAppend(current.object.id, added);
+        return;
+      }
+      case 'shape': {
+        current.object = shapeFrom(
+          current.object,
+          current.start,
+          point,
+          event.shiftKey,
+        );
+        setOverlay({ objects: [current.object] });
+        clientRef.current?.liveUpsert([current.object]);
+        return;
+      }
+      case 'move': {
+        const dx = point.x - current.start.x;
+        const dy = point.y - current.start.y;
+        current.moved = current.originals.map((item) => ({
+          ...item,
+          x: round(item.x + dx),
+          y: round(item.y + dy),
+        }));
+        setOverlay({
+          objects: current.moved,
+          hide: current.originals.map((item) => item.id),
+        });
+        clientRef.current?.liveUpsert(current.moved);
+        return;
+      }
+      case 'resize': {
+        const { original } = current;
+        let width = Math.max(
+          16,
+          (original.width ?? 100) + point.x - current.start.x,
+        );
+        let height = Math.max(
+          16,
+          (original.height ?? 100) + point.y - current.start.y,
+        );
+        if (event.shiftKey || original.kind === 'image') {
+          const ratio = (original.width ?? 1) / (original.height ?? 1);
+          if (width / height > ratio) height = width / ratio;
+          else width = height * ratio;
+        }
+        current.moved = {
+          ...original,
+          width: round(width),
+          height: round(height),
+        };
+        setOverlay({ objects: [current.moved], hide: [original.id] });
+        clientRef.current?.liveUpsert([current.moved]);
+        return;
+      }
+      case 'marquee': {
+        const box = {
+          x: Math.min(current.start.x, point.x),
+          y: Math.min(current.start.y, point.y),
+          width: Math.abs(point.x - current.start.x),
+          height: Math.abs(point.y - current.start.y),
+        };
+        setOverlay({ marquee: box });
+        const hits = objectsRef.current
+          .filter((item) => intersects(box, objectBounds(item)))
+          .map((item) => item.id);
+        setSelected([...new Set([...current.base, ...hits])]);
+        return;
+      }
+      case 'erase':
+        if (event.buttons) eraseAt(event.clientX, event.clientY);
+        return;
+    }
+  }
+
+  function onPointerUp(event: React.PointerEvent<SVGSVGElement>) {
+    pointers.current.delete(event.pointerId);
+    const current = gesture.current;
+    if (!current) return;
+    if (current.kind === 'pinch') {
+      if (pointers.current.size < 2) gesture.current = null;
+      return;
+    }
+    gesture.current = null;
+    setPanning(false);
+    switch (current.kind) {
+      case 'draw':
+        perform([
           {
-            width,
-            height,
-            ...(tool === 'arrow' || tool === 'line'
-              ? { points: [start.x - x, start.y - y, end.x - x, end.y - y] }
-              : {}),
+            type: 'create',
+            objectId: current.object.id,
+            object: current.object,
           },
-        );
-        void commit('create', item.id, item);
+        ]);
+        break;
+      case 'shape': {
+        let object = current.object;
+        const tiny =
+          object.kind === 'line' || object.kind === 'arrow'
+            ? Math.hypot(object.points?.[2] ?? 0, object.points?.[3] ?? 0) < 4
+            : (object.width ?? 0) < 4 && (object.height ?? 0) < 4;
+        if (tiny && (object.kind === 'line' || object.kind === 'arrow')) {
+          clientRef.current?.liveRemove([object.id]);
+          break;
+        }
+        // A click without dragging drops a default-sized shape.
+        if (tiny)
+          object = {
+            ...object,
+            x: round(object.x - 60),
+            y: round(object.y - 40),
+            width: 120,
+            height: 80,
+          };
+        perform([{ type: 'create', objectId: object.id, object }]);
+        setSelected([object.id]);
+        break;
       }
-      setDraft(null);
-    }
-    if (drag && drag.mode !== 'pan' && drag.id !== '$pan') {
-      const ids = drag.ids ?? [drag.id];
-      for (const movedId of ids) {
-        const moved = objects.find((item) => item.id === movedId);
-        const origin = drag.origins?.[movedId] ?? drag.origin;
-        if (moved && (moved.x !== origin.x || moved.y !== origin.y))
-          void commit(
-            'update',
-            moved.id,
-            undefined,
-            {
-              x: moved.x,
-              y: moved.y,
-            },
-            drag.before?.[moved.id],
+      case 'move': {
+        const changed = current.moved.filter((item, index) => {
+          const original = current.originals[index]!;
+          return item.x !== original.x || item.y !== original.y;
+        });
+        if (changed.length)
+          perform(
+            changed.map((item) => ({
+              type: 'update',
+              objectId: item.id,
+              fields: { x: item.x, y: item.y },
+            })),
           );
-        else if (moved && drag.mode === 'resize')
-          void commit(
-            'update',
-            moved.id,
-            undefined,
-            {
-              width: moved.width ?? drag.size?.x ?? 100,
-              height: moved.height ?? drag.size?.y ?? 70,
-            },
-            drag.before?.[moved.id],
-          );
+        else
+          clientRef.current?.liveRemove(current.moved.map((item) => item.id));
+        break;
       }
+      case 'resize':
+        perform([
+          {
+            type: 'update',
+            objectId: current.original.id,
+            fields: {
+              width: current.moved.width!,
+              height: current.moved.height!,
+            },
+          },
+        ]);
+        break;
+      case 'erase':
+        deleteObjects([...current.erased]);
+        break;
     }
-    setDrag(null);
+    setOverlay({});
   }
 
-  function beginDrag(
-    event: React.PointerEvent<SVGGElement>,
-    item: BoardObject,
-  ) {
-    if (tool === 'hand') {
-      const point = pointAt(
-        event as unknown as React.PointerEvent<SVGSVGElement>,
+  function onDoubleClick(event: React.MouseEvent<SVGSVGElement>) {
+    if (readonly || tool !== 'select') return;
+    const oid = (event.target as Element)
+      .closest('[data-oid]')
+      ?.getAttribute('data-oid');
+    const item = oid
+      ? objectsRef.current.find((object) => object.id === oid)
+      : undefined;
+    if (item?.kind === 'text' || item?.kind === 'sticky')
+      return openText(item, false);
+    if (!oid) {
+      const point = toWorld(event.clientX, event.clientY);
+      openText(
+        newObject(
+          'text',
+          { x: point.x, y: point.y - 16 },
+          { text: '', fontSize: 28 },
+        ),
+        true,
       );
-      setDrag({ id: '$pan', start: point, origin: point, mode: 'pan' });
-      stageRef.current?.setPointerCapture(event.pointerId);
-      return;
     }
-    if (readonly) return;
-    if (tool === 'eraser') {
-      void commit('delete', item.id);
-      setSelected([]);
-      return;
-    }
-    if (tool !== 'select') return;
-    if (event.shiftKey) {
-      setSelected((current) =>
-        current.includes(item.id)
-          ? current.filter((selectedId) => selectedId !== item.id)
-          : [...current, item.id],
-      );
-      return;
-    }
-    const selectedIds = selected.includes(item.id) ? selected : [item.id];
-    setSelected(selectedIds);
-    const point = pointAt(
-      event as unknown as React.PointerEvent<SVGSVGElement>,
-    );
-    const origins = Object.fromEntries(
-      selectedIds.map((selectedId) => {
-        const selectedItem = objects.find(
-          (candidate) => candidate.id === selectedId,
-        );
-        return [
-          selectedId,
-          { x: selectedItem?.x ?? item.x, y: selectedItem?.y ?? item.y },
-        ];
-      }),
-    );
-    const before = Object.fromEntries(
-      selectedIds.flatMap((selectedId) => {
-        const selectedItem = objects.find(
-          (candidate) => candidate.id === selectedId,
-        );
-        return selectedItem ? [[selectedId, { ...selectedItem }]] : [];
-      }),
-    );
-    setDrag({
-      id: item.id,
-      ids: selectedIds,
-      start: point,
-      origin: origins[item.id] ?? { x: item.x, y: item.y },
-      origins,
-      before,
-      mode: 'move',
-    });
-    stageRef.current?.setPointerCapture(event.pointerId);
   }
 
-  function beginResize(
-    event: React.PointerEvent<SVGCircleElement>,
-    item: BoardObject,
-  ) {
-    if (readonly || !stageRef.current) return;
-    const point = pointAt(
-      event as unknown as React.PointerEvent<SVGSVGElement>,
-    );
-    setSelected([item.id]);
-    setDrag({
-      id: item.id,
-      start: point,
-      origin: { x: item.x, y: item.y },
-      size: { x: item.width ?? 180, y: item.height ?? 140 },
-      before: { [item.id]: { ...item } },
-      mode: 'resize',
-    });
-    stageRef.current.setPointerCapture(event.pointerId);
+  // ---- Keyboard ----
+  function chooseTool(next: Tool) {
+    cancelGesture();
+    setTool(next);
+    if (next !== 'select') setSelected([]);
   }
 
-  useEffect(() => {
-    function keyboard(event: KeyboardEvent) {
-      const target = event.target as HTMLElement;
-      if (
-        event.key === 'Escape' &&
-        (shareOpen || membersOpen || snapshotsOpen)
-      ) {
+  const onKeyDown = useEffectEvent((event: KeyboardEvent) => {
+    if (event.key === 'Escape') {
+      if (shareOpen || membersOpen || snapshotsOpen || helpOpen || exportOpen) {
         setShareOpen(false);
         setMembersOpen(false);
         setSnapshotsOpen(false);
+        setHelpOpen(false);
+        setExportOpen(false);
         return;
-      }
-      if (
-        target.closest(
-          'button,input,textarea,select,[contenteditable="true"],.modal',
-        ) ||
-        event.repeat
-      )
-        return;
-      const modifier = event.metaKey || event.ctrlKey;
-      const key = event.key.toLowerCase();
-      if (modifier && key === 'z') {
-        event.preventDefault();
-        if (event.shiftKey) void redo();
-        else void undo();
-      } else if (modifier && key === 'y') {
-        event.preventDefault();
-        void redo();
-      } else if (modifier && key === 'd') {
-        event.preventDefault();
-        void duplicateSelected();
-      } else if (modifier && key === 'a') {
-        event.preventDefault();
-        setSelected(objects.map((item) => item.id));
-      } else if (modifier && key === 'c' && selected.length) {
-        event.preventDefault();
-        clipboard.current = objects
-          .filter((item) => selected.includes(item.id))
-          .map((item) => ({ ...item }));
-      } else if (modifier && key === 'v' && clipboard.current.length) {
-        event.preventDefault();
-        const copies = clipboard.current.map((item) => ({
-          ...item,
-          id: id(),
-          x: item.x + 24,
-          y: item.y + 24,
-        }));
-        clipboard.current = copies.map((item) => ({ ...item }));
-        void (async () => {
-          for (const copy of copies) await commit('create', copy.id, copy);
-          setSelected(copies.map((item) => item.id));
-        })();
-      } else if (modifier && (key === '+' || key === '=')) {
-        event.preventDefault();
-        setZoom((value) => Math.min(2, value + 0.1));
-      } else if (modifier && key === '-') {
-        event.preventDefault();
-        setZoom((value) => Math.max(0.1, value - 0.1));
-      } else if (
-        (event.key === 'Delete' || event.key === 'Backspace') &&
-        selected.length &&
-        !readonly
-      ) {
-        event.preventDefault();
-        for (const itemId of selected) void commit('delete', itemId);
-        setSelected([]);
-      } else if (event.key === 'Escape') {
-        if (draft) event.preventDefault();
-        setDraft(null);
-        setDrag(null);
-        setSelected([]);
-        chooseTool('select');
-      } else if (!modifier && !event.altKey) {
-        const keys: Record<string, Tool> = {
-          v: 'select',
-          h: 'hand',
-          p: 'pen',
-          e: 'eraser',
-          r: 'rect',
-          o: 'ellipse',
-          d: 'diamond',
-          l: 'line',
-          t: 'text',
-        };
-        const next = keys[event.key.toLowerCase()];
-        if (next) chooseTool(next);
       }
     }
-    window.addEventListener('keydown', keyboard);
-    return () => window.removeEventListener('keydown', keyboard);
-  });
-
-  async function changeTitle() {
-    if (!board || board.role !== 'owner') return;
-    const title = window.prompt('Board name', board.title);
-    if (!title?.trim()) return;
-    if (isLocalBoard) {
-      const next = { ...board, title: title.trim() };
-      boardRef.current = next;
-      setBoard(next);
+    if (isEditable(event.target) || textEditor) return;
+    const modifier = event.metaKey || event.ctrlKey;
+    const key = event.key.toLowerCase();
+    if (key === ' ' && !event.repeat) {
+      setSpaceHeld(true);
+      event.preventDefault();
       return;
     }
+    if (modifier && key === 'z') {
+      event.preventDefault();
+      if (event.shiftKey) redo();
+      else undo();
+    } else if (modifier && key === 'y') {
+      event.preventDefault();
+      redo();
+    } else if (modifier && key === 'd') {
+      event.preventDefault();
+      pasteObjects(selectedObjects);
+    } else if (modifier && key === 'a') {
+      event.preventDefault();
+      setTool('select');
+      setSelected(objectsRef.current.map((item) => item.id));
+    } else if (modifier && key === 'c' && selectedObjects.length) {
+      clipboard.current = selectedObjects.map((item) => ({ ...item }));
+    } else if (modifier && key === 'x' && selectedObjects.length) {
+      clipboard.current = selectedObjects.map((item) => ({ ...item }));
+      deleteObjects(selected);
+    } else if (modifier && key === 'v' && clipboard.current.length) {
+      event.preventDefault();
+      const copies = pasteObjects(clipboard.current);
+      if (copies) clipboard.current = copies;
+    } else if (modifier && (key === '=' || key === '+')) {
+      event.preventDefault();
+      zoomAt(1.2);
+    } else if (modifier && key === '-') {
+      event.preventDefault();
+      zoomAt(1 / 1.2);
+    } else if (modifier && key === '0') {
+      event.preventDefault();
+      setView((current) => ({ ...current, zoom: 1 }));
+    } else if (event.shiftKey && key === '1') {
+      fitTo(unionBounds(objectsRef.current));
+    } else if ((key === 'delete' || key === 'backspace') && selected.length) {
+      event.preventDefault();
+      deleteObjects(selected);
+    } else if (key.startsWith('arrow') && selectedObjects.length && !readonly) {
+      event.preventDefault();
+      const step = event.shiftKey ? 10 : 1;
+      const dx = key === 'arrowleft' ? -step : key === 'arrowright' ? step : 0;
+      const dy = key === 'arrowup' ? -step : key === 'arrowdown' ? step : 0;
+      perform(
+        selectedObjects.map((item) => ({
+          type: 'update',
+          objectId: item.id,
+          fields: { x: item.x + dx, y: item.y + dy },
+        })),
+      );
+    } else if (key === 'escape') {
+      cancelGesture();
+      setSelected([]);
+    } else if (!modifier && !event.altKey) {
+      if (key === 'm' && call.joined) {
+        callRef.current?.setMuted(!call.muted);
+        return;
+      }
+      const next = TOOL_KEYS[key];
+      if (next) chooseTool(next);
+      else if (key === '?') setHelpOpen(true);
+    }
+  });
+
+  const onKeyUp = useEffectEvent((event: KeyboardEvent) => {
+    if (event.key === ' ') setSpaceHeld(false);
+  });
+
+  useEffect(() => {
+    const down = (event: KeyboardEvent) => onKeyDown(event);
+    const up = (event: KeyboardEvent) => onKeyUp(event);
+    const blur = () => setSpaceHeld(false);
+    window.addEventListener('keydown', down);
+    window.addEventListener('keyup', up);
+    window.addEventListener('blur', blur);
+    return () => {
+      window.removeEventListener('keydown', down);
+      window.removeEventListener('keyup', up);
+      window.removeEventListener('blur', blur);
+    };
+  }, []);
+
+  // ---- Board actions ----
+  async function renameBoard(title: string) {
+    setEditingTitle(false);
+    if (!board || board.role !== 'owner') return;
+    const trimmed = title.trim();
+    if (!trimmed || trimmed === board.title) return;
+    if (isLocal) return setBoard({ ...board, title: trimmed });
     try {
-      const next = await send<Board>(`/boards/${board.id}`, 'PATCH', {
-        title: title.trim(),
-      });
-      setBoard(next);
+      setBoard(
+        await send<Board>(`/boards/${board.id}`, 'PATCH', { title: trimmed }),
+      );
     } catch (error) {
       setNotice((error as Error).message);
     }
   }
 
-  function createAnotherLocalBoard() {
-    if (
-      objects.length &&
-      !window.confirm(
-        'This board is not saved. Start a new local board anyway?',
-      )
-    )
-      return;
-    router.push(`/board/local-${crypto.randomUUID()}`);
-  }
-
-  async function share() {
+  async function copyInvite() {
     if (!board?.inviteToken || board.inviteRevoked) return;
     const link = `${location.origin}/board/${board.id}?invite=${encodeURIComponent(board.inviteToken)}`;
     try {
@@ -1506,15 +1424,11 @@ export default function BoardPage() {
         'POST',
         {},
       );
-      setBoard((current) =>
-        current
-          ? {
-              ...current,
-              inviteToken: result.inviteToken,
-              inviteRevoked: false,
-            }
-          : current,
-      );
+      setBoard({
+        ...board,
+        inviteToken: result.inviteToken,
+        inviteRevoked: false,
+      });
       setNotice('A fresh invite link is ready. Previous links no longer work.');
     } catch (error) {
       setNotice((error as Error).message);
@@ -1525,15 +1439,13 @@ export default function BoardPage() {
     if (
       !board ||
       !window.confirm(
-        'Revoke this invite link? People who have already joined will keep access.',
+        'Turn off this invite link? People who already joined keep access.',
       )
     )
       return;
     try {
       await send(`/boards/${board.id}/invites`, 'DELETE');
-      setBoard((current) =>
-        current ? { ...current, inviteRevoked: true } : current,
-      );
+      setBoard({ ...board, inviteRevoked: true });
     } catch (error) {
       setNotice((error as Error).message);
     }
@@ -1542,8 +1454,19 @@ export default function BoardPage() {
   async function openSnapshots() {
     if (!board) return;
     try {
-      setSnapshots(await api<Snapshot[]>(`/boards/${board.id}/snapshots`));
+      setSnapshots(await api(`/boards/${board.id}/snapshots`));
       setSnapshotsOpen(true);
+    } catch (error) {
+      setNotice((error as Error).message);
+    }
+  }
+
+  async function saveSnapshot() {
+    if (!board) return;
+    try {
+      await send(`/boards/${board.id}/snapshots`, 'POST', {});
+      setSnapshots(await api(`/boards/${board.id}/snapshots`));
+      setNotice('Version saved.');
     } catch (error) {
       setNotice((error as Error).message);
     }
@@ -1553,19 +1476,17 @@ export default function BoardPage() {
     if (
       !board ||
       !window.confirm(
-        'Restore this version? Your current canvas items will be replaced.',
+        'Restore this version? The current canvas will be replaced for everyone.',
       )
     )
       return;
     try {
-      const next = await send<Board>(
+      const result = await send<{ objects: BoardObject[] }>(
         `/boards/${board.id}/snapshots/${snapshotId}/restore`,
         'POST',
         {},
       );
-      boardRef.current = next;
-      setBoard(next);
-      setObjects(next.objects);
+      setObjects(result.objects);
       setSelected([]);
       setSnapshotsOpen(false);
       setNotice('Version restored.');
@@ -1578,36 +1499,6 @@ export default function BoardPage() {
     if (!board) return;
     try {
       await send(`/boards/${board.id}/members/${memberId}`, 'PATCH', { role });
-      setBoard((current) =>
-        current
-          ? {
-              ...current,
-              members: current.members.map((member) =>
-                member.userId === memberId ? { ...member, role } : member,
-              ),
-            }
-          : current,
-      );
-    } catch (error) {
-      setNotice((error as Error).message);
-    }
-  }
-
-  async function sendChat(event: React.FormEvent) {
-    event.preventDefault();
-    if (!messageInput.trim() || !board) return;
-    try {
-      const message = await send<ChatMessage>(
-        `/boards/${board.id}/messages`,
-        'POST',
-        { text: messageInput.trim() },
-      );
-      setMessages((current) =>
-        current.some((item) => item.id === message.id)
-          ? current
-          : [...current, message],
-      );
-      setMessageInput('');
     } catch (error) {
       setNotice((error as Error).message);
     }
@@ -1616,51 +1507,88 @@ export default function BoardPage() {
   async function toggleLock() {
     if (!board) return;
     try {
-      const next = await send<Board>(`/boards/${board.id}`, 'PATCH', {
-        locked: !board.locked,
-      });
-      setBoard(next);
+      setBoard(
+        await send<Board>(`/boards/${board.id}`, 'PATCH', {
+          locked: !board.locked,
+        }),
+      );
     } catch (error) {
       setNotice((error as Error).message);
     }
   }
 
-  async function saveSnapshot() {
-    if (!board) return;
+  function sendChat(text: string) {
+    const client = clientRef.current;
+    if (!client || !session) return;
+    const clientId = id();
+    if (!client.sendChat(clientId, text)) {
+      setNotice('You are offline. Your message was not sent.');
+      return;
+    }
+    setMessages((current) => [
+      ...current,
+      {
+        id: clientId,
+        userId: session.user.id,
+        name: session.user.name,
+        text,
+        createdAt: new Date().toISOString(),
+        pending: true,
+      },
+    ]);
+  }
+
+  async function addImage(file: File | undefined) {
+    if (!file || readonly) return;
     try {
-      await send(`/boards/${board.id}/snapshots`, 'POST', {});
-      setSnapshots(await api<Snapshot[]>(`/boards/${board.id}/snapshots`));
-      setNotice('Version saved.');
+      const image = await prepareImage(file);
+      const scale = Math.min(1, 520 / image.width, 380 / image.height);
+      const width = round(image.width * scale);
+      const height = round(image.height * scale);
+      const object = newObject(
+        'image',
+        {
+          x: view.x + size.width / view.zoom / 2 - width / 2,
+          y: view.y + size.height / view.zoom / 2 - height / 2,
+        },
+        { width, height, src: image.src },
+      );
+      perform([{ type: 'create', objectId: object.id, object }]);
+      setTool('select');
+      setSelected([object.id]);
     } catch (error) {
       setNotice((error as Error).message);
     }
   }
 
-  function startAudio() {
-    setNotice(
-      'Voice calling is not connected yet. Configure a LiveKit service before enabling microphone access.',
-    );
-  }
-
-  async function doExport(format: 'png' | 'pdf') {
-    if (!board) return;
+  async function doExport(format: 'png' | 'pdf' | 'svg') {
+    setExportOpen(false);
+    if (!board || !objectLayerRef.current) return;
     try {
-      await exportImage(objects, board.title, format);
+      await exportBoard(
+        objectLayerRef.current,
+        objectsRef.current,
+        board.title,
+        format,
+      );
     } catch (error) {
       setNotice((error as Error).message);
     }
   }
+
+  // ---- Render ----
+  if (!sessionChecked) return <main className="board-loading" />;
 
   if (!session)
     return (
       <main className="board-signin">
         <Link className="brand" href="/">
-          ✳ CollabBoard
+          <span className="brand-mark">✳</span> CollabBoard
         </Link>
         <div className="signin-card">
           <div className="signin-icon">✎</div>
-          <h1>Join the conversation.</h1>
-          <p>Add your name to open this board and work together.</p>
+          <h1>Join the board.</h1>
+          <p>Add your name so others know who’s drawing.</p>
           <form
             onSubmit={async (event) => {
               event.preventDefault();
@@ -1697,17 +1625,44 @@ export default function BoardPage() {
     return (
       <main className="board-loading">
         <Link className="brand" href="/">
-          ✳ CollabBoard
+          <span className="brand-mark">✳</span> CollabBoard
         </Link>
-        <div className="loading-orbit" />
-        <p>{notice || 'Opening your board…'}</p>
-        {notice && (
+        {!loadError && <div className="loading-orbit" />}
+        <p>{loadError || 'Opening your board…'}</p>
+        {loadError && (
           <Link className="button subtle" href="/">
             Back to boards
           </Link>
         )}
       </main>
     );
+
+  const scale = 1 / view.zoom;
+  const saveLabel = isLocal
+    ? 'Local · not saved'
+    : status === 'offline'
+      ? pending
+        ? `Offline · ${pending} unsynced`
+        : 'Reconnecting…'
+      : status === 'connecting'
+        ? 'Connecting…'
+        : pending
+          ? 'Saving…'
+          : 'All changes saved';
+  const editorObject = textEditor?.object;
+  const editorFont = editorObject ? defaultFontSize(editorObject) : 0;
+  const editorLayout =
+    editorObject && editorObject.kind === 'text'
+      ? layoutText(editorObject.text || ' ', editorFont)
+      : null;
+  const stageCursor = panning
+    ? 'grabbing'
+    : spaceHeld || tool === 'hand' || readonly
+      ? 'grab'
+      : undefined;
+  const otherPeople = onlinePeople.filter(
+    (peer) => peer.userId !== session.user.id,
+  );
 
   return (
     <main className="editor-shell">
@@ -1717,9 +1672,9 @@ export default function BoardPage() {
           className="brand editor-brand"
           onClick={(event) => {
             if (
-              isLocalBoard &&
+              isLocal &&
               objects.length &&
-              !window.confirm('This board is not saved. Leave this board?')
+              !window.confirm('This board is not saved. Leave it?')
             )
               event.preventDefault();
           }}
@@ -1728,293 +1683,178 @@ export default function BoardPage() {
           <span>CollabBoard</span>
         </Link>
         <div className="board-title-block">
-          <button
-            className="board-title"
-            onClick={() => void changeTitle()}
-            disabled={board.role !== 'owner'}
-          >
-            {board.title}
-            {board.role === 'owner' && <span className="title-chevron">⌄</span>}
-          </button>
-          <div className="save-indicator">
-            {isLocalBoard ? (
-              <span className="local-unsaved-label">Local · not saved</span>
-            ) : (
-              <>
-                <span
-                  className={`connection-dot ${saveStatus === 'error' ? 'offline' : status}`}
-                />
-                {saveStatus === 'saving'
-                  ? 'Saving…'
-                  : saveStatus === 'error'
-                    ? 'Save failed'
-                    : status === 'live'
-                      ? 'All changes saved'
-                      : status === 'offline'
-                        ? 'Reconnecting…'
-                        : 'Connecting…'}
-              </>
+          {editingTitle ? (
+            <input
+              className="board-title-input"
+              defaultValue={board.title}
+              maxLength={80}
+              autoFocus
+              aria-label="Board name"
+              onFocus={(event) => event.currentTarget.select()}
+              onBlur={(event) => void renameBoard(event.currentTarget.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') event.currentTarget.blur();
+                if (event.key === 'Escape') setEditingTitle(false);
+              }}
+            />
+          ) : (
+            <button
+              className="board-title"
+              onClick={() => setEditingTitle(true)}
+              disabled={board.role !== 'owner'}
+              title={board.role === 'owner' ? 'Rename board' : board.title}
+            >
+              {board.title}
+            </button>
+          )}
+          <div className="save-indicator" aria-live="polite">
+            {!isLocal && (
+              <span
+                className={`connection-dot ${status === 'live' && pending ? 'saving' : status}`}
+              />
             )}
+            {saveLabel}
           </div>
         </div>
-        <div className="top-history-actions" aria-label="History controls">
+        <div className="top-history-actions" aria-label="History">
           <button
             aria-label="Undo"
-            title="Undo · Ctrl/Cmd+Z"
+            title="Undo · Ctrl/⌘ Z"
             disabled={!canUndo || readonly}
-            onClick={() => void undo()}
+            onClick={undo}
           >
             ↶
           </button>
           <button
             aria-label="Redo"
-            title="Redo · Ctrl/Cmd+Shift+Z"
+            title="Redo · Ctrl/⌘ Shift Z"
             disabled={!canRedo || readonly}
-            onClick={() => void redo()}
+            onClick={redo}
           >
             ↷
           </button>
         </div>
-        <div className="top-zoom-controls" aria-label="Canvas zoom controls">
-          <button
-            aria-label="Zoom out"
-            onClick={() => setZoom((value) => Math.max(0.1, value - 0.1))}
-          >
-            −
-          </button>
-          <button
-            className="top-zoom-value"
-            onClick={() => {
-              setZoom(1);
-              setViewport({ x: 0, y: 0 });
-            }}
-          >
-            {Math.round(zoom * 100)}%
-          </button>
-          <button
-            aria-label="Zoom in"
-            onClick={() => setZoom((value) => Math.min(2, value + 0.1))}
-          >
-            ＋
-          </button>
-        </div>
         <div className="topbar-spacer" />
-        {isLocalBoard ? (
-          <>
-            <span className="local-mode-badge">Local board</span>
-            <button
-              className="button subtle new-local-board"
-              onClick={createAnotherLocalBoard}
-            >
-              + New
-            </button>
-          </>
+        {isLocal ? (
+          <span className="local-mode-badge">Local board</span>
         ) : (
           <>
             <button
               className="participant-stack"
-              title="Participants and roles"
+              title="People on this board"
               onClick={() => setMembersOpen(true)}
             >
-              {board.members.slice(0, 3).map((member, index) => (
-                <span key={member.userId} className={`avatar avatar-${index}`}>
-                  {member.name[0]?.toUpperCase()}
+              {onlinePeople.slice(0, 4).map((peer) => (
+                <span
+                  key={peer.userId}
+                  className="avatar"
+                  style={{ background: peer.color }}
+                  title={peer.userId === session.user.id ? 'You' : peer.name}
+                >
+                  {peer.name[0]?.toUpperCase()}
                 </span>
               ))}
-              {board.members.length > 3 && (
+              {onlinePeople.length > 4 && (
                 <span className="avatar more-avatar">
-                  +{board.members.length - 3}
+                  +{onlinePeople.length - 4}
                 </span>
               )}
             </button>
+            <CallControls
+              call={call}
+              peers={peers}
+              selfPeerId={selfPeerId}
+              disabled={status !== 'live'}
+              onJoin={() => void callRef.current?.join()}
+              onLeave={() => callRef.current?.leave()}
+              onToggleMute={() => callRef.current?.setMuted(!call.muted)}
+            />
             <button
               className={`top-action ${chatOpen ? 'is-active' : ''}`}
-              onClick={() => setChatOpen((value) => !value)}
+              onClick={() => {
+                setChatOpen((open) => !open);
+                setUnread(0);
+              }}
+              aria-label={unread ? `Chat, ${unread} unread` : 'Chat'}
             >
-              <span className="action-glyph">▤</span>
-              <span>Chat</span>
-              {messages.length > 0 && <span className="unread-dot" />}
+              <span className="action-glyph" aria-hidden="true">
+                💬
+              </span>
+              <span className="top-action-label">Chat</span>
+              {unread > 0 && !chatOpen && (
+                <span className="unread-badge">
+                  {unread > 9 ? '9+' : unread}
+                </span>
+              )}
             </button>
-            <button
-              className="top-action audio-action"
-              onClick={() => void startAudio()}
-              title="Check microphone and connect audio"
-            >
-              <span className="action-glyph">◖</span>
-              <span>Audio</span>
-            </button>
-            <button
-              className="button share-button"
-              onClick={() => setShareOpen(true)}
-              disabled={board.role !== 'owner'}
-            >
-              ↗ Share
-            </button>
+            {board.role === 'owner' && (
+              <button
+                className="button share-button"
+                onClick={() => setShareOpen(true)}
+              >
+                Share
+              </button>
+            )}
           </>
         )}
         <div className="export-menu">
-          <button className="button subtle export-button">
-            Export <span>⌄</span>
+          <button
+            className="button subtle export-button"
+            aria-expanded={exportOpen}
+            onClick={() => setExportOpen((open) => !open)}
+          >
+            Export
           </button>
-          <div className="export-options">
-            <button onClick={() => void doExport('png')}>Download PNG</button>
-            <button onClick={() => void doExport('pdf')}>Download PDF</button>
-          </div>
+          {exportOpen && (
+            <div className="export-options" role="menu">
+              <button role="menuitem" onClick={() => void doExport('png')}>
+                PNG image
+              </button>
+              <button role="menuitem" onClick={() => void doExport('svg')}>
+                SVG vector
+              </button>
+              <button role="menuitem" onClick={() => void doExport('pdf')}>
+                PDF document
+              </button>
+            </div>
+          )}
         </div>
         <ThemeToggle />
       </header>
 
       <section className="editor-main">
         <aside className="tool-rail" aria-label="Drawing tools">
-          <div className="tool-group">
-            <button
-              className={`tool-button ${tool === 'select' ? 'tool-selected' : ''}`}
-              onClick={() => chooseTool('select')}
-              aria-pressed={tool === 'select'}
-              title="Select · V"
-            >
-              <span>↖</span>
-              <small>Select</small>
-            </button>
-            <button
-              className={`tool-button ${tool === 'hand' ? 'tool-selected' : ''}`}
-              onClick={() => chooseTool('hand')}
-              aria-pressed={tool === 'hand'}
-              title="Pan · H"
-            >
-              <span>✋</span>
-              <small>Pan</small>
-            </button>
-          </div>
+          {TOOLS.map((item, index) => (
+            <div key={item.tool} className="tool-slot">
+              {(index === 2 || index === 5 || index === 10) && (
+                <div className="rail-divider" />
+              )}
+              <button
+                className={`tool-button ${tool === item.tool ? 'tool-selected' : ''}`}
+                onClick={() => chooseTool(item.tool)}
+                aria-pressed={tool === item.tool}
+                aria-label={item.label}
+                title={`${item.label}${item.key ? ` · ${item.key}` : ''}`}
+                disabled={
+                  readonly && item.tool !== 'select' && item.tool !== 'hand'
+                }
+              >
+                <span aria-hidden="true">{item.icon}</span>
+                <small>{item.label}</small>
+              </button>
+            </div>
+          ))}
           <div className="rail-divider" />
-          <div className="tool-group">
-            <button
-              className={`tool-button ${tool === 'pen' ? 'tool-selected' : ''}`}
-              onClick={() => chooseTool('pen')}
-              aria-pressed={tool === 'pen'}
-              title="Pen · P"
-            >
-              <span>✎</span>
-              <small>Pen</small>
-            </button>
-            <button
-              className={`tool-button ${tool === 'highlighter' ? 'tool-selected' : ''}`}
-              onClick={() => chooseTool('highlighter')}
-              aria-pressed={tool === 'highlighter'}
-              title="Highlighter"
-            >
-              <span>▰</span>
-              <small>Highlight</small>
-            </button>
-            <button
-              className={`tool-button ${tool === 'eraser' ? 'tool-selected' : ''}`}
-              onClick={() => chooseTool('eraser')}
-              aria-pressed={tool === 'eraser'}
-              title="Eraser · E"
-            >
-              <span>⌫</span>
-              <small>Eraser</small>
-            </button>
-          </div>
-          <div className="rail-divider" />
-          <div className="tool-group">
-            <button
-              className={`tool-button ${tool === 'rect' ? 'tool-selected' : ''}`}
-              onClick={() => chooseTool('rect')}
-              aria-pressed={tool === 'rect'}
-              title="Rectangle · R"
-            >
-              <span>▱</span>
-              <small>Shape</small>
-            </button>
-            <button
-              className={`tool-button ${tool === 'ellipse' ? 'tool-selected' : ''}`}
-              onClick={() => chooseTool('ellipse')}
-              aria-pressed={tool === 'ellipse'}
-              title="Ellipse · O"
-            >
-              <span>◯</span>
-              <small>Ellipse</small>
-            </button>
-            <button
-              className={`tool-button ${tool === 'diamond' ? 'tool-selected' : ''}`}
-              onClick={() => chooseTool('diamond')}
-              aria-pressed={tool === 'diamond'}
-              title="Diamond · D"
-              aria-label="Diamond tool"
-            >
-              <span>◇</span>
-              <small>Diamond</small>
-            </button>
-            <button
-              className={`tool-button ${tool === 'line' ? 'tool-selected' : ''}`}
-              onClick={() => chooseTool('line')}
-              aria-pressed={tool === 'line'}
-              title="Line · L"
-              aria-label="Line tool"
-            >
-              <span>／</span>
-              <small>Line</small>
-            </button>
-            <button
-              className={`tool-button ${tool === 'arrow' ? 'tool-selected' : ''}`}
-              onClick={() => chooseTool('arrow')}
-              aria-pressed={tool === 'arrow'}
-              title="Arrow"
-            >
-              <span>↗</span>
-              <small>Arrow</small>
-            </button>
-          </div>
-          <div className="rail-divider" />
-          <div className="tool-group">
-            <button
-              className={`tool-button ${tool === 'text' ? 'tool-selected' : ''}`}
-              onClick={() => chooseTool('text')}
-              aria-pressed={tool === 'text'}
-              title="Text · T"
-            >
-              <span>T</span>
-              <small>Text</small>
-            </button>
-            <button
-              className={`tool-button ${tool === 'sticky' ? 'tool-selected' : ''}`}
-              onClick={() => chooseTool('sticky')}
-              aria-pressed={tool === 'sticky'}
-              title="Sticky note"
-            >
-              <span className="sticky-icon">▧</span>
-              <small>Note</small>
-            </button>
-            <button
-              className="tool-button"
-              onClick={() => imagePicker.current?.click()}
-              title="Upload an image"
-            >
-              <span>▧</span>
-              <small>Image</small>
-            </button>
-          </div>
-          <div className="rail-bottom">
-            <button
-              className="tool-button"
-              onClick={() => void undo()}
-              disabled={!canUndo || readonly}
-              title="Undo · Ctrl Z"
-            >
-              <span>↶</span>
-              <small>Undo</small>
-            </button>
-            <button
-              className="tool-button"
-              onClick={() => void redo()}
-              disabled={!canRedo || readonly}
-              title="Redo · Ctrl Y"
-            >
-              <span>↷</span>
-              <small>Redo</small>
-            </button>
-          </div>
+          <button
+            className="tool-button"
+            onClick={() => imagePicker.current?.click()}
+            title="Add an image"
+            aria-label="Add an image"
+            disabled={readonly}
+          >
+            <span aria-hidden="true">🖼</span>
+            <small>Image</small>
+          </button>
         </aside>
 
         <div className="canvas-region">
@@ -2025,35 +1865,45 @@ export default function BoardPage() {
             accept="image/png,image/jpeg,image/webp"
             aria-label="Choose an image file"
             onChange={(event) => {
-              chooseImage(event.currentTarget.files?.[0]);
+              void addImage(event.currentTarget.files?.[0]);
               event.currentTarget.value = '';
             }}
           />
           {notice && (
-            <button className="toast-notice" onClick={() => setNotice('')}>
-              {notice}
-              <span>×</span>
-            </button>
+            <div className="toast-notice" role="status">
+              <span>{notice}</span>
+              <button aria-label="Dismiss" onClick={() => setNotice('')}>
+                ×
+              </button>
+            </div>
           )}
           {readonly && (
             <div className="readonly-banner">
-              {board.locked
+              {board.locked && board.role !== 'viewer'
                 ? 'Editing is paused by the board owner.'
                 : 'You have view-only access.'}
+            </div>
+          )}
+          {!isLocal && status === 'offline' && (
+            <div className="offline-banner" role="status">
+              Connection lost — reconnecting. Your edits are kept and will sync.
             </div>
           )}
           <svg
             ref={stageRef}
             className={`board-stage tool-${tool}`}
-            viewBox={`${viewport.x} ${viewport.y} ${canvasWidth / zoom} ${canvasHeight / zoom}`}
-            preserveAspectRatio="none"
-            onPointerDown={onStageDown}
-            onPointerMove={onStageMove}
-            onPointerUp={onStageUp}
-            onPointerCancel={() => {
-              setDraft(null);
-              setDrag(null);
+            style={stageCursor ? { cursor: stageCursor } : undefined}
+            viewBox={`${view.x} ${view.y} ${size.width / view.zoom} ${size.height / view.zoom}`}
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={onPointerUp}
+            onPointerCancel={(event) => {
+              pointers.current.delete(event.pointerId);
+              cancelGesture();
             }}
+            onPointerLeave={() => clientRef.current?.liveCursor(null)}
+            onDoubleClick={onDoubleClick}
+            onContextMenu={(event) => event.preventDefault()}
           >
             <defs>
               <pattern
@@ -2062,144 +1912,122 @@ export default function BoardPage() {
                 height="24"
                 patternUnits="userSpaceOnUse"
               >
-                <circle cx="1.2" cy="1.2" r="1.1" fill="#dce3dc" />
+                <circle
+                  cx="1"
+                  cy="1"
+                  r={Math.min(1.6, 1.1 * scale)}
+                  fill="#c9d3cb"
+                />
               </pattern>
-              <marker
-                id="arrowhead"
-                markerWidth="10"
-                markerHeight="8"
-                refX="9"
-                refY="4"
-                orient="auto"
-              >
-                <path d="M0 0L10 4L0 8z" fill={color} />
-              </marker>
             </defs>
             <rect
-              x={viewport.x - canvasWidth * 2}
-              y={viewport.y - canvasHeight * 2}
-              width={canvasWidth * 5}
-              height={canvasHeight * 5}
-              fill="#fbfcf9"
+              className="stage-grid"
+              x={view.x}
+              y={view.y}
+              width={size.width / view.zoom}
+              height={size.height / view.zoom}
+              fill={view.zoom > 0.35 ? 'url(#dot-grid)' : 'transparent'}
             />
-            <rect
-              x={viewport.x - canvasWidth * 2}
-              y={viewport.y - canvasHeight * 2}
-              width={canvasWidth * 5}
-              height={canvasHeight * 5}
-              fill="url(#dot-grid)"
-            />
-            {objects.map((item) => (
-              <BoardShape
-                key={item.id}
-                item={item}
-                selected={selected.includes(item.id)}
-                readonly={!!readonly}
-                handTool={tool === 'hand'}
-                onSelect={() => setSelected([item.id])}
-                onDragStart={beginDrag}
-                onResizeStart={beginResize}
-                onUpdateText={(text) =>
-                  void commit('update', item.id, undefined, { text })
-                }
-                onDelete={() => void commit('delete', item.id)}
-              />
-            ))}
-            {draft?.length &&
-              (tool === 'pen' || tool === 'highlighter' ? (
-                <polyline
-                  points={draft
-                    .map((point) => `${point.x},${point.y}`)
-                    .join(' ')}
-                  fill="none"
-                  stroke={color}
-                  strokeOpacity={tool === 'highlighter' ? 0.45 : 1}
-                  strokeWidth={
-                    tool === 'highlighter' ? strokeWidth * 4 : strokeWidth
-                  }
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              ) : tool === 'line' || tool === 'arrow' ? (
-                <path
-                  d={`M ${draft[0]!.x} ${draft[0]!.y} L ${draft.at(-1)!.x} ${draft.at(-1)!.y}`}
-                  fill="none"
-                  stroke={color}
-                  strokeWidth={strokeWidth}
-                  markerEnd={tool === 'arrow' ? 'url(#arrowhead)' : undefined}
-                />
-              ) : tool === 'diamond' ? (
-                <polygon
-                  points={`${(draft[0]!.x + draft.at(-1)!.x) / 2},${draft[0]!.y} ${draft.at(-1)!.x},${(draft[0]!.y + draft.at(-1)!.y) / 2} ${(draft[0]!.x + draft.at(-1)!.x) / 2},${draft.at(-1)!.y} ${draft[0]!.x},${(draft[0]!.y + draft.at(-1)!.y) / 2}`}
-                  fill={`${color}14`}
-                  stroke={color}
-                />
-              ) : tool === 'ellipse' ? (
-                <ellipse
-                  cx={(draft[0]!.x + draft.at(-1)!.x) / 2}
-                  cy={(draft[0]!.y + draft.at(-1)!.y) / 2}
-                  rx={Math.abs(draft[0]!.x - draft.at(-1)!.x) / 2}
-                  ry={Math.abs(draft[0]!.y - draft.at(-1)!.y) / 2}
-                  fill={`${color}14`}
-                  stroke={color}
-                  strokeDasharray="5 4"
-                />
-              ) : (
-                <rect
-                  x={Math.min(draft[0]!.x, draft.at(-1)!.x)}
-                  y={Math.min(draft[0]!.y, draft.at(-1)!.y)}
-                  width={Math.abs(draft[0]!.x - draft.at(-1)!.x)}
-                  height={Math.abs(draft[0]!.y - draft.at(-1)!.y)}
-                  fill="none"
-                  stroke={color}
-                  strokeDasharray="5 4"
-                />
-              ))}
-            {peersState
-              .filter(
-                (peer) =>
-                  peer.userId !== session.user.id &&
-                  peer.x !== undefined &&
-                  peer.y !== undefined,
-              )
-              .map((peer) => (
-                <g
-                  key={peer.userId}
-                  transform={`translate(${peer.x} ${peer.y})`}
-                  pointerEvents="none"
-                >
-                  <path
-                    d="M0 0L0 19L5 14L10 23L14 21L9 12L17 12Z"
-                    fill={peer.color}
+            {textEditor && !textEditor.isNew && (
+              <style>{`[data-oid="${CSS.escape(textEditor.object.id)}"]{visibility:hidden}`}</style>
+            )}
+            <g ref={objectLayerRef} className="objects-layer">
+              {objects.map((item) => {
+                const isSelected = selected.includes(item.id);
+                return (
+                  <BoardShape
+                    key={item.id}
+                    item={item}
+                    selected={isSelected}
+                    scale={isSelected ? scale : 1}
+                    showHandle={
+                      isSelected && selected.length === 1 && !readonly
+                    }
                   />
-                  <text
-                    x="20"
-                    y="19"
-                    fill={peer.color}
-                    fontSize="14"
-                    fontWeight="700"
-                  >
-                    {peer.name}
-                  </text>
-                </g>
-              ))}
+                );
+              })}
+            </g>
+            <RemoteLayer activity={remote} peers={peers} zoom={view.zoom} />
+            <LocalOverlay ref={overlayRef} zoom={view.zoom} />
           </svg>
-          {objects.length === 0 && (
+
+          {editorObject && (
+            <textarea
+              className={`canvas-text-editor ${editorObject.kind === 'sticky' ? 'sticky-editor' : ''}`}
+              aria-label={
+                editorObject.kind === 'sticky' ? 'Sticky note text' : 'Text'
+              }
+              autoFocus
+              value={editorObject.text ?? ''}
+              placeholder={
+                editorObject.kind === 'sticky' ? 'Write a note…' : 'Type here'
+              }
+              spellCheck
+              style={{
+                left: (editorObject.x - view.x) * view.zoom,
+                top: (editorObject.y - view.y) * view.zoom,
+                fontSize: editorFont * view.zoom,
+                lineHeight: LINE_HEIGHT,
+                fontFamily: FONT_FAMILY,
+                color:
+                  editorObject.kind === 'sticky'
+                    ? '#2c3a33'
+                    : editorObject.color,
+                ...(editorObject.kind === 'sticky'
+                  ? {
+                      width: (editorObject.width ?? 200) * view.zoom,
+                      height: (editorObject.height ?? 200) * view.zoom,
+                      padding: STICKY_PADDING * view.zoom,
+                      background: `linear-gradient(${editorObject.color.slice(0, 7)}59, ${editorObject.color.slice(0, 7)}59), #fffdf6`,
+                    }
+                  : {
+                      width:
+                        Math.max(80, editorLayout!.width + editorFont) *
+                        view.zoom,
+                      height: editorLayout!.height * view.zoom,
+                    }),
+              }}
+              onChange={(event) => {
+                const object = { ...editorObject, text: event.target.value };
+                setTextEditor({ ...textEditor!, object });
+                clientRef.current?.liveUpsert([object]);
+              }}
+              onBlur={finishText}
+              onKeyDown={(event) => {
+                if (
+                  event.key === 'Escape' ||
+                  (event.key === 'Enter' && (event.metaKey || event.ctrlKey))
+                ) {
+                  event.preventDefault();
+                  event.currentTarget.blur();
+                }
+              }}
+            />
+          )}
+
+          {objects.length === 0 && !textEditor && (
             <div className="canvas-empty-hint">
               <span className="hint-star">✳</span>
-              <p>Pick a tool and start anywhere.</p>
-              <small>Everything you make is shared as you go.</small>
+              <p>
+                {readonly
+                  ? 'Nothing here yet.'
+                  : 'Pick a tool and start anywhere.'}
+              </p>
+              <small>
+                {isLocal
+                  ? 'This board lives only in this tab.'
+                  : 'Everything appears for everyone as you draw.'}
+              </small>
             </div>
           )}
-          <div className="canvas-help-chip">
-            {readonly
-              ? 'View mode'
-              : tool === 'select'
-                ? 'Select and move · Del to remove'
-                : tool === 'pen'
-                  ? 'Draw freely on the canvas'
-                  : `Click or drag to use ${tool}`}
-          </div>
+          {otherPeople.length > 0 && !isLocal && (
+            <div className="presence-chip" aria-live="polite">
+              <span className="connection-dot live" />
+              {otherPeople.length === 1
+                ? `${otherPeople[0]!.name} is here`
+                : `${otherPeople.length} others here`}
+            </div>
+          )}
         </div>
 
         <aside
@@ -2212,177 +2040,159 @@ export default function BoardPage() {
           >
             ×
           </button>
-          {selectedObject && selected.length === 1 ? (
+          {selectedObject ? (
             <>
               <div className="panel-heading">
                 <div>
-                  <p className="eyebrow">OBJECT</p>
+                  <p className="eyebrow">SELECTED</p>
                   <h2>
                     {selectedObject.kind === 'sticky'
                       ? 'Sticky note'
-                      : selectedObject.kind[0]!.toUpperCase() +
-                        selectedObject.kind.slice(1)}
+                      : selectedObject.kind === 'path'
+                        ? 'Drawing'
+                        : selectedObject.kind[0]!.toUpperCase() +
+                          selectedObject.kind.slice(1)}
                   </h2>
                 </div>
-                <button
-                  className="icon-button"
-                  title="Delete selected"
-                  onClick={() => void commit('delete', selectedObject.id)}
-                >
-                  ⌫
-                </button>
               </div>
-              {(selectedObject.kind === 'text' ||
-                selectedObject.kind === 'sticky') && (
-                <label className="property-label">
-                  Text
-                  <textarea
-                    value={selectedObject.text ?? ''}
-                    maxLength={2000}
-                    onFocus={() => {
-                      textEditOrigins.current[selectedObject.id] = {
-                        ...selectedObject,
-                      };
-                    }}
-                    onChange={(event) =>
-                      setObjects((current) =>
-                        current.map((item) =>
-                          item.id === selectedObject.id
-                            ? { ...item, text: event.target.value }
-                            : item,
-                        ),
-                      )
-                    }
-                    onBlur={(event) =>
-                      (() => {
-                        const origin =
-                          textEditOrigins.current[selectedObject.id];
-                        delete textEditOrigins.current[selectedObject.id];
-                        void commit(
-                          'update',
-                          selectedObject.id,
-                          undefined,
-                          { text: event.target.value },
-                          origin,
-                        );
-                      })()
-                    }
-                  />
-                </label>
-              )}
               {selectedObject.kind !== 'image' && (
                 <div className="property-section">
-                  <span className="property-label">Color</span>
+                  <span className="property-label">
+                    {selectedObject.kind === 'sticky' ? 'Note color' : 'Color'}
+                  </span>
                   <div className="color-swatches">
-                    {colors.map((swatch) => (
+                    {(selectedObject.kind === 'sticky'
+                      ? STICKY_COLORS
+                      : COLORS
+                    ).map((swatch) => (
                       <button
                         key={swatch}
-                        aria-label={`Set color ${swatch}`}
-                        className={`color-swatch ${selectedObject.color === swatch ? 'swatch-selected' : ''}`}
+                        aria-label={`Color ${swatch}`}
+                        className={`color-swatch ${selectedObject.color.slice(0, 7) === swatch ? 'swatch-selected' : ''}`}
                         style={{ background: swatch }}
+                        disabled={readonly}
                         onClick={() =>
-                          void commit('update', selectedObject.id, undefined, {
-                            color: swatch,
+                          updateSelected({
+                            color:
+                              selectedObject.color.length === 9
+                                ? `${swatch}${selectedObject.color.slice(7)}`
+                                : swatch,
                           })
                         }
                       />
                     ))}
+                    <input
+                      className="custom-color"
+                      type="color"
+                      aria-label="Custom color"
+                      value={selectedObject.color.slice(0, 7)}
+                      disabled={readonly}
+                      onChange={(event) =>
+                        updateSelected({ color: event.target.value })
+                      }
+                    />
                   </div>
-                  <input
-                    className="custom-color"
-                    type="color"
-                    aria-label="Choose a custom color"
-                    value={selectedObject.color.slice(0, 7)}
-                    onChange={(event) =>
-                      void commit('update', selectedObject.id, undefined, {
-                        color: event.target.value,
-                      })
-                    }
-                  />
                 </div>
               )}
               {['rect', 'ellipse', 'diamond'].includes(selectedObject.kind) && (
-                <label className="property-label">
-                  Fill color
-                  <input
-                    className="custom-color"
-                    type="color"
-                    aria-label="Choose fill color"
-                    value={selectedObject.fillColor ?? '#ffffff'}
-                    onChange={(event) =>
-                      void commit('update', selectedObject.id, undefined, {
-                        fillColor: event.target.value,
-                      })
-                    }
-                  />
-                </label>
+                <div className="property-section">
+                  <span className="property-label">Fill</span>
+                  <div className="fill-options">
+                    <button
+                      className={!selectedObject.fillColor ? 'is-active' : ''}
+                      disabled={readonly}
+                      onClick={() =>
+                        updateSelected({
+                          fillColor: `${selectedObject.color.slice(0, 7)}1f`,
+                        })
+                      }
+                    >
+                      Tint
+                    </button>
+                    <button
+                      className={
+                        selectedObject.fillColor?.endsWith('00')
+                          ? 'is-active'
+                          : ''
+                      }
+                      disabled={readonly}
+                      onClick={() => updateSelected({ fillColor: '#ffffff00' })}
+                    >
+                      None
+                    </button>
+                    <button
+                      className={
+                        selectedObject.fillColor?.length === 7
+                          ? 'is-active'
+                          : ''
+                      }
+                      disabled={readonly}
+                      onClick={() =>
+                        updateSelected({
+                          fillColor: selectedObject.color.slice(0, 7),
+                        })
+                      }
+                    >
+                      Solid
+                    </button>
+                  </div>
+                </div>
               )}
               {(selectedObject.kind === 'text' ||
                 selectedObject.kind === 'sticky') && (
                 <label className="property-label">
-                  Font size
-                  <span>
-                    {selectedObject.fontSize ??
-                      (selectedObject.kind === 'sticky' ? 18 : 30)}
-                    px
-                  </span>
+                  Text size <span>{defaultFontSize(selectedObject)}px</span>
                   <input
                     type="range"
                     min="12"
-                    max="64"
-                    value={
-                      selectedObject.fontSize ??
-                      (selectedObject.kind === 'sticky' ? 18 : 30)
-                    }
-                    onPointerDown={() => beginPropertyEdit(selectedObject)}
-                    onKeyDown={() => beginPropertyEdit(selectedObject)}
+                    max="96"
+                    disabled={readonly}
+                    value={defaultFontSize(selectedObject)}
                     onChange={(event) =>
-                      previewObjectFields(selectedObject.id, {
+                      previewProperty(selectedObject, {
                         fontSize: Number(event.target.value),
                       })
                     }
                     onPointerUp={(event) =>
-                      finishPropertyEdit(selectedObject, {
+                      commitProperty(selectedObject, {
                         fontSize: Number(event.currentTarget.value),
                       })
                     }
                     onKeyUp={(event) =>
-                      finishPropertyEdit(selectedObject, {
+                      commitProperty(selectedObject, {
                         fontSize: Number(event.currentTarget.value),
                       })
                     }
                   />
                 </label>
               )}
-              {selectedObject.kind !== 'text' &&
-                selectedObject.kind !== 'image' && (
-                  <label className="property-label">
-                    Stroke <span>{selectedObject.strokeWidth}px</span>
-                    <input
-                      type="range"
-                      min="1"
-                      max="18"
-                      value={selectedObject.strokeWidth}
-                      onPointerDown={() => beginPropertyEdit(selectedObject)}
-                      onKeyDown={() => beginPropertyEdit(selectedObject)}
-                      onChange={(event) =>
-                        previewObjectFields(selectedObject.id, {
-                          strokeWidth: Number(event.target.value),
-                        })
-                      }
-                      onPointerUp={(event) =>
-                        finishPropertyEdit(selectedObject, {
-                          strokeWidth: Number(event.currentTarget.value),
-                        })
-                      }
-                      onKeyUp={(event) =>
-                        finishPropertyEdit(selectedObject, {
-                          strokeWidth: Number(event.currentTarget.value),
-                        })
-                      }
-                    />
-                  </label>
-                )}
+              {!['text', 'image', 'sticky'].includes(selectedObject.kind) && (
+                <label className="property-label">
+                  Stroke <span>{selectedObject.strokeWidth}px</span>
+                  <input
+                    type="range"
+                    min="1"
+                    max="48"
+                    disabled={readonly}
+                    value={selectedObject.strokeWidth}
+                    onChange={(event) =>
+                      previewProperty(selectedObject, {
+                        strokeWidth: Number(event.target.value),
+                      })
+                    }
+                    onPointerUp={(event) =>
+                      commitProperty(selectedObject, {
+                        strokeWidth: Number(event.currentTarget.value),
+                      })
+                    }
+                    onKeyUp={(event) =>
+                      commitProperty(selectedObject, {
+                        strokeWidth: Number(event.currentTarget.value),
+                      })
+                    }
+                  />
+                </label>
+              )}
               <label className="property-label">
                 Opacity{' '}
                 <span>{Math.round((selectedObject.opacity ?? 1) * 100)}%</span>
@@ -2390,38 +2200,41 @@ export default function BoardPage() {
                   type="range"
                   min="10"
                   max="100"
+                  disabled={readonly}
                   value={Math.round((selectedObject.opacity ?? 1) * 100)}
-                  onPointerDown={() => beginPropertyEdit(selectedObject)}
-                  onKeyDown={() => beginPropertyEdit(selectedObject)}
                   onChange={(event) =>
-                    previewObjectFields(selectedObject.id, {
+                    previewProperty(selectedObject, {
                       opacity: Number(event.target.value) / 100,
                     })
                   }
                   onPointerUp={(event) =>
-                    finishPropertyEdit(selectedObject, {
+                    commitProperty(selectedObject, {
                       opacity: Number(event.currentTarget.value) / 100,
                     })
                   }
                   onKeyUp={(event) =>
-                    finishPropertyEdit(selectedObject, {
+                    commitProperty(selectedObject, {
                       opacity: Number(event.currentTarget.value) / 100,
                     })
                   }
                 />
               </label>
-              <button
-                className="button subtle full-width"
-                onClick={() => void duplicateSelected()}
-              >
-                Duplicate object
-              </button>
-              <button
-                className="button danger full-width"
-                onClick={() => void commit('delete', selectedObject.id)}
-              >
-                Delete object
-              </button>
+              <div className="panel-actions">
+                <button
+                  className="button subtle"
+                  disabled={readonly}
+                  onClick={() => pasteObjects(selectedObjects)}
+                >
+                  Duplicate
+                </button>
+                <button
+                  className="button danger"
+                  disabled={readonly}
+                  onClick={() => deleteObjects(selected)}
+                >
+                  Delete
+                </button>
+              </div>
             </>
           ) : selected.length > 1 ? (
             <>
@@ -2431,89 +2244,132 @@ export default function BoardPage() {
                   <h2>{selected.length} objects</h2>
                 </div>
               </div>
-              <button
-                className="button subtle full-width"
-                onClick={() => void duplicateSelected()}
-              >
-                Duplicate selection
-              </button>
-              <button
-                className="button danger full-width"
-                onClick={() => void deleteSelected()}
-              >
-                Delete selection
-              </button>
+              <div className="property-section">
+                <span className="property-label">Color</span>
+                <div className="color-swatches">
+                  {COLORS.map((swatch) => (
+                    <button
+                      key={swatch}
+                      aria-label={`Color ${swatch}`}
+                      className="color-swatch"
+                      style={{ background: swatch }}
+                      disabled={readonly}
+                      onClick={() => updateSelected({ color: swatch })}
+                    />
+                  ))}
+                </div>
+              </div>
+              <div className="panel-actions">
+                <button
+                  className="button subtle"
+                  disabled={readonly}
+                  onClick={() => pasteObjects(selectedObjects)}
+                >
+                  Duplicate
+                </button>
+                <button
+                  className="button danger"
+                  disabled={readonly}
+                  onClick={() => deleteObjects(selected)}
+                >
+                  Delete
+                </button>
+              </div>
             </>
           ) : (
             <>
               <div className="panel-heading">
                 <div>
-                  <p className="eyebrow">QUICK STYLE</p>
-                  <h2>Make it yours</h2>
+                  <p className="eyebrow">
+                    {tool === 'sticky' ? 'NOTE' : 'PEN & SHAPES'}
+                  </p>
+                  <h2>Style</h2>
                 </div>
-                <span className="panel-spark">✳</span>
               </div>
               <div className="property-section">
                 <span className="property-label">Color</span>
                 <div className="color-swatches">
-                  {colors.map((swatch) => (
-                    <button
-                      key={swatch}
-                      aria-label={`Set color ${swatch}`}
-                      className={`color-swatch ${color === swatch ? 'swatch-selected' : ''}`}
-                      style={{ background: swatch }}
-                      onClick={() => setColor(swatch)}
+                  {(tool === 'sticky' ? STICKY_COLORS : COLORS).map(
+                    (swatch) => (
+                      <button
+                        key={swatch}
+                        aria-label={`Color ${swatch}`}
+                        className={`color-swatch ${(tool === 'sticky' ? stickyColor : color) === swatch ? 'swatch-selected' : ''}`}
+                        style={{ background: swatch }}
+                        onClick={() =>
+                          tool === 'sticky'
+                            ? setStickyColor(swatch)
+                            : setColor(swatch)
+                        }
+                      />
+                    ),
+                  )}
+                  {tool !== 'sticky' && (
+                    <input
+                      className="custom-color"
+                      type="color"
+                      aria-label="Custom color"
+                      value={color.slice(0, 7)}
+                      onChange={(event) => setColor(event.target.value)}
                     />
-                  ))}
+                  )}
                 </div>
-                <input
-                  className="custom-color"
-                  type="color"
-                  aria-label="Choose a custom color"
-                  value={color.slice(0, 7)}
-                  onChange={(event) => setColor(event.target.value)}
-                />
               </div>
-              <label className="property-label">
-                Stroke <span>{strokeWidth}px</span>
-                <input
-                  type="range"
-                  min="1"
-                  max="18"
-                  value={strokeWidth}
-                  onChange={(event) =>
-                    setStrokeWidth(Number(event.target.value))
-                  }
-                />
-              </label>
+              {tool !== 'sticky' && (
+                <div className="property-section">
+                  <span className="property-label">Stroke</span>
+                  <div className="stroke-options">
+                    {[2, 3, 6, 12].map((width) => (
+                      <button
+                        key={width}
+                        className={strokeWidth === width ? 'is-active' : ''}
+                        aria-label={`Stroke ${width}px`}
+                        onClick={() => setStrokeWidth(width)}
+                      >
+                        <span
+                          style={{
+                            height: Math.min(width, 10),
+                            background: color,
+                          }}
+                        />
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
               <div className="panel-tip">
                 <span>✦</span>
-                <p>Tip: Double-click text or a note to edit it.</p>
+                <p>
+                  Scroll to pan, pinch or Ctrl/⌘ + scroll to zoom, hold Space to
+                  drag the canvas. Double-click to write.
+                </p>
               </div>
               <div className="panel-divider" />
               <div className="board-settings">
                 <p className="eyebrow">BOARD</p>
                 <div className="setting-row">
                   <span>People here</span>
-                  <strong>{peersState.length || 1}</strong>
+                  <strong>{isLocal ? 1 : onlinePeople.length}</strong>
                 </div>
                 <div className="setting-row">
                   <span>Canvas items</span>
                   <strong>{objects.length}</strong>
                 </div>
-                {isLocalBoard && (
+                {isLocal && (
                   <p className="local-board-note">
-                    This board only lives in this tab. Export or copy your work
-                    before you leave.
+                    This board only lives in this tab. Export your work before
+                    you leave.
                   </p>
                 )}
-                {board.role === 'owner' && !isLocalBoard && (
+                {board.role === 'owner' && !isLocal && (
                   <>
                     <button
                       className="setting-button"
                       onClick={() => void toggleLock()}
                     >
-                      {board.locked ? '▶ Resume editing' : 'Ⅱ Pause editing'}
+                      {board.locked
+                        ? '▶ Resume editing for everyone'
+                        : 'Ⅱ Pause editing for others'}
                     </button>
                     <button
                       className="setting-button"
@@ -2543,232 +2399,162 @@ export default function BoardPage() {
 
       <footer className="editor-footer">
         <div className="zoom-controls">
-          <button
-            aria-label="Zoom out"
-            onClick={() => setZoom((value) => Math.max(0.1, value - 0.1))}
-          >
+          <button aria-label="Zoom out" onClick={() => zoomAt(1 / 1.2)}>
             −
           </button>
           <button
             className="zoom-value"
-            onClick={() => {
-              setZoom(1);
-              setViewport({ x: 0, y: 0 });
-            }}
+            title="Reset to 100%"
+            onClick={() => setView((current) => ({ ...current, zoom: 1 }))}
           >
-            {Math.round(zoom * 100)}%
+            {Math.round(view.zoom * 100)}%
+          </button>
+          <button aria-label="Zoom in" onClick={() => zoomAt(1.2)}>
+            +
           </button>
           <button
-            aria-label="Zoom in"
-            onClick={() => setZoom((value) => Math.min(2, value + 0.1))}
+            className="fit-button"
+            onClick={() => fitTo(unionBounds(objects))}
           >
-            ＋
-          </button>
-          <button className="fit-button" onClick={fitCanvas}>
-            Fit canvas
+            Fit
           </button>
         </div>
         <div className="footer-right">
-          {!isLocalBoard && (
-            <>
-              <span className={`connection-dot ${status}`} />
-              {status === 'live'
-                ? 'Live with your team'
-                : status === 'offline'
-                  ? 'Trying to reconnect'
-                  : 'Joining room'}
-            </>
-          )}
           <span className="footer-tool-status">
-            {tool} · {objects.length}{' '}
-            {objects.length === 1 ? 'object' : 'objects'}
+            {objects.length} {objects.length === 1 ? 'object' : 'objects'}
           </span>
-          <button
-            className="help-button"
-            onClick={() =>
-              setNotice(
-                'Shortcuts: V select · H pan · P pen · E eraser · L line · R rectangle · O ellipse · D diamond · T text · Ctrl/Cmd+Z undo · Shift+Ctrl/Cmd+Z redo · Ctrl/Cmd+D duplicate',
-              )
-            }
-          >
-            ? Help
+          <button className="help-button" onClick={() => setHelpOpen(true)}>
+            Shortcuts
           </button>
           <button
             className="properties-toggle"
             aria-expanded={propertiesOpen}
             onClick={() => setPropertiesOpen((open) => !open)}
           >
-            Properties
+            Style
           </button>
         </div>
       </footer>
 
-      {chatOpen && (
-        <div className="chat-panel">
-          <div className="chat-header">
-            <div>
-              <p className="eyebrow">ROOM CHAT</p>
-              <h2>Talk it through</h2>
-            </div>
-            <button
-              className="icon-button"
-              onClick={() => setChatOpen(false)}
-              aria-label="Close chat"
-            >
-              ×
-            </button>
-          </div>
-          <div className="chat-presence">
-            <span className="connection-dot live" />
-            {peersState.length || 1} in this room
-          </div>
-          <div className="chat-messages">
-            {messages.length ? (
-              messages.map((message) => (
-                <article
-                  className={`chat-message ${message.userId === session.user.id ? 'mine' : ''}`}
-                  key={message.id}
-                >
-                  <span className="chat-avatar">
-                    {message.name[0]?.toUpperCase()}
-                  </span>
-                  <div>
-                    <div className="message-meta">
-                      <strong>
-                        {message.userId === session.user.id
-                          ? 'You'
-                          : message.name}
-                      </strong>
-                      <time>
-                        {new Date(message.createdAt).toLocaleTimeString([], {
-                          hour: 'numeric',
-                          minute: '2-digit',
-                        })}
-                      </time>
-                    </div>
-                    <p>{message.text}</p>
-                  </div>
-                </article>
-              ))
-            ) : (
-              <div className="chat-empty">
-                <span>☏</span>
-                <p>Good thinking happens out loud.</p>
-                <small>Start the conversation with your group.</small>
-              </div>
-            )}
-          </div>
-          <form className="chat-compose" onSubmit={sendChat}>
-            <textarea
-              value={messageInput}
-              onChange={(event) => setMessageInput(event.target.value)}
-              placeholder="Write a message…"
-              maxLength={2000}
-              rows={2}
-            />
-            <button
-              className="send-message"
-              aria-label="Send message"
-              disabled={!messageInput.trim()}
-            >
-              ↑
-            </button>
-          </form>
-          <div className="chat-footer-note">
-            Messages are saved with this board.
-          </div>
-        </div>
-      )}
-      {shareOpen && (
-        <div
-          className="modal-backdrop"
-          role="presentation"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) setShareOpen(false);
-          }}
+      <nav className="mobile-toolbar" aria-label="Tools">
+        {TOOLS.filter((item) =>
+          [
+            'select',
+            'hand',
+            'pen',
+            'eraser',
+            'rect',
+            'arrow',
+            'text',
+            'sticky',
+          ].includes(item.tool),
+        ).map((item) => (
+          <button
+            key={item.tool}
+            aria-label={item.label}
+            aria-pressed={tool === item.tool}
+            className={tool === item.tool ? 'mobile-tool-active' : ''}
+            disabled={
+              readonly && item.tool !== 'select' && item.tool !== 'hand'
+            }
+            onClick={() => chooseTool(item.tool)}
+          >
+            {item.icon}
+          </button>
+        ))}
+        <button
+          aria-label="Undo"
+          disabled={!canUndo || readonly}
+          onClick={undo}
         >
-          <section className="modal">
+          ↶
+        </button>
+      </nav>
+
+      {chatOpen && !isLocal && (
+        <ChatPanel
+          messages={messages}
+          selfUserId={session.user.id}
+          onlineCount={onlinePeople.length}
+          typing={typing.map((item) => item.name)}
+          disabled={status !== 'live'}
+          onSend={sendChat}
+          onTyping={() => clientRef.current?.sendTyping()}
+          onClose={() => setChatOpen(false)}
+        />
+      )}
+
+      {shareOpen && (
+        <Modal onClose={() => setShareOpen(false)}>
+          <p className="eyebrow">BRING PEOPLE IN</p>
+          <h2>Share this board</h2>
+          <p className="modal-copy">
+            Anyone with this link can join as an editor and use chat and audio.
+            You can switch people to view-only or pause editing at any time.
+          </p>
+          <div className="share-link-preview">
+            {board.inviteToken && !board.inviteRevoked
+              ? `${location.origin}/board/${board.id}?invite=${board.inviteToken}`
+              : 'The invite link is turned off.'}
+          </div>
+          <div className="modal-actions">
             <button
-              className="modal-close"
-              aria-label="Close"
-              onClick={() => setShareOpen(false)}
+              className="button subtle"
+              onClick={() => void regenerateInvite()}
             >
-              ×
+              New link
             </button>
-            <p className="eyebrow">BRING PEOPLE IN</p>
-            <h2>Share this board.</h2>
-            <p className="modal-copy">
-              Anyone with this invite can join as an editor. You can pause
-              editing or change roles any time.
-            </p>
-            <div className="share-link-preview">
-              {board.inviteToken && !board.inviteRevoked
-                ? `${location.origin}/board/${board.id}?invite=${board.inviteToken}`
-                : 'Invite link is turned off'}
-            </div>
-            <div className="modal-actions">
-              <button
-                className="button subtle"
-                onClick={() => void regenerateInvite()}
-              >
-                ↻ New link
-              </button>
-              <button
-                className="button primary"
-                onClick={() => void share()}
-                disabled={!board.inviteToken || board.inviteRevoked}
-              >
-                Copy invite
-              </button>
-            </div>
             <button
-              className="revoke-link"
-              onClick={() => void revokeInvite()}
+              className="button primary"
+              onClick={() => void copyInvite()}
               disabled={!board.inviteToken || board.inviteRevoked}
             >
-              Revoke current invite link
+              Copy invite link
             </button>
-          </section>
-        </div>
+          </div>
+          <button
+            className="revoke-link"
+            onClick={() => void revokeInvite()}
+            disabled={!board.inviteToken || board.inviteRevoked}
+          >
+            Turn off this link
+          </button>
+        </Modal>
       )}
+
       {membersOpen && (
-        <div
-          className="modal-backdrop"
-          role="presentation"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) setMembersOpen(false);
-          }}
-        >
-          <section className="modal members-modal">
-            <button
-              className="modal-close"
-              aria-label="Close"
-              onClick={() => setMembersOpen(false)}
-            >
-              ×
-            </button>
-            <p className="eyebrow">BOARD PARTICIPANTS</p>
-            <h2>People in the room</h2>
-            <div className="members-list">
-              {board.members.map((member, index) => (
+        <Modal onClose={() => setMembersOpen(false)} className="members-modal">
+          <p className="eyebrow">PARTICIPANTS</p>
+          <h2>People on this board</h2>
+          <div className="members-list">
+            {board.members.map((member) => {
+              const online = peers.find(
+                (peer) => peer.userId === member.userId,
+              );
+              return (
                 <div className="member-row" key={member.userId}>
-                  <span className={`avatar avatar-${index % 3}`}>
+                  <span
+                    className="avatar"
+                    style={{ background: colorFor(member.userId) }}
+                  >
                     {member.name[0]?.toUpperCase()}
                   </span>
                   <div className="member-name">
                     <strong>
                       {member.name}
-                      {member.userId === session.user.id ? ' · you' : ''}
+                      {member.userId === session.user.id ? ' (you)' : ''}
                     </strong>
-                    <small>
-                      {peersState.some((peer) => peer.userId === member.userId)
-                        ? 'Online now'
-                        : 'Member'}
+                    <small className={online ? 'is-online' : ''}>
+                      {online
+                        ? online.inCall
+                          ? 'Online · in audio'
+                          : 'Online now'
+                        : 'Offline'}
                     </small>
                   </div>
                   {member.role === 'owner' ? (
                     <span className="role-badge">Owner</span>
-                  ) : board.role === 'owner' ? (
+                  ) : board.role === 'owner' && !isLocal ? (
                     <select
                       aria-label={`Role for ${member.name}`}
                       value={member.role}
@@ -2779,131 +2565,122 @@ export default function BoardPage() {
                         )
                       }
                     >
-                      <option value="editor">Editor</option>
-                      <option value="viewer">Viewer</option>
+                      <option value="editor">Can edit</option>
+                      <option value="viewer">Can view</option>
                     </select>
                   ) : (
                     <span className="role-badge">{member.role}</span>
                   )}
                 </div>
+              );
+            })}
+          </div>
+        </Modal>
+      )}
+
+      {snapshotsOpen && (
+        <Modal
+          onClose={() => setSnapshotsOpen(false)}
+          className="snapshots-modal"
+        >
+          <p className="eyebrow">BOARD HISTORY</p>
+          <h2>Saved versions</h2>
+          {snapshots.length ? (
+            <div className="snapshot-list">
+              {[...snapshots].reverse().map((snapshot) => (
+                <div className="snapshot-row" key={snapshot.id}>
+                  <div>
+                    <strong>{snapshot.title}</strong>
+                    <small>
+                      {new Date(snapshot.createdAt).toLocaleString()}
+                    </small>
+                  </div>
+                  <button
+                    className="button subtle"
+                    onClick={() => void restoreSnapshot(snapshot.id)}
+                  >
+                    Restore
+                  </button>
+                </div>
               ))}
             </div>
-            <p className="modal-footnote">
-              Invite links give new members edit access. You can switch them to
-              view-only here.
+          ) : (
+            <p className="modal-copy">
+              No versions yet. Save one before making a big change.
             </p>
-          </section>
-        </div>
-      )}
-      {snapshotsOpen && (
-        <div
-          className="modal-backdrop"
-          role="presentation"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) setSnapshotsOpen(false);
-          }}
-        >
-          <section className="modal snapshots-modal">
+          )}
+          <div className="modal-actions">
             <button
-              className="modal-close"
-              aria-label="Close"
-              onClick={() => setSnapshotsOpen(false)}
+              className="button subtle"
+              onClick={() => void saveSnapshot()}
             >
-              ×
+              Save current version
             </button>
-            <p className="eyebrow">BOARD HISTORY</p>
-            <h2>Saved versions</h2>
-            {snapshots.length ? (
-              <div className="snapshot-list">
-                {[...snapshots].reverse().map((snapshot) => (
-                  <div className="snapshot-row" key={snapshot.id}>
-                    <div>
-                      <strong>{snapshot.title}</strong>
-                      <small>
-                        {new Date(snapshot.createdAt).toLocaleString()}
-                      </small>
-                    </div>
-                    <button
-                      className="button subtle"
-                      onClick={() => void restoreSnapshot(snapshot.id)}
-                    >
-                      Restore
-                    </button>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="modal-copy">
-                No versions yet. Save one from the board panel before making a
-                big change.
-              </p>
-            )}
-            <div className="modal-actions">
-              <button
-                className="button subtle"
-                onClick={() => void saveSnapshot()}
-              >
-                ＋ Save current version
-              </button>
-            </div>
-          </section>
-        </div>
+          </div>
+        </Modal>
       )}
-      <div className="mobile-toolbar">
-        <button
-          aria-label="Select tool"
-          aria-pressed={tool === 'select'}
-          className={tool === 'select' ? 'mobile-tool-active' : ''}
-          onClick={() => chooseTool('select')}
-        >
-          ↖
-        </button>
-        <button
-          aria-label="Pen tool"
-          aria-pressed={tool === 'pen'}
-          className={tool === 'pen' ? 'mobile-tool-active' : ''}
-          onClick={() => chooseTool('pen')}
-        >
-          ✎
-        </button>
-        <button
-          aria-label="Sticky note tool"
-          aria-pressed={tool === 'sticky'}
-          className={tool === 'sticky' ? 'mobile-tool-active' : ''}
-          onClick={() => chooseTool('sticky')}
-        >
-          ▧
-        </button>
-        {isLocalBoard && (
-          <button
-            aria-label="Upload image"
-            onClick={() => imagePicker.current?.click()}
-          >
-            ▧
-          </button>
-        )}
-        {!isLocalBoard && (
-          <button aria-label="Open chat" onClick={() => setChatOpen(true)}>
-            ▤
-          </button>
-        )}
-        <button
-          aria-label="Undo"
-          title="Undo"
-          disabled={!canUndo || readonly}
-          onClick={() => void undo()}
-        >
-          ↶
-        </button>
-        <button
-          aria-label="Redo"
-          title="Redo"
-          disabled={!canRedo || readonly}
-          onClick={() => void redo()}
-        >
-          ↷
-        </button>
-      </div>
+
+      {helpOpen && (
+        <Modal onClose={() => setHelpOpen(false)}>
+          <p className="eyebrow">KEYBOARD</p>
+          <h2>Shortcuts</h2>
+          <dl className="shortcut-list">
+            {TOOLS.filter((item) => item.key).map((item) => (
+              <div key={item.tool}>
+                <dt>{item.label}</dt>
+                <dd>
+                  <kbd>{item.key}</kbd>
+                </dd>
+              </div>
+            ))}
+            {[
+              ['Pan the canvas', 'Space + drag · scroll'],
+              ['Zoom', 'Ctrl/⌘ + scroll · pinch'],
+              ['Fit to content', 'Shift 1'],
+              ['Undo / redo', 'Ctrl/⌘ Z · Ctrl/⌘ Shift Z'],
+              ['Copy / paste / duplicate', 'Ctrl/⌘ C · V · D'],
+              ['Delete selection', 'Delete'],
+              ['Nudge selection', 'Arrow keys (Shift ×10)'],
+              ['Mute in a call', 'M'],
+              ['Finish text', 'Esc · Ctrl/⌘ Enter'],
+            ].map(([label, keys]) => (
+              <div key={label}>
+                <dt>{label}</dt>
+                <dd>
+                  <kbd>{keys}</kbd>
+                </dd>
+              </div>
+            ))}
+          </dl>
+        </Modal>
+      )}
     </main>
+  );
+}
+
+function Modal({
+  children,
+  onClose,
+  className = '',
+}: {
+  children: React.ReactNode;
+  onClose: () => void;
+  className?: string;
+}) {
+  return (
+    <div
+      className="modal-backdrop"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <section className={`modal ${className}`} role="dialog" aria-modal="true">
+        <button className="modal-close" aria-label="Close" onClick={onClose}>
+          ×
+        </button>
+        {children}
+      </section>
+    </div>
   );
 }
