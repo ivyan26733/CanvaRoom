@@ -97,7 +97,7 @@ function Landing() {
         </div>
       </section>
 
-      <section className="landing-auth">
+      <section className="landing-auth" id="get-started">
         <div className="landing-auth-top">
           <span className="landing-mobile-brand">
             <Logo size={26} /> CanvaRoom

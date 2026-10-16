@@ -1,0 +1,826 @@
+/* Home page story: a three-act timeline with whiteboard illustrations. */
+
+.mk-home {
+  --mk-width: 1360px;
+}
+
+.st {
+  width: min(var(--mk-width), calc(100% - 32px));
+  margin: 0 auto;
+  padding-top: clamp(72px, 10vw, 136px);
+}
+
+.st-eyebrow {
+  margin: 0;
+  color: var(--accent-strong);
+  font: 600 12px/1 var(--mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+/* ---- Intro: headline on the left, the setup on the right ---- */
+
+.st-intro {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
+  gap: 18px clamp(32px, 6vw, 96px);
+  align-items: end;
+}
+
+.st-intro .st-eyebrow {
+  grid-column: 1 / -1;
+}
+
+.st-intro h2 {
+  margin: 0;
+  font: 750 clamp(34px, 5vw, 68px) / 0.98 var(--display);
+  letter-spacing: -0.045em;
+  text-wrap: balance;
+}
+
+.st-intro h2 span {
+  background: linear-gradient(
+    transparent 62%,
+    color-mix(in srgb, var(--accent) 30%, transparent) 62%
+  );
+}
+
+.st-intro-text {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: clamp(16px, 1.4vw, 19px);
+  line-height: 1.6;
+}
+
+/* ---- Timeline ---- */
+
+.st-timeline {
+  margin-top: clamp(48px, 7vw, 96px);
+}
+
+.st-act {
+  --spine: var(--ink-3);
+  position: relative;
+}
+
+.st-act::before {
+  /* The ink line the story runs along; its style changes with each act. */
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(50% - 2px);
+  width: 4px;
+  border-radius: 2px;
+  background: var(--spine);
+}
+
+.st-act-problem::before {
+  background: repeating-linear-gradient(
+    to bottom,
+    var(--ink-3) 0 14px,
+    transparent 14px 26px
+  );
+}
+
+.st-act-search {
+  --spine: var(--ink);
+}
+
+.st-act-fix {
+  --spine: var(--accent);
+}
+
+.st-act-label {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  margin: 0;
+  padding: clamp(28px, 4vw, 48px) 0 clamp(20px, 3vw, 32px);
+  background: var(--bg);
+  font: 750 clamp(40px, 7.5vw, 112px) / 0.9 var(--display);
+  letter-spacing: -0.05em;
+  color: transparent;
+  -webkit-text-stroke: 1.5px var(--ink-2);
+}
+
+.st-act-fix .st-act-label {
+  -webkit-text-stroke-color: var(--accent);
+}
+
+.st-act-label span {
+  flex: none;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: var(--ink);
+  color: var(--bg);
+  font: 600 12px/1 var(--mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  -webkit-text-stroke: 0;
+  transform: translateY(-0.8em);
+}
+
+.st-act-fix .st-act-label span {
+  background: var(--accent);
+  color: #1b1b1b;
+}
+
+.st-chapters {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.st-chapter {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 96px minmax(0, 1fr);
+  grid-template-areas: 'copy . art';
+  align-items: center;
+  padding: clamp(28px, 4vw, 56px) 0;
+}
+
+.st-chapter.right {
+  grid-template-areas: 'art . copy';
+}
+
+.st-node {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 22px;
+  height: 22px;
+  margin: -11px 0 0 -11px;
+  border: 4px solid var(--spine);
+  border-radius: 50%;
+  background: var(--bg);
+  box-shadow: 0 0 0 6px var(--bg);
+}
+
+.st-act-fix .st-node {
+  background: var(--accent);
+}
+
+.st-copy {
+  grid-area: copy;
+  max-width: 540px;
+}
+
+.st-chapter.left .st-copy {
+  justify-self: end;
+  text-align: right;
+}
+
+.st-time {
+  display: inline-block;
+  margin: 0 0 14px;
+  padding: 5px 10px;
+  border-radius: 8px;
+  background: var(--bg-2);
+  color: var(--ink-2);
+  font: 600 12px/1 var(--mono);
+  letter-spacing: 0.04em;
+}
+
+.st-act-fix .st-time {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.st-copy h3 {
+  margin: 0 0 14px;
+  font: 700 clamp(24px, 2.6vw, 36px) / 1.06 var(--display);
+  letter-spacing: -0.03em;
+  text-wrap: balance;
+}
+
+.st-copy p:not(.st-time) {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: clamp(15px, 1.2vw, 17px);
+  line-height: 1.65;
+}
+
+.st-copy .st-thought {
+  margin-top: 18px !important;
+  color: var(--ink) !important;
+  font: 600 clamp(17px, 1.5vw, 21px) / 1.35 var(--display) !important;
+  letter-spacing: -0.015em;
+}
+
+.st-thought::before {
+  content: '';
+  display: inline-block;
+  width: 26px;
+  height: 3px;
+  margin-right: 10px;
+  vertical-align: middle;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+.st-chapter.left .st-thought::before {
+  display: none;
+}
+
+.st-chapter.left .st-thought::after {
+  content: '';
+  display: inline-block;
+  width: 26px;
+  height: 3px;
+  margin-left: 10px;
+  vertical-align: middle;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+.st-figure {
+  grid-area: art;
+  transform: rotate(1.2deg);
+  filter: drop-shadow(0 22px 34px rgba(0, 0, 0, 0.12));
+}
+
+.st-chapter.right .st-figure {
+  transform: rotate(-1.2deg);
+}
+
+/* ---- Finale ---- */
+
+.st-finale {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) auto;
+  gap: 28px clamp(32px, 6vw, 96px);
+  align-items: end;
+  margin-top: clamp(24px, 4vw, 48px);
+  padding: clamp(32px, 6vw, 72px);
+  border-radius: 32px;
+  background: var(--ink);
+  color: var(--bg);
+}
+
+.st-finale h2 {
+  margin: 14px 0 16px;
+  font: 750 clamp(32px, 4.8vw, 64px) / 0.98 var(--display);
+  letter-spacing: -0.045em;
+  text-wrap: balance;
+}
+
+.st-finale p:not(.st-eyebrow) {
+  margin: 0;
+  max-width: 560px;
+  color: color-mix(in srgb, var(--bg) 72%, transparent);
+  font-size: 17px;
+  line-height: 1.6;
+}
+
+.st-finale .st-eyebrow {
+  color: var(--accent);
+}
+
+.st-finale-cta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.st-finale-cta .button {
+  text-decoration: none;
+}
+
+.st-finale-cta .button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #1b1b1b;
+}
+
+.st-finale-cta .button.ghost {
+  background: transparent;
+  color: var(--bg);
+  border-color: color-mix(in srgb, var(--bg) 35%, transparent);
+}
+
+/* ---- Use cases as a sentence, FAQ in two columns ---- */
+
+.mk-uses {
+  width: min(var(--mk-width), calc(100% - 32px));
+  margin: clamp(64px, 9vw, 120px) auto 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 28px;
+}
+
+.mk-uses h2 {
+  margin: 0;
+  color: var(--ink-3);
+  font: 650 clamp(24px, 3vw, 40px) / 1.1 var(--display);
+  letter-spacing: -0.03em;
+}
+
+.mk-uses ul {
+  display: contents;
+  list-style: none;
+}
+
+.mk-uses a {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  color: var(--ink);
+  font: 700 clamp(24px, 3vw, 40px) / 1.1 var(--display);
+  letter-spacing: -0.03em;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  text-decoration-thickness: 3px;
+  text-underline-offset: 6px;
+}
+
+.mk-uses a span {
+  color: var(--accent);
+  font-size: 0.6em;
+}
+
+.mk-uses a:hover {
+  color: var(--accent-strong);
+}
+
+.mk-qa {
+  width: min(var(--mk-width), calc(100% - 32px));
+  margin: clamp(64px, 9vw, 120px) auto 0;
+  display: grid;
+  grid-template-columns: minmax(0, 4fr) minmax(0, 7fr);
+  gap: 24px clamp(32px, 6vw, 96px);
+}
+
+.mk-qa-head {
+  align-self: start;
+  position: sticky;
+  top: 32px;
+}
+
+.mk-qa-head h2 {
+  margin: 14px 0 14px;
+  font: 750 clamp(30px, 3.6vw, 48px) / 1.02 var(--display);
+  letter-spacing: -0.035em;
+}
+
+.mk-qa-head p:not(.st-eyebrow) {
+  margin: 0;
+  color: var(--ink-2);
+  line-height: 1.6;
+}
+
+.mk-qa .mk-faq {
+  gap: 0;
+  max-width: none;
+  margin: 0;
+  border-top: 1px solid var(--line-2);
+}
+
+.mk-qa .mk-faq details {
+  border: 0;
+  border-bottom: 1px solid var(--line-2);
+  border-radius: 0;
+  background: transparent;
+}
+
+.mk-qa .mk-faq summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 22px 0;
+  font: 650 clamp(17px, 1.5vw, 20px) / 1.3 var(--display);
+  letter-spacing: -0.01em;
+  list-style: none;
+}
+
+.mk-qa .mk-faq summary::-webkit-details-marker {
+  display: none;
+}
+
+.mk-qa .mk-faq summary::after {
+  content: '+';
+  flex: none;
+  color: var(--accent);
+  font-size: 1.4em;
+  line-height: 0.8;
+  transition: transform 0.2s var(--ease);
+}
+
+.mk-qa .mk-faq details[open] summary::after {
+  transform: rotate(45deg);
+}
+
+.mk-qa .mk-faq details p {
+  padding: 0 0 22px;
+  max-width: 680px;
+}
+
+/* ---- Illustration parts ---- */
+
+.st-art {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.st-paper {
+  fill: var(--surface);
+  stroke: var(--line-2);
+  stroke-width: 2;
+}
+
+.st-dot {
+  fill: var(--ink);
+  opacity: 0.14;
+}
+
+.st-window {
+  fill: var(--surface-2);
+  stroke: var(--line-2);
+  stroke-width: 2;
+}
+
+.st-rule {
+  stroke: var(--line-2);
+  stroke-width: 2;
+}
+
+.st-tile {
+  fill: var(--bg-2);
+  stroke: var(--line-2);
+  stroke-width: 2;
+}
+
+.st-field,
+.st-chip {
+  fill: var(--surface);
+  stroke: var(--line-2);
+  stroke-width: 2;
+}
+
+.st-chip.on {
+  fill: var(--accent-soft);
+  stroke: var(--accent);
+}
+
+.st-result {
+  fill: var(--accent-soft);
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+
+.st-bar {
+  fill: var(--line-2);
+}
+
+.st-bar.soft {
+  fill: var(--line);
+}
+
+.st-bar.accent {
+  fill: var(--accent);
+  opacity: 0.6;
+}
+
+.st-small {
+  fill: var(--ink-2);
+  font: 500 12px var(--ui);
+}
+
+.st-strong {
+  fill: var(--ink);
+  font: 650 13px var(--ui);
+}
+
+.st-tag {
+  fill: #fff;
+  font: 700 12.5px var(--ui);
+}
+
+.st-note {
+  font: 700 16px var(--display);
+}
+
+.st-hand {
+  fill: var(--ink);
+  font: 650 26px var(--display);
+}
+
+.st-type {
+  fill: var(--ink);
+  font: 500 14px var(--mono);
+}
+
+.st-ink,
+.st-ink-thin,
+.st-stroke {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.st-ink {
+  stroke: var(--ink);
+  stroke-width: 5;
+}
+
+.st-ink-thin {
+  stroke: var(--ink);
+  stroke-width: 3;
+}
+
+.st-stroke {
+  stroke-width: 5;
+}
+
+.st-ghost {
+  stroke-dasharray: 3 12;
+  opacity: 0.35;
+}
+
+.st-dash {
+  stroke-dasharray: 8 9;
+}
+
+.st-fade {
+  opacity: 0.16;
+  stroke-dasharray: 18 10;
+}
+
+.st-ring {
+  fill: none;
+  stroke: var(--line-2);
+  stroke-width: 4;
+}
+
+.st-ring-on {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 4;
+  stroke-linecap: round;
+}
+
+.st-alert {
+  fill: #e03131;
+}
+
+.st-ok {
+  fill: #2f9e44;
+}
+
+.st-bubble rect,
+.st-bubble path {
+  fill: var(--surface);
+  stroke: var(--line-2);
+  stroke-width: 2;
+}
+
+.st-bubble text {
+  fill: var(--ink);
+  font: 600 13px var(--ui);
+}
+
+.st-bubble.accent rect,
+.st-bubble.accent path {
+  fill: var(--accent);
+  stroke: none;
+}
+
+.st-bubble.accent text {
+  fill: #1b1b1b;
+}
+
+.st-lock {
+  fill: var(--ink-2);
+}
+
+.st-lock-loop {
+  fill: none;
+  stroke: var(--ink-2);
+  stroke-width: 2;
+}
+
+.st-arm {
+  stroke: var(--ink-2);
+  stroke-width: 5;
+  stroke-linecap: round;
+}
+
+.st-wifi {
+  fill: none;
+  stroke: var(--ink-3);
+  stroke-width: 7;
+  stroke-linecap: round;
+}
+
+.st-wifi-dot {
+  fill: var(--ink-3);
+}
+
+.st-wifi.on {
+  stroke: #2f9e44;
+}
+
+.st-wifi-dot.on {
+  fill: #2f9e44;
+}
+
+.st-slash {
+  stroke: #e03131;
+  stroke-width: 7;
+  stroke-linecap: round;
+}
+
+.st-caret {
+  fill: var(--accent);
+}
+
+.st-cta {
+  fill: var(--ink);
+}
+
+.st-cta-text {
+  fill: var(--bg);
+  font: 700 15px var(--ui);
+}
+
+.st-cam {
+  fill: var(--ink-2);
+}
+
+.st-cam-lens {
+  fill: var(--surface);
+}
+
+.st-spark {
+  stroke: var(--accent);
+  stroke-width: 4;
+  stroke-linecap: round;
+}
+
+/* ---- Motion ---- */
+
+.st-spin {
+  animation: st-spin 1.1s linear infinite;
+}
+
+.st-bob {
+  animation: st-bob 3.2s ease-in-out infinite;
+}
+
+.st-draw {
+  stroke-dasharray: 170;
+  animation: st-draw 3s ease-in-out infinite;
+}
+
+.st-draw.delay {
+  animation-delay: 1.1s;
+}
+
+.st-caret {
+  animation: st-blink 1s steps(1) infinite;
+}
+
+.st-pulse {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: st-pulse 1.6s ease-in-out infinite;
+}
+
+.st-wave {
+  transform-box: fill-box;
+  transform-origin: bottom left;
+  animation: st-wave 1.4s ease-in-out infinite;
+}
+
+.st-arc1 {
+  animation: st-arc 2.4s ease-in-out infinite;
+}
+
+.st-arc2 {
+  animation: st-arc 2.4s ease-in-out 0.3s infinite;
+}
+
+@keyframes st-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes st-bob {
+  50% {
+    transform: translate(-10px, -6px);
+  }
+}
+
+@keyframes st-draw {
+  0% {
+    stroke-dashoffset: 170;
+  }
+  55%,
+  100% {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes st-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+@keyframes st-pulse {
+  50% {
+    transform: scale(1.35);
+  }
+}
+
+@keyframes st-wave {
+  50% {
+    transform: rotate(-10deg);
+  }
+}
+
+@keyframes st-arc {
+  0%,
+  20% {
+    opacity: 0.15;
+  }
+  60%,
+  100% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .st *,
+  .st *::before,
+  .st *::after {
+    animation: none !important;
+  }
+}
+
+/* ---- Smaller screens: one column, the line on the left ---- */
+
+@media (max-width: 900px) {
+  .st-intro,
+  .mk-qa,
+  .st-finale {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .mk-qa-head {
+    position: static;
+  }
+
+  .st-act::before {
+    left: 9px;
+  }
+
+  .st-act-label {
+    padding-left: 36px;
+    flex-wrap: wrap;
+  }
+
+  .st-chapter,
+  .st-chapter.right {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: 'copy' 'art';
+    gap: 24px;
+    padding-left: 40px;
+  }
+
+  .st-node {
+    top: clamp(28px, 4vw, 56px);
+    left: 11px;
+    margin-top: 0;
+  }
+
+  .st-chapter.left .st-copy {
+    justify-self: start;
+    text-align: left;
+  }
+
+  .st-chapter.left .st-thought::before {
+    display: inline-block;
+  }
+
+  .st-chapter.left .st-thought::after {
+    display: none;
+  }
+
+  .st-figure,
+  .st-chapter.right .st-figure {
+    transform: none;
+  }
+}
+
+@media (max-width: 600px) {
+  .st-act-label span {
+    transform: none;
+  }
+}

@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { HOME_FAQ, SITE, USE_CASES, type Faq } from '../lib/site';
 import { Logo } from './icons';
+import { Story } from './story';
 
 /** Structured data for search engines. */
 export function JsonLd({ data }: { data: object }) {
@@ -45,33 +46,6 @@ export const faqSchema = (faq: Faq[]) => ({
     acceptedAnswer: { '@type': 'Answer', text: a },
   })),
 });
-
-const FEATURES = [
-  {
-    title: 'Ink that streams live',
-    body: 'Strokes appear for everyone while they are being drawn — not after the pen lifts.',
-  },
-  {
-    title: 'Voice and chat on the board',
-    body: 'One click joins the board’s voice room. Chat keeps links and notes beside the work.',
-  },
-  {
-    title: 'Pages and infinite zoom',
-    body: 'Give every topic its own page and zoom from a 10% overview to 800% detail.',
-  },
-  {
-    title: 'Templates',
-    body: 'Start from a brainstorm, retro, kanban, or flowchart instead of a blank page.',
-  },
-  {
-    title: 'Invite links and roles',
-    body: 'Guests join with a name. Choose editors or viewers, pause editing, or revoke a link.',
-  },
-  {
-    title: 'Snapshots and export',
-    body: 'Boards save as you go. Snapshot a version, restore it later, or export PNG, SVG, or PDF.',
-  },
-];
 
 function FaqList({ faq }: { faq: Faq[] }) {
   return (
@@ -129,48 +103,32 @@ export function MarketingFooter() {
 /** Crawlable detail below the sign-in screen on the home page. */
 export function HomeContent() {
   return (
-    <div className="mk">
-      <section className="mk-section" aria-labelledby="features-heading">
-        <p className="kicker">Why CanvaRoom</p>
-        <h2 id="features-heading">
-          A free online whiteboard that feels like being in the same room
-        </h2>
-        <p className="mk-lede">
-          CanvaRoom is a collaborative whiteboard for teams, classrooms, and
-          study groups. Draw together in real time, talk over built-in voice,
-          and keep every topic on its own page.
-        </p>
-        <div className="mk-grid">
-          {FEATURES.map((feature) => (
-            <article key={feature.title} className="mk-card">
-              <h3>{feature.title}</h3>
-              <p>{feature.body}</p>
-            </article>
-          ))}
-        </div>
-      </section>
+    <div className="mk mk-home">
+      <Story />
 
-      <section className="mk-section" aria-labelledby="uses-heading">
-        <p className="kicker">Made for</p>
-        <h2 id="uses-heading">One board, many ways to use it</h2>
-        <div className="mk-grid">
+      <section className="mk-uses" aria-labelledby="uses-heading">
+        <h2 id="uses-heading">One board, many rooms:</h2>
+        <ul>
           {USE_CASES.map((useCase) => (
-            <Link
-              key={useCase.slug}
-              href={`/${useCase.slug}`}
-              className="mk-card mk-link-card"
-            >
-              <h3>{useCase.label}</h3>
-              <p>{useCase.description}</p>
-              <span className="mk-more">Learn more →</span>
-            </Link>
+            <li key={useCase.slug}>
+              <Link href={`/${useCase.slug}`}>
+                {useCase.label}
+                <span aria-hidden="true">↗</span>
+              </Link>
+            </li>
           ))}
-        </div>
+        </ul>
       </section>
 
-      <section className="mk-section" aria-labelledby="faq-heading">
-        <p className="kicker">Questions</p>
-        <h2 id="faq-heading">Frequently asked questions</h2>
+      <section className="mk-qa" aria-labelledby="faq-heading">
+        <div className="mk-qa-head">
+          <p className="st-eyebrow">Questions</p>
+          <h2 id="faq-heading">Frequently asked questions</h2>
+          <p>
+            Still deciding? Open a scratch board from the top of this page — no
+            account needed.
+          </p>
+        </div>
         <FaqList faq={HOME_FAQ} />
       </section>
       <MarketingFooter />
