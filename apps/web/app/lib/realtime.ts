@@ -50,11 +50,20 @@ type Handlers = {
   onStatus: (status: ConnectionStatus) => void;
   /** Called when unsent edits change, so the UI can show a saving state. */
   onPending: (count: number) => void;
+  /** True while someone is mid-gesture, so a planned reconnect waits. */
+  isBusy?: () => boolean;
 };
 
 const PING_EVERY_MS = 10_000;
 const DEAD_AFTER_MS = 25_000;
 const LIVE_FLUSH_MS = 16;
+/**
+ * Vercel ends a WebSocket when its function reaches the maximum duration (300 s
+ * on Hobby). Reconnecting a little earlier, at a moment when nobody is
+ * mid-stroke, keeps that cut from interrupting anything.
+ */
+const ROTATE_AFTER_MS = 265_000;
+const ROTATE_DEADLINE_MS = 292_000;
 
 function realtimeUrl() {
   const override = process.env.NEXT_PUBLIC_REALTIME_URL;
@@ -82,7 +91,9 @@ export class RealtimeClient {
   private retryDelay = 0;
   private retryTimer: ReturnType<typeof setTimeout> | undefined;
   private pingTimer: ReturnType<typeof setInterval> | undefined;
+  private rotateTimer: ReturnType<typeof setInterval> | undefined;
   private lastHeard = Date.now();
+  private openedAt = 0;
   private call = { inCall: false, muted: false };
   private live: {
     cursor?: LiveCursor | null;
@@ -148,6 +159,7 @@ export class RealtimeClient {
       }
       if (message.t === 'welcome') {
         this.retryDelay = 0;
+        this.openedAt = Date.now();
         this.setStatus('live');
         this.handlers.onMessage(message);
         // Replay anything the server has not confirmed. Operations are
@@ -169,6 +181,7 @@ export class RealtimeClient {
       if (this.socket !== socket) return;
       this.socket = null;
       clearInterval(this.pingTimer);
+      clearInterval(this.rotateTimer);
       if (this.closed) return;
       this.setStatus('offline');
       // Vercel ends long connections at the function's max duration; the
@@ -188,6 +201,16 @@ export class RealtimeClient {
       }
       this.rawSend({ t: 'ping' });
     }, PING_EVERY_MS);
+    clearInterval(this.rotateTimer);
+    this.rotateTimer = setInterval(() => {
+      const age = Date.now() - this.openedAt;
+      if (age < ROTATE_AFTER_MS) return;
+      if (age < ROTATE_DEADLINE_MS && this.handlers.isBusy?.()) return;
+      clearInterval(this.rotateTimer);
+      this.flushLive();
+      this.retryDelay = 0;
+      this.socket?.close();
+    }, 1_000);
   }
 
   private reconnectNow = () => {
@@ -321,6 +344,7 @@ export class RealtimeClient {
     clearTimeout(this.retryTimer);
     clearTimeout(this.liveTimer);
     clearInterval(this.pingTimer);
+    clearInterval(this.rotateTimer);
     window.removeEventListener('online', this.reconnectNow);
     document.removeEventListener('visibilitychange', this.onVisible);
     this.socket?.close();

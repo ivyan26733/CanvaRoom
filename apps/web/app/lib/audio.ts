@@ -3,7 +3,9 @@ import type { RealtimeClient } from './realtime';
 
 type Signal =
   | { description: RTCSessionDescriptionInit }
-  | { candidate: RTCIceCandidateInit | null };
+  | { candidate: RTCIceCandidateInit | null }
+  /** Start this pair's connection over (see `heal`). */
+  | { reset: true };
 
 type Link = {
   connection: RTCPeerConnection;
@@ -14,6 +16,10 @@ type Link = {
   queue: Promise<void>;
   audio: HTMLAudioElement;
   analyser?: AnalyserNode | undefined;
+  /** When the connection was last not working, or undefined while it is. */
+  unhealthySince: number | undefined;
+  /** Pending removal while the peer is missing from presence. */
+  dropTimer?: ReturnType<typeof setTimeout> | undefined;
 };
 
 export type CallState = {
@@ -28,6 +34,14 @@ export type CallState = {
 };
 
 const SPEAKING_LEVEL = 0.035;
+/**
+ * Board connections are recycled every few minutes, so a peer can vanish from
+ * presence for a moment. Audio flows peer to peer and survives that, so the
+ * link is only closed if they stay away.
+ */
+const DROP_GRACE_MS = 20_000;
+/** A link that has not connected for this long is rebuilt from scratch. */
+const HEAL_AFTER_MS = 12_000;
 
 /**
  * Group voice over a full mesh of peer-to-peer WebRTC connections, signalled
@@ -45,6 +59,7 @@ export class AudioCall {
   private context: AudioContext | null = null;
   private localAnalyser: AnalyserNode | null = null;
   private meterTimer: ReturnType<typeof setInterval> | undefined;
+  private healTimer: ReturnType<typeof setInterval> | undefined;
   private state: CallState = {
     joined: false,
     joining: false,
@@ -103,6 +118,7 @@ export class AudioCall {
     this.context = new AudioContext();
     this.localAnalyser = this.analyse(this.stream) ?? null;
     this.meterTimer = setInterval(() => this.measure(), 120);
+    this.healTimer = setInterval(() => this.heal(), 3_000);
     this.update({ joined: true, joining: false, muted: false });
     this.client.setCall(true, false);
   }
@@ -112,6 +128,7 @@ export class AudioCall {
     this.stream?.getTracks().forEach((track) => track.stop());
     this.stream = null;
     clearInterval(this.meterTimer);
+    clearInterval(this.healTimer);
     void this.context?.close().catch(() => undefined);
     this.context = null;
     this.localAnalyser = null;
@@ -140,13 +157,53 @@ export class AudioCall {
         .filter((peer) => peer.inCall && peer.peerId !== this.client.peerId)
         .map((peer) => peer.peerId),
     );
-    for (const peerId of inCall) this.link(peerId);
-    for (const peerId of [...this.links.keys()])
-      if (!inCall.has(peerId)) this.drop(peerId);
+    for (const peerId of inCall) {
+      const link = this.link(peerId);
+      clearTimeout(link.dropTimer);
+      link.dropTimer = undefined;
+    }
+    const present = new Set(peers.map((peer) => peer.peerId));
+    for (const [peerId, link] of this.links) {
+      if (inCall.has(peerId)) continue;
+      // Someone who is here but left the call hung up on purpose.
+      if (present.has(peerId)) this.drop(peerId);
+      else
+        link.dropTimer ??= setTimeout(() => this.drop(peerId), DROP_GRACE_MS);
+    }
+  }
+
+  /**
+   * Rebuilds links that never connected or stopped working, for example when
+   * signals were lost while a board connection was being replaced. The
+   * impolite side restarts the pair; the polite side asks it to.
+   */
+  private heal() {
+    const now = Date.now();
+    for (const [peerId, link] of [...this.links]) {
+      if (link.dropTimer || link.unhealthySince === undefined) continue;
+      if (now - link.unhealthySince < HEAL_AFTER_MS) continue;
+      if (link.polite) {
+        link.unhealthySince = now;
+        this.client.sendSignal(peerId, { reset: true });
+      } else this.restart(peerId);
+    }
+  }
+
+  private restart(peerId: string) {
+    this.drop(peerId);
+    // The reset arrives before the new offer, on the same ordered socket.
+    this.client.sendSignal(peerId, { reset: true });
+    this.link(peerId);
   }
 
   handleSignal(from: string, data: unknown) {
     if (!this.state.joined) return;
+    if ((data as { reset?: boolean } | null)?.reset) {
+      const existing = this.links.get(from);
+      if (existing?.polite ?? this.client.peerId < from) this.drop(from);
+      else this.restart(from);
+      return;
+    }
     const link = this.link(from);
     // A candidate applied before its offer finishes would be rejected and
     // lost, which can leave the call silently unconnected.
@@ -202,6 +259,7 @@ export class AudioCall {
       ignoreOffer: false,
       queue: Promise.resolve(),
       audio,
+      unhealthySince: Date.now(),
     };
     this.links.set(peerId, link);
 
@@ -236,8 +294,13 @@ export class AudioCall {
     };
     connection.onconnectionstatechange = () => {
       const connected = new Set(this.state.connected);
-      if (connection.connectionState === 'connected') connected.add(peerId);
-      else connected.delete(peerId);
+      if (connection.connectionState === 'connected') {
+        connected.add(peerId);
+        link.unhealthySince = undefined;
+      } else {
+        connected.delete(peerId);
+        link.unhealthySince ??= Date.now();
+      }
       if (connection.connectionState === 'failed') connection.restartIce();
       this.update({ connected });
     };
@@ -269,6 +332,7 @@ export class AudioCall {
     const link = this.links.get(peerId);
     if (!link) return;
     this.links.delete(peerId);
+    clearTimeout(link.dropTimer);
     link.connection.close();
     link.audio.srcObject = null;
     link.audio.remove();

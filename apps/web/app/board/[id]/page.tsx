@@ -416,6 +416,19 @@ export default function BoardPage() {
           ...current.filter((item) => item.pending),
         ]);
         setPeers(message.peers);
+        // Anything still being drawn, moved, or typed was not seen by peers
+        // that joined (or rejoined) while this tab was reconnecting.
+        const current = gesture.current;
+        const inProgress =
+          current?.kind === 'draw' || current?.kind === 'shape'
+            ? [current.object]
+            : current?.kind === 'move'
+              ? current.moved
+              : current?.kind === 'resize'
+                ? [current.moved]
+                : [];
+        if (editorRef.current) inProgress.push(editorRef.current.object);
+        if (inProgress.length) client?.liveUpsert(inProgress);
         callRef.current?.setIceServers(message.iceServers);
         callRef.current?.syncPeers(message.peers);
         callPeers.current = new Set(
@@ -527,6 +540,7 @@ export default function BoardPage() {
       onMessage: (message) => onServerMessage(message),
       onStatus: setStatus,
       onPending: setPending,
+      isBusy: () => gesture.current !== null || editorRef.current !== null,
     });
     clientRef.current = client;
     setPending(client.pendingOperations.length);
