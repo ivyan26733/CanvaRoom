@@ -14,8 +14,10 @@ npm run dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000). `npm run dev` starts the
-Next.js app and the Fastify API (port 4000). Without `REDIS_URL` the API keeps
-boards in memory and saves them to `apps/server/data/state.json`.
+Next.js app and the Fastify API (port 4000). Without `DATABASE_URL` or
+`REDIS_URL` the API keeps boards in memory and saves them to
+`apps/server/data/state.json`; without `BLOB_READ_WRITE_TOKEN` uploaded images
+go to `apps/server/data/images`.
 
 ```sh
 npm run typecheck
@@ -61,23 +63,38 @@ npm run format:check
 - `apps/server` — Fastify API plus a WebSocket hub at `/api/ws`
   (`src/realtime.ts`). Rooms deliver to local sockets directly and fan out
   through Redis pub/sub only when another server instance has the same board
-  open. Boards are stored in Redis per object (`src/store.ts`), with an atomic
-  Lua script for create/update/delete.
+  open. Accounts, sessions, and boards live in Postgres (`src/pg-store.ts`,
+  schema in `db/schema.sql`), one row per object, so concurrent edits to
+  different objects never collide. Redis holds only presence, rate limits, and
+  cross-instance fan-out. Images are uploaded to a private Vercel Blob store and
+  served through `/api/boards/:id/images/:name` to board members only.
 - `packages/canvas-adapter`, `packages/shared` — shared types and viewport math.
 
 ## Deploying to Vercel
 
 `vercel.json` deploys both apps as [Vercel Services](https://vercel.com/docs/services)
 in one project: `/api/*` (including the WebSocket) goes to the API, everything
-else to Next.js. Functions are pinned to `bom1` (Mumbai) next to the Redis
-database. The project’s Root Directory must be the repository root.
+else to Next.js. Functions are pinned to `bom1` (Mumbai) next to Redis and
+Blob; Postgres is Neon in `sin1` (Singapore), the nearest region it offers.
+The project’s Root Directory must be the repository root.
+
+After changing `db/schema.sql`, apply it before deploying (it is safe to rerun):
+
+```sh
+DATABASE_URL_UNPOOLED=... npm run db:migrate -w @collabboard/server
+```
+
+`npm run db:import-redis -w @collabboard/server` copies boards from the older
+Redis-only storage into Postgres, skipping boards already there.
 
 Required environment variables:
 
 | Variable                                        | Purpose                                   |
 | ----------------------------------------------- | ----------------------------------------- |
 | `AUTH_SECRET`                                   | Signs sessions. Use a long random value.  |
+| `DATABASE_URL`                                  | Set by the Neon integration (pooled).     |
 | `REDIS_URL` or `KV_URL`                         | Set by the Upstash for Redis integration. |
+| `BLOB_READ_WRITE_TOKEN`                         | Set when the Blob store is connected.     |
 | `TURN_URLS`, `TURN_USERNAME`, `TURN_CREDENTIAL` | Optional TURN relay for voice.            |
 
 Vercel ends a WebSocket when the function reaches its maximum duration (5

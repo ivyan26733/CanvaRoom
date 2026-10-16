@@ -3,10 +3,19 @@ import { z } from 'zod';
 export const colorSchema = z
   .string()
   .regex(/^#[0-9a-fA-F]{6}(?:[0-9a-fA-F]{2})?$/);
-const imageSchema = z
-  .string()
-  .regex(/^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/)
-  .max(800_000);
+// Uploaded images are referenced by their app path. Inline data URLs are
+// still accepted from boards and outboxes saved before uploads existed.
+const imageSchema = z.union([
+  z
+    .string()
+    .regex(
+      /^\/api\/boards\/[A-Za-z0-9_-]{1,64}\/images\/[0-9a-f-]{36}\.(?:png|jpg|webp)$/,
+    ),
+  z
+    .string()
+    .regex(/^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/)
+    .max(800_000),
+]);
 const pointsSchema = z.array(z.number().finite()).max(100_000);
 
 const fieldShape = {

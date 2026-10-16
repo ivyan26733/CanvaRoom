@@ -35,6 +35,7 @@ export async function exportBoard(
   clone
     .querySelectorAll('[style]')
     .forEach((node) => node.removeAttribute('style'));
+  await inlineImages(clone);
   const markup = `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${width}" height="${height}" viewBox="${x} ${y} ${width} ${height}"><rect x="${x}" y="${y}" width="${width}" height="${height}" fill="#fffefa"/>${new XMLSerializer().serializeToString(clone)}</svg>`;
   const svgBlob = new Blob([markup], { type: 'image/svg+xml' });
   if (format === 'svg') {
@@ -104,7 +105,10 @@ export async function exportBoard(
   );
 }
 
-/** Shrinks an uploaded image so it can be shared through the board. */
+/**
+ * Shrinks an uploaded image so it can be shared through the board. Returns
+ * the encoded file plus, for boards kept only in this browser, a data URL.
+ */
 export async function prepareImage(file: File) {
   if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type))
     throw new Error('Choose a PNG, JPEG, or WebP image.');
@@ -118,14 +122,37 @@ export async function prepareImage(file: File) {
   canvas.height = Math.max(1, Math.round(bitmap.height * fit));
   canvas.getContext('2d')!.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
   bitmap.close();
-  const keepAlpha = file.type !== 'image/jpeg';
+  const type = file.type === 'image/jpeg' ? 'image/jpeg' : 'image/webp';
   for (const quality of [0.86, 0.75, 0.62, 0.5]) {
-    const src = canvas.toDataURL(
-      keepAlpha ? 'image/webp' : 'image/jpeg',
-      quality,
+    const blob = await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob(resolve, type, quality),
     );
-    if (src.length < 750_000)
-      return { src, width: canvas.width, height: canvas.height };
+    // Data URLs grow by a third, and must stay under the server's limit.
+    if (blob && blob.size < 560_000)
+      return { blob, width: canvas.width, height: canvas.height };
   }
   throw new Error('This image is too detailed to share. Try a smaller one.');
+}
+
+export function dataUrl(blob: Blob) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(new Error('This image could not be read.'));
+    reader.readAsDataURL(blob);
+  });
+}
+
+/** An SVG drawn as an image cannot load files, so uploaded images are inlined. */
+async function inlineImages(root: SVGGElement) {
+  await Promise.all(
+    [...root.querySelectorAll('image')].map(async (image) => {
+      const href = image.getAttribute('href');
+      if (!href || href.startsWith('data:')) return;
+      const response = await fetch(href, { credentials: 'same-origin' });
+      if (!response.ok)
+        throw new Error('An image on this board could not be loaded.');
+      image.setAttribute('href', await dataUrl(await response.blob()));
+    }),
+  );
 }

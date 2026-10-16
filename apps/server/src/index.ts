@@ -17,7 +17,15 @@ import {
 import { canEdit, editBlockedReason, publicBoard } from './boards.js';
 import { mailConfigured, sendPasswordReset } from './mail.js';
 import { attachRealtime, broadcast, broadcastBoard } from './realtime.js';
-import { loadStore, store } from './store.js';
+import { loadStore, storageKind, store } from './store.js';
+import {
+  copyImages,
+  deleteImages,
+  MAX_IMAGE_BYTES,
+  readImage,
+  saveImage,
+  sniffImage,
+} from './images.js';
 import { pageIdSchema, pageNameSchema } from './schemas.js';
 import { TEMPLATES, templateObjects } from './templates.js';
 import { DEFAULT_PAGES, pageOf } from './models.js';
@@ -33,6 +41,12 @@ import type {
 
 const app = Fastify({ logger: true, bodyLimit: 1_000_000 });
 attachRealtime(app.server);
+// Image uploads arrive as raw bytes; their type is checked from the content.
+app.addContentTypeParser(
+  ['image/png', 'image/jpeg', 'image/webp'],
+  { parseAs: 'buffer', bodyLimit: MAX_IMAGE_BYTES },
+  (_request, body, done) => done(null, body),
+);
 
 const apiError = (reply: FastifyReply, status: number, message: string) =>
   reply.code(status).send({ error: message });
@@ -425,6 +439,9 @@ app.delete('/api/boards/:boardId', async (request, reply) => {
     return apiError(reply, 403, 'Only the board owner can delete this board.');
   await store.deleteBoard(boardId);
   broadcast(boardId, { t: 'deleted' });
+  await deleteImages(boardId).catch((error: unknown) =>
+    request.log.error(error, 'Could not delete board images'),
+  );
   return reply.code(204).send();
 });
 
@@ -451,8 +468,53 @@ app.post('/api/boards/:boardId/duplicate', async (request, reply) => {
     inviteRevoked: false,
     pages: source.board.pages,
   };
-  await store.createBoard(duplicate, await store.getObjects(boardId));
+  const objects = await copyImages(
+    boardId,
+    duplicate.id,
+    await store.getObjects(boardId),
+  );
+  await store.createBoard(duplicate, objects);
   return reply.code(201).send(publicBoard(duplicate, 'owner'));
+});
+
+// ---- Images ----
+
+app.post('/api/boards/:boardId/images', async (request, reply) => {
+  const user = await currentUser(request, reply);
+  if (!user) return;
+  const { boardId } = request.params as { boardId: string };
+  const access = await getAccess(boardId, user.id);
+  if (!access) return apiError(reply, 404, 'Board not found.');
+  if (!canEdit(access.role, access.board))
+    return apiError(reply, 403, editBlockedReason(access.role, access.board));
+  const bytes = request.body;
+  const type = Buffer.isBuffer(bytes) ? sniffImage(bytes) : undefined;
+  if (!type) return apiError(reply, 415, 'Choose a PNG, JPEG, or WebP image.');
+  if (!(await allow(reply, `upload:${user.id}`, 60, 600))) return;
+  try {
+    return reply
+      .code(201)
+      .send({ src: await saveImage(boardId, bytes as Buffer, type) });
+  } catch (error) {
+    request.log.error(error, 'Image upload failed');
+    return apiError(reply, 503, 'Images cannot be uploaded right now.');
+  }
+});
+
+app.get('/api/boards/:boardId/images/:name', async (request, reply) => {
+  const user = await currentUser(request, reply);
+  if (!user) return;
+  const { boardId, name } = request.params as { boardId: string; name: string };
+  if (!(await getAccess(boardId, user.id)))
+    return apiError(reply, 404, 'Image not found.');
+  const image = await readImage(boardId, name);
+  if (!image) return apiError(reply, 404, 'Image not found.');
+  // Names are never reused, so the browser can keep its copy.
+  return reply
+    .header('Cache-Control', 'private, max-age=31536000, immutable')
+    .header('X-Content-Type-Options', 'nosniff')
+    .type(image.contentType)
+    .send(image.body);
 });
 
 app.post('/api/boards/:boardId/join', async (request, reply) => {
@@ -772,7 +834,7 @@ app.get('/api/ice-servers', async () => ({ iceServers: config.iceServers }));
 app.get('/api/health', async () => ({
   status: 'ok',
   service: 'collabboard-api',
-  storage: config.redisUrl ? 'redis' : 'memory',
+  storage: storageKind,
 }));
 app.get('/health', async () => ({ status: 'ok', service: 'collabboard-api' }));
 

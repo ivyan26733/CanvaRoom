@@ -6,17 +6,23 @@
     "dev": "node --watch --import tsx src/index.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "eslint src",
-    "start": "node --import tsx src/index.ts"
+    "start": "node --import tsx src/index.ts",
+    "db:migrate": "node --import tsx scripts/migrate.ts",
+    "db:import-redis": "node --import tsx scripts/import-redis.ts"
   },
   "dependencies": {
+    "@vercel/blob": "^2.8.2",
+    "@vercel/functions": "^3.10.1",
     "dotenv": "^16.6.1",
     "fastify": "^5.12.5",
     "ioredis": "^5.11.1",
+    "pg": "^8.23.1",
     "ws": "^8.22.0",
     "zod": "^4.1.12"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
+    "@types/pg": "^8.23.1",
     "@types/ws": "^8.18.2",
     "tsx": "^4.20.0",
     "typescript": "^5.9.3"

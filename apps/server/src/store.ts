@@ -2,7 +2,9 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { Redis } from 'ioredis';
 import { config } from './config.js';
-import { DEFAULT_PAGES } from './models.js';
+import { createPool } from './db.js';
+import { DEFAULT_PAGES, MAX_MESSAGES, MAX_SNAPSHOTS } from './models.js';
+import { PostgresStore } from './pg-store.js';
 import type {
   Account,
   BoardMeta,
@@ -88,8 +90,12 @@ export interface Store {
   takeResetToken(key: string): Promise<string | undefined>;
 }
 
-const MAX_MESSAGES = 500;
-const MAX_SNAPSHOTS = 50;
+/** Short-lived state that never needs to reach the database. */
+export type LiveStore = Pick<
+  Store,
+  'setPresence' | 'removePresence' | 'listPresence' | 'hit'
+>;
+
 export const PRESENCE_TTL_MS = 45_000;
 
 const keys = {
@@ -466,7 +472,7 @@ type MemoryBoard = {
 };
 
 /** Single-process store for local development, optionally saved to a JSON file. */
-class MemoryStore implements Store {
+export class MemoryStore implements Store {
   private boards = new Map<string, MemoryBoard>();
   private presence = new Map<string, Map<string, Presence>>();
   private accounts = new Map<string, Account>();
@@ -768,13 +774,26 @@ export function createRedis() {
 }
 
 export const redis = createRedis();
-export const store: Store = redis
-  ? new RedisStore(redis)
-  : new MemoryStore(
-      process.env.VERCEL
-        ? undefined
-        : resolve(process.cwd(), 'data/state.json'),
+
+function createStore(): Store {
+  if (config.databaseUrl)
+    return new PostgresStore(
+      createPool(config.databaseUrl),
+      // Without Redis there is a single process, so memory is enough.
+      redis ? new RedisStore(redis) : new MemoryStore(),
     );
+  if (redis) return new RedisStore(redis);
+  return new MemoryStore(
+    process.env.VERCEL ? undefined : resolve(process.cwd(), 'data/state.json'),
+  );
+}
+
+export const store = createStore();
+export const storageKind = config.databaseUrl
+  ? 'postgres'
+  : redis
+    ? 'redis'
+    : 'memory';
 
 export async function loadStore() {
   if (store instanceof MemoryStore) await store.load();

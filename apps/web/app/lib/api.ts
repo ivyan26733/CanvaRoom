@@ -116,7 +116,8 @@ export class ApiError extends Error {
 
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
-  if (init.body) headers.set('Content-Type', 'application/json');
+  if (typeof init.body === 'string')
+    headers.set('Content-Type', 'application/json');
   const response = await fetch(`/api${path}`, {
     ...init,
     headers,
@@ -138,6 +139,15 @@ export function send<T>(path: string, method: string, body?: unknown) {
   return api<T>(path, {
     method,
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+}
+
+/** Stores an image for a board and returns the path objects refer to it by. */
+export function uploadImage(boardId: string, image: Blob) {
+  return api<{ src: string }>(`/boards/${encodeURIComponent(boardId)}/images`, {
+    method: 'POST',
+    body: image,
+    headers: { 'Content-Type': image.type },
   });
 }
 

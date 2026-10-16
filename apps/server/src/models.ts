@@ -31,6 +31,10 @@ export type BoardObject = {
 
 export type Page = { id: string; name: string };
 
+/** Chat messages and snapshots kept per board; older ones are dropped. */
+export const MAX_MESSAGES = 500;
+export const MAX_SNAPSHOTS = 50;
+
 export const DEFAULT_PAGES: Page[] = [{ id: 'p1', name: 'Page 1' }];
 
 /**

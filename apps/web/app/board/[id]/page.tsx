@@ -16,6 +16,7 @@ import {
   ApiError,
   id,
   send,
+  uploadImage,
   DEFAULT_PAGES,
   type Board,
   type BoardObject,
@@ -41,7 +42,7 @@ import {
   type Bounds,
   type Point,
 } from '../../lib/canvas';
-import { exportBoard, prepareImage } from '../../lib/export';
+import { dataUrl, exportBoard, prepareImage } from '../../lib/export';
 import {
   RealtimeClient,
   type ConnectionStatus,
@@ -1866,6 +1867,10 @@ export default function BoardPage() {
     if (!file || readonly) return;
     try {
       const image = await prepareImage(file);
+      // Boards kept only in this browser have nowhere to upload to.
+      const src = isLocal
+        ? await dataUrl(image.blob)
+        : (await uploadImage(boardId, image.blob)).src;
       const scale =
         Math.min(1, 520 / image.width, 380 / image.height) /
         viewRef.current.zoom;
@@ -1877,7 +1882,7 @@ export default function BoardPage() {
           x: view.x + size.width / view.zoom / 2 - width / 2,
           y: view.y + size.height / view.zoom / 2 - height / 2,
         },
-        { width, height, src: image.src },
+        { width, height, src },
       );
       perform([{ type: 'create', objectId: object.id, object }]);
       setTool('select');

@@ -11,6 +11,11 @@ const environmentSchema = z.object({
   // server keeps boards in memory, which only suits a single local process.
   REDIS_URL: z.string().optional(),
   KV_URL: z.string().optional(),
+  // Neon Postgres holds accounts and boards. With it, Redis only carries the
+  // live layer: presence, rate limits, and relaying between instances.
+  DATABASE_URL: z.string().optional(),
+  // Board images. Without a token they are kept on local disk (dev only).
+  BLOB_READ_WRITE_TOKEN: z.string().optional(),
   // Comma-separated TURN URLs plus credentials, for peers behind strict NATs.
   TURN_URLS: z.string().optional(),
   TURN_USERNAME: z.string().optional(),
@@ -36,6 +41,8 @@ export const config = {
   serverHost: env.SERVER_HOST,
   serverPort: env.SERVER_PORT,
   redisUrl: env.REDIS_URL || env.KV_URL || undefined,
+  databaseUrl: env.DATABASE_URL || undefined,
+  blobEnabled: Boolean(env.BLOB_READ_WRITE_TOKEN),
   resendApiKey: env.RESEND_API_KEY || undefined,
   mailFrom: env.MAIL_FROM || 'CanvaRoom <onboarding@resend.dev>',
   appUrl: (
