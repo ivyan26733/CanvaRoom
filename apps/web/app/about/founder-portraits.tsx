@@ -1,10 +1,10 @@
 /**
  * Illustrated founder portraits, drawn in SVG so they stay sharp at any size
- * and need no image files. They are stand-ins: replace `<FounderPortrait>`
- * with an `<img>` once photos are available.
+ * and need no image files. They are deliberately not likenesses: the founders
+ * are not named on the site.
  */
 
-type Who = 'divyansh' | 'karambir';
+type Who = 'builder' | 'strategist';
 
 type Look = {
   skin: string;
@@ -19,7 +19,7 @@ type Look = {
 };
 
 const LOOKS: Record<Who, Look> = {
-  divyansh: {
+  builder: {
     skin: '#e9b48c',
     skinShade: '#cf9169',
     lip: '#b56a55',
@@ -30,7 +30,7 @@ const LOOKS: Record<Who, Look> = {
     ink: '#1b1b1b',
     cursor: '#3b5bdb',
   },
-  karambir: {
+  strategist: {
     skin: '#dca57f',
     skinShade: '#bf8560',
     lip: '#a45f4b',
@@ -160,7 +160,7 @@ function Body({ who, look }: { who: Who; look: Look }) {
       />
     </>
   );
-  if (who === 'divyansh')
+  if (who === 'builder')
     return (
       <g>
         {neck}
@@ -254,7 +254,7 @@ function Head({ who, look }: { who: Who; look: Look }) {
       <ellipse cx="166" cy="232" rx="13" ry="7" fill="#e07a6a" opacity={0.18} />
       <ellipse cx="234" cy="232" rx="13" ry="7" fill="#e07a6a" opacity={0.18} />
 
-      {who === 'karambir' && (
+      {who === 'strategist' && (
         <>
           {/* Trimmed beard and moustache */}
           <path
@@ -275,24 +275,24 @@ function Head({ who, look }: { who: Who; look: Look }) {
       {/* Eyebrows */}
       <path
         d={
-          who === 'divyansh'
+          who === 'builder'
             ? 'M156 182 C166 175 180 175 190 180'
             : 'M154 180 C166 172 180 172 191 178'
         }
         fill="none"
         stroke={look.hair}
-        strokeWidth={who === 'divyansh' ? 6 : 7}
+        strokeWidth={who === 'builder' ? 6 : 7}
         strokeLinecap="round"
       />
       <path
         d={
-          who === 'divyansh'
+          who === 'builder'
             ? 'M210 180 C220 175 234 175 244 182'
             : 'M209 178 C220 172 234 172 246 180'
         }
         fill="none"
         stroke={look.hair}
-        strokeWidth={who === 'divyansh' ? 6 : 7}
+        strokeWidth={who === 'builder' ? 6 : 7}
         strokeLinecap="round"
       />
 
@@ -306,7 +306,7 @@ function Head({ who, look }: { who: Who; look: Look }) {
       />
 
       {/* Mouth */}
-      {who === 'divyansh' ? (
+      {who === 'builder' ? (
         <>
           <path
             d="M182 246 C192 258 210 258 220 246 C210 250 192 250 182 246 Z"
@@ -327,7 +327,7 @@ function Head({ who, look }: { who: Who; look: Look }) {
       )}
 
       {/* Hair */}
-      {who === 'divyansh' ? (
+      {who === 'builder' ? (
         <>
           <path
             d="M134 186 C122 128 150 82 202 80 C252 78 282 118 268 186 C262 160 252 142 236 132 C228 146 210 150 192 146 C180 154 162 156 150 150 C144 160 138 172 134 186 Z"
@@ -387,9 +387,9 @@ export function FounderPortrait({ who, title }: { who: Who; title: string }) {
       <Body who={who} look={look} />
       <Head who={who} look={look} />
       <CursorTag
-        x={who === 'divyansh' ? 276 : 40}
-        y={who === 'divyansh' ? 236 : 250}
-        label={who === 'divyansh' ? 'Divyansh' : 'Karambir'}
+        x={who === 'builder' ? 276 : 40}
+        y={who === 'builder' ? 236 : 250}
+        label={who === 'builder' ? 'Builder' : 'Strategist'}
         color={look.cursor}
       />
     </svg>

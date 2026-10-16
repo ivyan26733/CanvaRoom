@@ -7,10 +7,10 @@ import { FounderPortrait } from './founder-portraits';
 import './about.css';
 
 const DESCRIPTION =
-  'CanvaRoom was founded by Divyansh Singh and Karambir Singh to end lag and app-juggling in online classes, with a whiteboard where ink, voice, and chat share one live room.';
+  'CanvaRoom was founded by two people who were tired of lag and app-juggling in online classes, so they built a whiteboard where ink, voice, and chat share one live room.';
 
 export const metadata: Metadata = {
-  title: 'About us — the founders of CanvaRoom',
+  title: 'About us — the story behind CanvaRoom',
   description: DESCRIPTION,
   alternates: { canonical: '/about' },
   openGraph: {
@@ -21,41 +21,40 @@ export const metadata: Metadata = {
   },
 };
 
+// The founders prefer not to be named, so they appear by the part they play.
 const FOUNDERS = [
   {
-    who: 'divyansh' as const,
-    name: 'Divyansh Singh',
-    role: 'Founder',
-    headline: 'Backend software engineer, Tata Consultancy Services',
-    linkedin: 'https://www.linkedin.com/in/ivyansingh/',
+    who: 'builder' as const,
+    name: 'The Builder',
+    role: 'Co-founder',
+    headline: 'Counts milliseconds so you don’t have to',
     bio: [
-      'Divyansh builds production Java and Spring Boot microservices for global enterprise clients at TCS, where he works on authentication and authorization with Spring Security, large Java upgrades, and event-driven pipelines on Kafka. He also builds AI agents that automate testing, code review, and security analysis.',
-      'Outside work he has shipped NexFlow, a workflow automation platform running 100+ executions a minute, and LearnSphere, a microservices learning platform. He studied Mechanical Engineering with a Computer Science specialization at Dayalbagh Educational Institute, and leads the engineering behind CanvaRoom’s real-time sync, voice, and storage.',
+      'The Builder is the one who notices when a line arrives a beat after the voice explaining it — and can’t let it go. Late nights went into making every stroke travel the moment it is drawn, keeping voice steady when Wi-Fi isn’t, and making sure nothing on the board is ever lost.',
+      'Ask what CanvaRoom should feel like and the answer is always the same: like the whole class is leaning over one desk. If it feels slower than a marker on a real board, it isn’t finished yet.',
     ],
     skills: [
-      'Real-time systems',
-      'Java & Spring Boot',
-      'Microservices',
-      'Kafka & Redis',
-      'AI agents',
+      'Real-time sync',
+      'Reliability',
+      'Voice & chat',
+      'Systems design',
+      'Late-night debugging',
     ],
   },
   {
-    who: 'karambir' as const,
-    name: 'Karambir Singh',
-    role: 'Founder',
-    headline: 'Head of Bid Management – India, Siemens Energy',
-    linkedin: 'https://www.linkedin.com/in/karambir-singh-728b602b/',
+    who: 'strategist' as const,
+    name: 'The Strategist',
+    role: 'Co-founder',
+    headline: 'Turns “what if” into a plan, and a plan into a product',
     bio: [
-      'Karambir leads bid management for Siemens Energy in India. His engineering career spans research and development on electrolyzers, fuel cells, and hydrogen–natural gas blending systems, and commissioning those systems on site.',
-      'As an Innovation Head Coach and Scrum Master he has guided teams from an idea to a working product. He brings that discipline to CanvaRoom: understanding what students and teachers actually need, and shipping it in small, tested steps.',
+      'The Strategist has spent years guiding teams from a rough idea to something real, one tested step at a time. At CanvaRoom that means sitting with students and teachers, listening for the moment a class gets stuck, and deciding what to build next — and, just as often, what not to.',
+      'The Strategist keeps the product honest: simple enough to start in seconds, and focused on the people in the room rather than on features for their own sake.',
     ],
     skills: [
-      'Bid management',
+      'Product strategy',
       'Innovation coaching',
-      'Hydrogen & fuel-cell R&D',
-      'Scrum',
-      'Site commissioning',
+      'Agile delivery',
+      'Listening to users',
+      'Saying no',
     ],
   },
 ];
@@ -113,14 +112,6 @@ const aboutSchema = {
     name: SITE.name,
     url: SITE.url,
     logo: `${SITE.url}/icon.svg`,
-    founder: FOUNDERS.map((founder) => ({
-      '@type': 'Person',
-      name: founder.name,
-      jobTitle: founder.role,
-      description: founder.headline,
-      knowsAbout: founder.skills,
-      sameAs: [founder.linkedin],
-    })),
   },
 };
 
@@ -229,7 +220,7 @@ function BoardSketch() {
         />
         <rect x="16" y="22" width="84" height="24" rx="12" fill="#3b5bdb" />
         <text x="58" y="38.5" textAnchor="middle" className="about-sketch-tag">
-          Divyansh
+          Builder
         </text>
       </g>
       <g transform="translate(392 176)">
@@ -241,7 +232,7 @@ function BoardSketch() {
         />
         <rect x="16" y="22" width="84" height="24" rx="12" fill="#e8590c" />
         <text x="58" y="38.5" textAnchor="middle" className="about-sketch-tag">
-          Karambir
+          Strategist
         </text>
       </g>
       <g className="about-sketch-voice" transform="translate(40 40)">
@@ -372,9 +363,9 @@ export default function AboutPage() {
               <figure className="founder-frame">
                 <FounderPortrait
                   who={founder.who}
-                  title={`Illustrated portrait of ${founder.name}`}
+                  title={`Illustration representing ${founder.name}`}
                 />
-                <figcaption>{founder.name.split(' ')[0]}</figcaption>
+                <figcaption>{founder.name}</figcaption>
               </figure>
               <div className="founder-body">
                 <p className="founder-role">
@@ -385,19 +376,11 @@ export default function AboutPage() {
                 {founder.bio.map((paragraph) => (
                   <p key={paragraph.slice(0, 24)}>{paragraph}</p>
                 ))}
-                <ul className="founder-skills" aria-label="Expertise">
+                <ul className="founder-skills" aria-label="Strengths">
                   {founder.skills.map((skill) => (
                     <li key={skill}>{skill}</li>
                   ))}
                 </ul>
-                <a
-                  className="founder-link"
-                  href={founder.linkedin}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  Connect on LinkedIn <span aria-hidden="true">↗</span>
-                </a>
               </div>
             </article>
           ))}
