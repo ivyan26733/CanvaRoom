@@ -114,6 +114,9 @@ export function MarketingFooter() {
           <li>
             <Link href="/">Sign in</Link>
           </li>
+          <li>
+            <Link href="/about">About us</Link>
+          </li>
         </ul>
       </nav>
       <p className="mk-copyright">

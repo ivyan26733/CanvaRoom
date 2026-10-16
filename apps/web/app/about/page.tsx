@@ -26,15 +26,37 @@ const FOUNDERS = [
     who: 'divyansh' as const,
     name: 'Divyansh Singh',
     role: 'Founder',
+    headline: 'Backend software engineer, Tata Consultancy Services',
     linkedin: 'https://www.linkedin.com/in/ivyansingh/',
-    bio: 'Divyansh saw how much of an online class is lost to frozen screens and diagrams that arrive late. His goal for CanvaRoom is simple: when a teacher draws, every student sees the line as it is drawn.',
+    bio: [
+      'Divyansh builds production Java and Spring Boot microservices for global enterprise clients at TCS, where he works on authentication and authorization with Spring Security, large Java upgrades, and event-driven pipelines on Kafka. He also builds AI agents that automate testing, code review, and security analysis.',
+      'Outside work he has shipped NexFlow, a workflow automation platform running 100+ executions a minute, and LearnSphere, a microservices learning platform. He studied Mechanical Engineering with a Computer Science specialization at Dayalbagh Educational Institute, and leads the engineering behind CanvaRoom’s real-time sync, voice, and storage.',
+    ],
+    skills: [
+      'Real-time systems',
+      'Java & Spring Boot',
+      'Microservices',
+      'Kafka & Redis',
+      'AI agents',
+    ],
   },
   {
     who: 'karambir' as const,
     name: 'Karambir Singh',
     role: 'Founder',
+    headline: 'Head of Bid Management – India, Siemens Energy',
     linkedin: 'https://www.linkedin.com/in/karambir-singh-728b602b/',
-    bio: 'Karambir thinks about the people in the room: the student who wants to answer on the board, the group revising together at midnight, the teacher who needs one link that just works. He wants CanvaRoom to stay simple enough to start in seconds.',
+    bio: [
+      'Karambir leads bid management for Siemens Energy in India. His engineering career spans research and development on electrolyzers, fuel cells, and hydrogen–natural gas blending systems, and commissioning those systems on site.',
+      'As an Innovation Head Coach and Scrum Master he has guided teams from an idea to a working product. He brings that discipline to CanvaRoom: understanding what students and teachers actually need, and shipping it in small, tested steps.',
+    ],
+    skills: [
+      'Bid management',
+      'Innovation coaching',
+      'Hydrogen & fuel-cell R&D',
+      'Scrum',
+      'Site commissioning',
+    ],
   },
 ];
 
@@ -95,6 +117,8 @@ const aboutSchema = {
       '@type': 'Person',
       name: founder.name,
       jobTitle: founder.role,
+      description: founder.headline,
+      knowsAbout: founder.skills,
       sameAs: [founder.linkedin],
     })),
   },
@@ -193,8 +217,16 @@ export default function AboutPage() {
                   <h3>{founder.name}</h3>
                   <p className="founder-role">
                     {founder.role}, {SITE.name}
+                    <span className="founder-headline">{founder.headline}</span>
                   </p>
-                  <p>{founder.bio}</p>
+                  {founder.bio.map((paragraph) => (
+                    <p key={paragraph.slice(0, 24)}>{paragraph}</p>
+                  ))}
+                  <ul className="founder-skills" aria-label="Expertise">
+                    {founder.skills.map((skill) => (
+                      <li key={skill}>{skill}</li>
+                    ))}
+                  </ul>
                   <a
                     className="founder-link"
                     href={founder.linkedin}

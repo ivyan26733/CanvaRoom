@@ -136,10 +136,36 @@
   color: var(--about-accent);
 }
 
+.founder-headline {
+  display: block;
+  margin-top: 2px;
+  font-weight: 500;
+  font-size: 0.92rem;
+  color: var(--about-muted);
+}
+
 .founder-body p:not(.founder-role) {
   line-height: 1.65;
   color: var(--about-muted);
-  margin: 0 0 18px;
+  margin: 0 0 14px;
+}
+
+.founder-skills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 4px 0 18px;
+  padding: 0;
+  list-style: none;
+}
+
+.founder-skills li {
+  padding: 4px 10px;
+  border: 1px solid var(--about-line, currentColor);
+  border-radius: 999px;
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--about-ink);
 }
 
 .founder-link {
