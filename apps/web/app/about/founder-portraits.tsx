@@ -1,232 +1,397 @@
 /**
- * Anime-style placeholder portraits for the founders, drawn in SVG so they
- * stay sharp at any size and need no image files. Swap for photos later by
- * replacing `<FounderPortrait>` with an `<img>`.
+ * Illustrated founder portraits, drawn in SVG so they stay sharp at any size
+ * and need no image files. They are stand-ins: replace `<FounderPortrait>`
+ * with an `<img>` once photos are available.
  */
+
+type Who = 'divyansh' | 'karambir';
 
 type Look = {
   skin: string;
   skinShade: string;
+  lip: string;
   hair: string;
   hairLight: string;
-  eyes: string;
-  top: string;
-  topShade: string;
+  iris: string;
   backdrop: [string, string];
+  ink: string;
+  cursor: string;
 };
 
-const LOOKS: Record<'divyansh' | 'karambir', Look> = {
+const LOOKS: Record<Who, Look> = {
   divyansh: {
-    skin: '#f3c9a4',
-    skinShade: '#e3a982',
-    hair: '#1f1b2e',
-    hairLight: '#3d3560',
-    eyes: '#4a2f1c',
-    top: '#3b5bdb',
-    topShade: '#2c46b0',
-    backdrop: ['#ffd8a8', '#ffa8a8'],
+    skin: '#e9b48c',
+    skinShade: '#cf9169',
+    lip: '#b56a55',
+    hair: '#17141f',
+    hairLight: '#3b3352',
+    iris: '#3d2516',
+    backdrop: ['#ffd9c2', '#ff9f80'],
+    ink: '#1b1b1b',
+    cursor: '#3b5bdb',
   },
   karambir: {
-    skin: '#eebf98',
-    skinShade: '#d99f78',
-    hair: '#171717',
+    skin: '#dca57f',
+    skinShade: '#bf8560',
+    lip: '#a45f4b',
+    hair: '#151515',
     hairLight: '#3a3a3a',
-    eyes: '#3b2416',
-    top: '#2f9e44',
-    topShade: '#237a34',
-    backdrop: ['#b2f2bb', '#a5d8ff'],
+    iris: '#2e1c12',
+    backdrop: ['#cfe8ff', '#8fc3f5'],
+    ink: '#1b1b1b',
+    cursor: '#e8590c',
   },
 };
 
-function Eye({ x, color, flip }: { x: number; color: string; flip?: boolean }) {
-  const s = flip ? -1 : 1;
+function Eye({ cx, look }: { cx: number; look: Look }) {
   return (
-    <g transform={`translate(${x} 0) scale(${s} 1)`}>
-      {/* lash line */}
+    <g>
       <path
-        d="M-17 -6 Q-2 -17 16 -8"
+        d={`M${cx - 15} 202 C${cx - 8} 192 ${cx + 8} 192 ${cx + 15} 202 C${cx + 8} 208 ${cx - 8} 208 ${cx - 15} 202 Z`}
+        fill="#fbf7f2"
+      />
+      <circle cx={cx} cy={201} r={6.5} fill={look.iris} />
+      <circle cx={cx} cy={201} r={3} fill="#0b0b0b" />
+      <circle cx={cx + 2.2} cy={198.6} r={1.7} fill="#fff" />
+      <path
+        d={`M${cx - 16} 202 C${cx - 8} 190 ${cx + 8} 190 ${cx + 16} 201`}
         fill="none"
-        stroke="#1b1424"
-        strokeWidth="4.5"
+        stroke="#1a1410"
+        strokeWidth={3}
         strokeLinecap="round"
       />
-      <ellipse cx="0" cy="4" rx="12" ry="14" fill="#fff" />
-      <ellipse cx="0.5" cy="6" rx="9.5" ry="12" fill={color} />
-      <ellipse cx="0.5" cy="8" rx="5" ry="6.5" fill="#120c08" />
-      <ellipse cx="-3.5" cy="0" rx="3.6" ry="4.4" fill="#fff" />
-      <circle cx="4" cy="12" r="1.8" fill="#fff" opacity="0.85" />
     </g>
   );
 }
 
-export function FounderPortrait({
-  who,
-  title,
+/** A small live-cursor tag, the way people appear on a CanvaRoom board. */
+function CursorTag({
+  x,
+  y,
+  label,
+  color,
 }: {
-  who: 'divyansh' | 'karambir';
-  title: string;
+  x: number;
+  y: number;
+  label: string;
+  color: string;
 }) {
-  const look = LOOKS[who];
-  const id = `founder-${who}`;
+  const width = 14 + label.length * 8.4;
   return (
-    <svg
-      viewBox="0 0 240 240"
-      role="img"
-      aria-label={title}
-      className="founder-portrait"
-    >
+    <g transform={`translate(${x} ${y})`}>
+      <path
+        d="M0 0 L0 22 L6 16 L10 26 L14 24 L10 14 L18 14 Z"
+        fill={color}
+        stroke="#fff"
+        strokeWidth={2}
+        strokeLinejoin="round"
+      />
+      <rect x={16} y={22} width={width} height={24} rx={12} fill={color} />
+      <text
+        x={16 + width / 2}
+        y={38.5}
+        textAnchor="middle"
+        fontSize={13}
+        fontWeight={700}
+        fill="#fff"
+        fontFamily="ui-sans-serif, system-ui, sans-serif"
+      >
+        {label}
+      </text>
+    </g>
+  );
+}
+
+function Backdrop({ id, look }: { id: string; look: Look }) {
+  return (
+    <>
       <defs>
         <linearGradient id={`${id}-bg`} x1="0" y1="0" x2="1" y2="1">
           <stop offset="0" stopColor={look.backdrop[0]} />
           <stop offset="1" stopColor={look.backdrop[1]} />
         </linearGradient>
-        <clipPath id={`${id}-clip`}>
-          <circle cx="120" cy="120" r="120" />
-        </clipPath>
-      </defs>
-      <g clipPath={`url(#${id}-clip)`}>
-        <rect width="240" height="240" fill={`url(#${id}-bg)`} />
-        {/* whiteboard doodles in the backdrop */}
-        <g
-          fill="none"
-          stroke="#fff"
-          strokeWidth="4"
-          strokeLinecap="round"
-          opacity="0.55"
+        <pattern
+          id={`${id}-dots`}
+          width="22"
+          height="22"
+          patternUnits="userSpaceOnUse"
         >
-          <path d="M22 60 q14 -18 28 0 t28 0" />
-          <path d="M184 40 l18 18 m0 -18 l-18 18" />
-          <circle cx="200" cy="150" r="12" />
-          <path d="M26 170 l20 -14 l14 18" />
-        </g>
+          <circle cx="2" cy="2" r="1.6" fill="#000" opacity="0.12" />
+        </pattern>
+      </defs>
+      <rect width="400" height="480" fill={`url(#${id}-bg)`} />
+      <rect width="400" height="480" fill={`url(#${id}-dots)`} />
+      {/* Ink scribbles, as if drawn on the board behind them. */}
+      <path
+        d="M34 96 C70 52 128 60 118 104 C110 140 58 128 82 92 C100 66 150 70 170 58"
+        fill="none"
+        stroke={look.ink}
+        strokeWidth={4}
+        strokeLinecap="round"
+        opacity={0.55}
+      />
+      <path
+        d="M292 70 l36 0 M310 52 l0 36 M300 114 l22 -22"
+        stroke={look.ink}
+        strokeWidth={4}
+        strokeLinecap="round"
+        opacity={0.45}
+      />
+      <circle
+        cx="340"
+        cy="150"
+        r="22"
+        fill="none"
+        stroke={look.ink}
+        strokeWidth={4}
+        opacity={0.4}
+      />
+    </>
+  );
+}
 
-        {/* shoulders and top */}
-        <path d="M30 250 Q36 182 120 176 Q204 182 210 250 Z" fill={look.top} />
-        <path d="M92 180 L120 214 L148 180 Z" fill={look.topShade} />
-        {who === 'divyansh' ? (
-          // hoodie strings
-          <g stroke="#e7ecff" strokeWidth="3.5" strokeLinecap="round">
-            <path d="M108 192 v24" />
-            <path d="M132 192 v24" />
-          </g>
-        ) : (
-          // collar
-          <g fill="#f1f3f5">
-            <path d="M94 180 L120 204 L104 214 L86 188 Z" />
-            <path d="M146 180 L120 204 L136 214 L154 188 Z" />
-          </g>
-        )}
-
-        {/* neck */}
-        <path d="M104 150 h32 v34 q-16 10 -32 0 Z" fill={look.skinShade} />
-
-        {/* back hair */}
+function Body({ who, look }: { who: Who; look: Look }) {
+  const neck = (
+    <>
+      <path d="M176 252 L224 252 L228 312 L172 312 Z" fill={look.skin} />
+      <path
+        d="M176 252 L224 252 L225 276 C210 286 190 286 175 276 Z"
+        fill={look.skinShade}
+      />
+    </>
+  );
+  if (who === 'divyansh')
+    return (
+      <g>
+        {neck}
+        {/* Hoodie */}
         <path
-          d="M56 104 Q50 40 120 34 Q190 40 184 104 Q186 140 170 150 L70 150 Q54 140 56 104 Z"
-          fill={look.hair}
+          d="M40 480 C44 384 96 330 168 310 L232 310 C304 330 356 384 360 480 Z"
+          fill="#2f4fd1"
         />
-
-        {/* face */}
         <path
-          d="M66 100 Q66 60 120 58 Q174 60 174 100 Q174 150 120 166 Q66 150 66 100 Z"
-          fill={look.skin}
+          d="M40 480 C44 400 80 352 128 330 C118 380 116 430 120 480 Z"
+          fill="#243fae"
         />
-        {/* ears */}
-        <ellipse cx="66" cy="108" rx="8" ry="12" fill={look.skin} />
-        <ellipse cx="174" cy="108" rx="8" ry="12" fill={look.skin} />
-
-        {/* eyes */}
-        <g transform="translate(0 106)">
-          <Eye x={96} color={look.eyes} />
-          <Eye x={144} color={look.eyes} flip />
-        </g>
-        {/* brows */}
-        <g stroke={look.hair} strokeWidth="4" strokeLinecap="round">
-          <path d="M82 86 Q96 80 108 84" fill="none" />
-          <path d="M132 84 Q144 80 158 86" fill="none" />
-        </g>
-        {/* nose, blush, smile */}
         <path
-          d="M120 124 l-3 6 h5"
+          d="M360 480 C356 400 320 352 272 330 C282 380 284 430 280 480 Z"
+          fill="#243fae"
+        />
+        <path
+          d="M146 314 C160 360 240 360 254 314 C246 302 154 302 146 314 Z"
+          fill="#1e3494"
+        />
+        <path
+          d="M164 318 C176 344 224 344 236 318"
           fill="none"
-          stroke={look.skinShade}
-          strokeWidth="2.5"
+          stroke="#16297a"
+          strokeWidth={6}
           strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-        <ellipse
-          cx="86"
-          cy="134"
-          rx="9"
-          ry="4.5"
-          fill="#ff8787"
-          opacity="0.45"
-        />
-        <ellipse
-          cx="154"
-          cy="134"
-          rx="9"
-          ry="4.5"
-          fill="#ff8787"
-          opacity="0.45"
         />
         <path
-          d="M106 142 Q120 154 134 142 Q120 148 106 142 Z"
-          fill="#a33a3a"
-          stroke="#7a2626"
-          strokeWidth="2"
-          strokeLinejoin="round"
+          d="M184 340 L180 400 M216 340 L220 400"
+          stroke="#f1f3ff"
+          strokeWidth={4}
+          strokeLinecap="round"
         />
-
-        {/* front hair */}
-        {who === 'divyansh' ? (
-          <g>
-            <path
-              d="M58 98 Q56 44 120 40 Q186 44 182 98 L170 76 L160 94 L148 66 L136 90 L124 62 L110 90 L98 66 L86 94 L76 74 Z"
-              fill={look.hair}
-            />
-            <path
-              d="M96 50 Q120 42 146 50"
-              fill="none"
-              stroke={look.hairLight}
-              strokeWidth="5"
-              strokeLinecap="round"
-            />
-          </g>
-        ) : (
-          <g>
-            <path
-              d="M58 100 Q54 42 122 40 Q184 44 182 100 Q172 70 140 66 Q150 78 146 88 Q126 66 96 70 Q82 76 72 92 Z"
-              fill={look.hair}
-            />
-            <path
-              d="M100 52 Q126 44 152 54"
-              fill="none"
-              stroke={look.hairLight}
-              strokeWidth="5"
-              strokeLinecap="round"
-            />
-            {/* glasses */}
-            <g
-              fill="none"
-              stroke="#212529"
-              strokeWidth="3.5"
-              transform="translate(0 110)"
-            >
-              <rect x="78" y="-14" width="36" height="30" rx="10" />
-              <rect x="126" y="-14" width="36" height="30" rx="10" />
-              <path d="M114 -2 h12" />
-            </g>
-          </g>
-        )}
-
-        {/* a stylus, for the whiteboard */}
-        <g transform="translate(-22 -26) rotate(-28 196 206)">
-          <rect x="186" y="170" width="12" height="64" rx="6" fill="#fff" />
-          <rect x="186" y="170" width="12" height="14" rx="6" fill="#fab005" />
-          <path d="M186 228 L192 244 L198 228 Z" fill="#495057" />
-        </g>
+        <circle cx="180" cy="404" r="5" fill="#f1f3ff" />
+        <circle cx="220" cy="404" r="5" fill="#f1f3ff" />
       </g>
+    );
+  return (
+    <g>
+      {neck}
+      {/* Blazer over an open-collar shirt */}
+      <path
+        d="M40 480 C44 384 96 332 168 312 L232 312 C304 332 356 384 360 480 Z"
+        fill="#24324a"
+      />
+      <path d="M168 312 L200 400 L232 312 Z" fill="#f4f1ea" />
+      <path d="M168 312 L186 300 L200 336 Z" fill="#ffffff" />
+      <path d="M232 312 L214 300 L200 336 Z" fill="#ffffff" />
+      <path
+        d="M164 314 L200 420 L150 480 L118 480 C126 410 140 350 164 314 Z"
+        fill="#1a2538"
+      />
+      <path
+        d="M236 314 L200 420 L250 480 L282 480 C274 410 260 350 236 314 Z"
+        fill="#1a2538"
+      />
+      <path
+        d="M164 314 L186 372 L168 380 L200 420"
+        fill="none"
+        stroke="#2f405f"
+        strokeWidth={3}
+        strokeLinejoin="round"
+      />
+      <path
+        d="M236 314 L214 372 L232 380 L200 420"
+        fill="none"
+        stroke="#2f405f"
+        strokeWidth={3}
+        strokeLinejoin="round"
+      />
+      <path d="M262 392 l26 0 l-2 10 l-22 0 Z" fill="#f4f1ea" opacity={0.9} />
+    </g>
+  );
+}
+
+function Head({ who, look }: { who: Who; look: Look }) {
+  const face =
+    'M140 176 C140 124 166 102 200 102 C234 102 260 124 260 176 L258 208 C255 246 230 272 200 274 C170 272 145 246 142 208 Z';
+  return (
+    <g>
+      {/* Ears */}
+      <ellipse cx="141" cy="204" rx="12" ry="19" fill={look.skinShade} />
+      <ellipse cx="259" cy="204" rx="12" ry="19" fill={look.skinShade} />
+      <path d={face} fill={look.skin} />
+      {/* Soft shading down one side of the face */}
+      <path
+        d="M232 112 C252 124 260 148 260 176 L258 208 C255 246 230 272 200 274 C226 256 240 224 242 190 C244 158 240 132 232 112 Z"
+        fill={look.skinShade}
+        opacity={0.45}
+      />
+      <ellipse cx="166" cy="232" rx="13" ry="7" fill="#e07a6a" opacity={0.18} />
+      <ellipse cx="234" cy="232" rx="13" ry="7" fill="#e07a6a" opacity={0.18} />
+
+      {who === 'karambir' && (
+        <>
+          {/* Trimmed beard and moustache */}
+          <path
+            d="M142 206 C146 250 172 280 200 282 C228 280 254 250 258 206 C250 228 238 240 224 242 C214 234 186 234 176 242 C162 240 150 228 142 206 Z"
+            fill={look.hair}
+            opacity={0.88}
+          />
+          <path
+            d="M176 238 C186 228 214 228 224 238 C214 242 186 242 176 238 Z"
+            fill={look.hair}
+          />
+        </>
+      )}
+
+      <Eye cx={174} look={look} />
+      <Eye cx={226} look={look} />
+
+      {/* Eyebrows */}
+      <path
+        d={
+          who === 'divyansh'
+            ? 'M156 182 C166 175 180 175 190 180'
+            : 'M154 180 C166 172 180 172 191 178'
+        }
+        fill="none"
+        stroke={look.hair}
+        strokeWidth={who === 'divyansh' ? 6 : 7}
+        strokeLinecap="round"
+      />
+      <path
+        d={
+          who === 'divyansh'
+            ? 'M210 180 C220 175 234 175 244 182'
+            : 'M209 178 C220 172 234 172 246 180'
+        }
+        fill="none"
+        stroke={look.hair}
+        strokeWidth={who === 'divyansh' ? 6 : 7}
+        strokeLinecap="round"
+      />
+
+      {/* Nose */}
+      <path
+        d="M201 206 C198 218 194 224 199 228 C203 230 207 228 209 225"
+        fill="none"
+        stroke={look.skinShade}
+        strokeWidth={3}
+        strokeLinecap="round"
+      />
+
+      {/* Mouth */}
+      {who === 'divyansh' ? (
+        <>
+          <path
+            d="M182 246 C192 258 210 258 220 246 C210 250 192 250 182 246 Z"
+            fill="#fff"
+            stroke={look.lip}
+            strokeWidth={3}
+            strokeLinejoin="round"
+          />
+        </>
+      ) : (
+        <path
+          d="M186 248 C194 255 208 255 216 248"
+          fill="none"
+          stroke={look.lip}
+          strokeWidth={4}
+          strokeLinecap="round"
+        />
+      )}
+
+      {/* Hair */}
+      {who === 'divyansh' ? (
+        <>
+          <path
+            d="M134 186 C122 128 150 82 202 80 C252 78 282 118 268 186 C262 160 252 142 236 132 C228 146 210 150 192 146 C180 154 162 156 150 150 C144 160 138 172 134 186 Z"
+            fill={look.hair}
+          />
+          <path
+            d="M150 112 C160 96 178 88 196 92 C182 98 172 108 166 122 Z M206 90 C226 88 244 98 254 114 C238 106 222 104 210 108 Z"
+            fill={look.hairLight}
+          />
+          <path
+            d="M192 146 C200 132 214 124 230 122 C222 132 214 140 204 146 Z"
+            fill={look.hair}
+          />
+        </>
+      ) : (
+        <>
+          <path
+            d="M136 182 C130 126 160 92 204 92 C246 92 270 124 264 180 C258 152 246 132 222 122 C196 134 164 136 144 150 C140 160 138 170 136 182 Z"
+            fill={look.hair}
+          />
+          <path
+            d="M160 114 C176 100 200 96 222 100 C200 104 182 112 170 124 Z"
+            fill={look.hairLight}
+          />
+          {/* Glasses */}
+          <g fill="none" stroke="#1d1d1d" strokeWidth={4}>
+            <rect x="152" y="188" width="44" height="30" rx="10" />
+            <rect x="204" y="188" width="44" height="30" rx="10" />
+            <path d="M196 200 C199 196 201 196 204 200" />
+            <path d="M152 198 L142 194 M248 198 L258 194" />
+          </g>
+          <path
+            d="M160 194 l10 0 M212 194 l10 0"
+            stroke="#fff"
+            strokeWidth={3}
+            strokeLinecap="round"
+            opacity={0.6}
+          />
+        </>
+      )}
+    </g>
+  );
+}
+
+export function FounderPortrait({ who, title }: { who: Who; title: string }) {
+  const look = LOOKS[who];
+  const id = `portrait-${who}`;
+  return (
+    <svg
+      className="founder-portrait"
+      viewBox="0 0 400 480"
+      role="img"
+      aria-labelledby={`${id}-title`}
+    >
+      <title id={`${id}-title`}>{title}</title>
+      <Backdrop id={id} look={look} />
+      <Body who={who} look={look} />
+      <Head who={who} look={look} />
+      <CursorTag
+        x={who === 'divyansh' ? 276 : 40}
+        y={who === 'divyansh' ? 236 : 250}
+        label={who === 'divyansh' ? 'Divyansh' : 'Karambir'}
+        color={look.cursor}
+      />
     </svg>
   );
 }

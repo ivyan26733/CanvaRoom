@@ -124,6 +124,137 @@ const aboutSchema = {
   },
 };
 
+const STATS = [
+  {
+    value: '~85 ms',
+    label: 'median delay for a live stroke in our hour-long test',
+  },
+  { value: '1 link', label: 'to bring a whole class onto the same board' },
+  { value: '0 installs', label: 'works in any modern browser, on any device' },
+];
+
+/** A small sketch of a live board, standing in for a hero photo. */
+function BoardSketch() {
+  return (
+    <svg
+      className="about-sketch"
+      viewBox="0 0 520 420"
+      role="img"
+      aria-label="Sketch of a shared board with two people drawing at once"
+    >
+      <defs>
+        <pattern
+          id="sketch-grid"
+          width="26"
+          height="26"
+          patternUnits="userSpaceOnUse"
+        >
+          <circle cx="2" cy="2" r="1.4" fill="currentColor" opacity="0.18" />
+        </pattern>
+      </defs>
+      <rect
+        x="8"
+        y="8"
+        width="504"
+        height="404"
+        rx="28"
+        className="about-sketch-paper"
+      />
+      <rect
+        x="8"
+        y="8"
+        width="504"
+        height="404"
+        rx="28"
+        fill="url(#sketch-grid)"
+      />
+      {/* A worked problem: triangle, labels, and an arrow to a note. */}
+      <path
+        d="M80 300 L220 120 L300 300 Z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="5"
+        strokeLinejoin="round"
+        strokeLinecap="round"
+      />
+      <path
+        d="M220 300 L220 120"
+        stroke="currentColor"
+        strokeWidth="3"
+        strokeDasharray="8 8"
+      />
+      <path
+        d="M220 284 l16 0 l0 16"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="3"
+      />
+      <text x="140" y="330" className="about-sketch-hand">
+        a = 6
+      </text>
+      <text x="230" y="214" className="about-sketch-hand">
+        h
+      </text>
+      <path
+        d="M318 200 C350 176 370 168 396 168"
+        fill="none"
+        stroke="#ff6b3d"
+        strokeWidth="5"
+        strokeLinecap="round"
+        className="about-sketch-live"
+      />
+      <path
+        d="M384 156 L400 168 L384 180"
+        fill="none"
+        stroke="#ff6b3d"
+        strokeWidth="5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <g transform="rotate(4 430 120)">
+        <rect x="372" y="62" width="122" height="104" rx="8" fill="#ffe066" />
+        <text x="386" y="98" className="about-sketch-note">
+          Area =
+        </text>
+        <text x="386" y="128" className="about-sketch-note">
+          ½ × a × h
+        </text>
+      </g>
+      <g transform="translate(300 300)">
+        <path
+          d="M0 0 L0 22 L6 16 L10 26 L14 24 L10 14 L18 14 Z"
+          fill="#3b5bdb"
+          stroke="#fff"
+          strokeWidth="2"
+        />
+        <rect x="16" y="22" width="84" height="24" rx="12" fill="#3b5bdb" />
+        <text x="58" y="38.5" textAnchor="middle" className="about-sketch-tag">
+          Divyansh
+        </text>
+      </g>
+      <g transform="translate(392 176)">
+        <path
+          d="M0 0 L0 22 L6 16 L10 26 L14 24 L10 14 L18 14 Z"
+          fill="#e8590c"
+          stroke="#fff"
+          strokeWidth="2"
+        />
+        <rect x="16" y="22" width="84" height="24" rx="12" fill="#e8590c" />
+        <text x="58" y="38.5" textAnchor="middle" className="about-sketch-tag">
+          Karambir
+        </text>
+      </g>
+      <g className="about-sketch-voice" transform="translate(40 40)">
+        <rect width="150" height="40" rx="20" />
+        <circle cx="22" cy="20" r="7" fill="#2f9e44" />
+        <text x="40" y="25.5">
+          2 in voice
+        </text>
+      </g>
+    </svg>
+  );
+}
+
 export default function AboutPage() {
   return (
     <div className="mk mk-page about">
@@ -144,58 +275,84 @@ export default function AboutPage() {
 
       <main>
         <section className="about-hero">
-          <p className="kicker">About us</p>
-          <h1>
-            We built the online classroom
-            <br />
-            <span className="about-mark">we wished we had.</span>
-          </h1>
-          <p className="about-lede">
-            {SITE.name} started with a simple frustration. Online classes were
-            supposed to bring people together, but the tools kept getting in the
-            way — laggy whiteboards, scattered apps, and students who could only
-            watch. We set out to make learning together online feel as natural
-            as standing at the same board.
-          </p>
-        </section>
-
-        <section className="about-section" aria-labelledby="gap-heading">
-          <p className="kicker">The gap we found</p>
-          <h2 id="gap-heading">
-            Collaborating in an online class was a hustle
-          </h2>
-          <p className="about-text">
-            In online lectures and group study sessions, we kept seeing the same
-            thing: the teacher would start explaining on a shared board, the
-            drawing would stutter or lag behind their voice, and half the class
-            would lose the thread. Working on a problem together meant juggling
-            a call, a whiteboard, and a chat — and only one person could really
-            hold the pen.
-          </p>
-          <div className="about-grid three">
-            {PROBLEMS.map((item) => (
-              <article key={item.title} className="about-card problem">
-                <h3>{item.title}</h3>
-                <p>{item.body}</p>
-              </article>
-            ))}
+          <div className="about-hero-copy">
+            <p className="about-eyebrow">
+              <span>About us</span> Built for live learning
+            </p>
+            <h1>
+              We built the online classroom{' '}
+              <span className="about-mark">we wished we had.</span>
+            </h1>
+            <p className="about-lede">
+              {SITE.name} started with a simple frustration. Online classes were
+              supposed to bring people together, but the tools kept getting in
+              the way — laggy whiteboards, scattered apps, and students who
+              could only watch. We set out to make learning together online feel
+              as natural as standing at the same board.
+            </p>
           </div>
+          <BoardSketch />
         </section>
 
-        <section className="about-section" aria-labelledby="answer-heading">
-          <p className="kicker">What we built</p>
-          <h2 id="answer-heading">
-            One live room for drawing, talking, and thinking together
-          </h2>
-          <p className="about-text">
-            So we built {SITE.name}: a collaborative whiteboard designed from
-            day one for real-time learning. Ink, voice, and chat share a single
-            live connection, so what you see, hear, and read always stays in
-            sync — for a study group of three or a whole class.
-          </p>
-          <div className="about-grid">
+        <dl className="about-stats">
+          {STATS.map((stat) => (
+            <div key={stat.value}>
+              <dt>{stat.value}</dt>
+              <dd>{stat.label}</dd>
+            </div>
+          ))}
+        </dl>
+
+        <section className="about-split" aria-labelledby="gap-heading">
+          <div className="about-split-head">
+            <p className="about-eyebrow">
+              <span>01</span> The gap we found
+            </p>
+            <h2 id="gap-heading">
+              Collaborating in an online class was a hustle.
+            </h2>
+            <p className="about-text">
+              In online lectures and group study sessions, we kept seeing the
+              same thing: the teacher would start explaining on a shared board,
+              the drawing would stutter or lag behind their voice, and half the
+              class would lose the thread. Working on a problem together meant
+              juggling a call, a whiteboard, and a chat — and only one person
+              could really hold the pen.
+            </p>
+          </div>
+          <ol className="about-problems">
+            {PROBLEMS.map((item, index) => (
+              <li key={item.title}>
+                <span className="about-problem-number" aria-hidden="true">
+                  {String(index + 1).padStart(2, '0')}
+                </span>
+                <div>
+                  <h3>{item.title}</h3>
+                  <p>{item.body}</p>
+                </div>
+              </li>
+            ))}
+          </ol>
+        </section>
+
+        <section className="about-built" aria-labelledby="answer-heading">
+          <div className="about-built-head">
+            <p className="about-eyebrow">
+              <span>02</span> What we built
+            </p>
+            <h2 id="answer-heading">
+              One live room for drawing, talking, and thinking together.
+            </h2>
+            <p className="about-text">
+              So we built {SITE.name}: a collaborative whiteboard designed from
+              day one for real-time learning. Ink, voice, and chat share a
+              single live connection, so what you see, hear, and read always
+              stays in sync — for a study group of three or a whole class.
+            </p>
+          </div>
+          <div className="about-bento">
             {ANSWERS.map((item) => (
-              <article key={item.title} className="about-card">
+              <article key={item.title} className="about-tile">
                 <h3>{item.title}</h3>
                 <p>{item.body}</p>
               </article>
@@ -203,46 +360,53 @@ export default function AboutPage() {
           </div>
         </section>
 
-        <section className="about-section" aria-labelledby="founders-heading">
-          <p className="kicker">The founders</p>
-          <h2 id="founders-heading">The people behind {SITE.name}</h2>
-          <div className="founders">
-            {FOUNDERS.map((founder) => (
-              <article key={founder.name} className="founder">
+        <section className="about-founders" aria-labelledby="founders-heading">
+          <div className="about-founders-head">
+            <p className="about-eyebrow">
+              <span>03</span> The founders
+            </p>
+            <h2 id="founders-heading">The people behind {SITE.name}.</h2>
+          </div>
+          {FOUNDERS.map((founder) => (
+            <article key={founder.name} className="founder">
+              <figure className="founder-frame">
                 <FounderPortrait
                   who={founder.who}
                   title={`Illustrated portrait of ${founder.name}`}
                 />
-                <div className="founder-body">
-                  <h3>{founder.name}</h3>
-                  <p className="founder-role">
-                    {founder.role}, {SITE.name}
-                    <span className="founder-headline">{founder.headline}</span>
-                  </p>
-                  {founder.bio.map((paragraph) => (
-                    <p key={paragraph.slice(0, 24)}>{paragraph}</p>
+                <figcaption>{founder.name.split(' ')[0]}</figcaption>
+              </figure>
+              <div className="founder-body">
+                <p className="founder-role">
+                  {founder.role}, {SITE.name}
+                </p>
+                <h3>{founder.name}</h3>
+                <p className="founder-headline">{founder.headline}</p>
+                {founder.bio.map((paragraph) => (
+                  <p key={paragraph.slice(0, 24)}>{paragraph}</p>
+                ))}
+                <ul className="founder-skills" aria-label="Expertise">
+                  {founder.skills.map((skill) => (
+                    <li key={skill}>{skill}</li>
                   ))}
-                  <ul className="founder-skills" aria-label="Expertise">
-                    {founder.skills.map((skill) => (
-                      <li key={skill}>{skill}</li>
-                    ))}
-                  </ul>
-                  <a
-                    className="founder-link"
-                    href={founder.linkedin}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    Connect on LinkedIn ↗
-                  </a>
-                </div>
-              </article>
-            ))}
-          </div>
+                </ul>
+                <a
+                  className="founder-link"
+                  href={founder.linkedin}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Connect on LinkedIn <span aria-hidden="true">↗</span>
+                </a>
+              </div>
+            </article>
+          ))}
         </section>
 
-        <section className="about-section about-mission">
-          <p className="kicker">Our mission</p>
+        <section className="about-mission" aria-labelledby="mission-heading">
+          <p className="about-eyebrow" id="mission-heading">
+            <span>04</span> Our mission
+          </p>
           <blockquote>
             Make learning together online feel like being in the same room — for
             every student, on every connection.
