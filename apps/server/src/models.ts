@@ -123,4 +123,6 @@ export type Presence = {
   inCall: boolean;
   muted: boolean;
   updatedAt: number;
+  /** The server instance holding this tab's socket. */
+  instance?: string;
 };

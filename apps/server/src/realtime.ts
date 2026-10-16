@@ -23,9 +23,11 @@ import { redis, store } from './store.js';
  *
  * Each server instance delivers messages to its own sockets directly. Vercel
  * may place two people in the same room on different instances, so messages
- * are also relayed through Redis pub/sub — but only while another instance
- * actually has that room open, which keeps Redis traffic near zero for the
- * common single-instance case.
+ * are also relayed through Redis pub/sub — but only while someone in the room
+ * is connected to another instance, which keeps Redis traffic near zero for
+ * the common single-instance case. Each presence record names its instance.
+ * (PUBSUB NUMSUB can't be used for this: on Upstash it only counts the
+ * subscribers of whichever node answers, so it often reports zero.)
  */
 
 type Connection = {
@@ -51,10 +53,15 @@ const rooms = new Map<string, Set<Connection>>();
 const channel = (boardId: string) => `room:${boardId}`;
 const PRESENCE_REFRESH_MS = 15_000;
 const REMOTE_CHECK_MS = 3_000;
+/** Hearing from another instance keeps relaying on at least this long. */
+const REMOTE_HEARD_MS = 20_000;
 
 let subscriber: Redis | undefined;
 // Whether another instance has this room open, and when that was last checked.
-const remoteRooms = new Map<string, { present: boolean; checkedAt: number }>();
+const remoteRooms = new Map<
+  string,
+  { present: boolean; checkedAt: number; heardAt: number }
+>();
 
 function getSubscriber() {
   if (!redis) return;
@@ -69,7 +76,12 @@ function getSubscriber() {
       return;
     }
     if (envelope.o === instanceId) return;
-    remoteRooms.set(boardId, { present: true, checkedAt: Date.now() });
+    const known = remoteRooms.get(boardId);
+    remoteRooms.set(boardId, {
+      present: true,
+      checkedAt: known?.checkedAt ?? Date.now(),
+      heardAt: Date.now(),
+    });
     if (envelope.k === 'msg')
       deliverLocal(boardId, envelope.d, {
         ...(envelope.x ? { exceptPeer: envelope.x } : {}),
@@ -88,15 +100,20 @@ function hasRemoteListeners(boardId: string) {
     remoteRooms.set(boardId, {
       present: known?.present ?? true,
       checkedAt: now,
+      heardAt: known?.heardAt ?? 0,
     });
-    void redis
-      .call('PUBSUB', 'NUMSUB', channel(boardId))
-      .then((result) => {
-        const count = Number((result as [string, number])[1] ?? 0);
-        const ownSubscription = rooms.has(boardId) ? 1 : 0;
+    void store
+      .listPresence(boardId)
+      .then((peers) => {
+        const current = remoteRooms.get(boardId);
+        const heardAt = current?.heardAt ?? 0;
         remoteRooms.set(boardId, {
-          present: count > ownSubscription,
+          // Records from before instances were tracked count as remote.
+          present:
+            peers.some((peer) => peer.instance !== instanceId) ||
+            Date.now() - heardAt < REMOTE_HEARD_MS,
           checkedAt: Date.now(),
+          heardAt,
         });
       })
       .catch(() => undefined);
@@ -190,6 +207,7 @@ function presenceOf(connection: Connection): Presence {
     inCall: connection.inCall,
     muted: connection.muted,
     updatedAt: Date.now(),
+    instance: instanceId,
   };
 }
 
