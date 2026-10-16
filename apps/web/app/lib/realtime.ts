@@ -8,10 +8,12 @@ import {
   type Peer,
 } from './api';
 
+export type LiveCursor = { x: number; y: number; page?: string };
+
 export type LiveMessage = {
   t: 'live';
   peerId: string;
-  cursor?: { x: number; y: number } | null;
+  cursor?: LiveCursor | null;
   upsert?: BoardObject[];
   append?: { id: string; points: number[] }[];
   remove?: string[];
@@ -83,7 +85,7 @@ export class RealtimeClient {
   private lastHeard = Date.now();
   private call = { inCall: false, muted: false };
   private live: {
-    cursor?: { x: number; y: number } | null;
+    cursor?: LiveCursor | null;
     upsert?: BoardObject[] | undefined;
     append?: { id: string; points: number[] }[] | undefined;
     remove?: string[];
@@ -93,14 +95,19 @@ export class RealtimeClient {
 
   constructor(
     private readonly boardId: string,
-    private readonly token: string,
+    private readonly userId: string,
     private readonly color: string,
     private readonly handlers: Handlers,
   ) {
-    this.outbox = readOutbox(boardId);
+    this.outbox = readOutbox(this.outboxKey);
     this.connect();
     window.addEventListener('online', this.reconnectNow);
     document.addEventListener('visibilitychange', this.onVisible);
+  }
+
+  /** Unsent edits belong to one person on one board. */
+  private get outboxKey() {
+    return `${this.userId}.${this.boardId}`;
   }
 
   get pendingOperations() {
@@ -124,7 +131,6 @@ export class RealtimeClient {
       socket.send(
         JSON.stringify({
           t: 'hello',
-          token: this.token,
           boardId: this.boardId,
           peerId: this.peerId,
           color: this.color,
@@ -153,7 +159,7 @@ export class RealtimeClient {
       if (message.t === 'ack' || message.t === 'nack') {
         if (message.t === 'nack' && message.retry) return;
         this.outbox = this.outbox.filter((op) => op.id !== message.id);
-        writeOutbox(this.boardId, this.outbox);
+        writeOutbox(this.outboxKey, this.outbox);
         this.handlers.onPending(this.outbox.length);
       }
       if (message.t === 'error' && message.fatal) this.closed = true;
@@ -210,7 +216,7 @@ export class RealtimeClient {
 
   sendOperation(op: Operation) {
     this.outbox = [...this.outbox, op];
-    writeOutbox(this.boardId, this.outbox);
+    writeOutbox(this.outboxKey, this.outbox);
     this.handlers.onPending(this.outbox.length);
     this.rawSend({ t: 'op', op });
   }
@@ -234,7 +240,7 @@ export class RealtimeClient {
 
   // ---- Live activity, coalesced per frame ----
 
-  liveCursor(cursor: { x: number; y: number } | null) {
+  liveCursor(cursor: LiveCursor | null) {
     this.live.cursor = cursor;
     this.scheduleLive();
   }

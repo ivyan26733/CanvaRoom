@@ -2,13 +2,17 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { Redis } from 'ioredis';
 import { config } from './config.js';
+import { DEFAULT_PAGES } from './models.js';
 import type {
+  Account,
   BoardMeta,
   BoardObject,
   ChatMessage,
   Member,
   Operation,
+  Page,
   Presence,
+  SessionRecord,
   Snapshot,
 } from './models.js';
 
@@ -34,7 +38,12 @@ export interface Store {
     fields: Partial<
       Pick<
         BoardMeta,
-        'title' | 'locked' | 'inviteToken' | 'inviteRevoked' | 'updatedAt'
+        | 'title'
+        | 'locked'
+        | 'inviteToken'
+        | 'inviteRevoked'
+        | 'updatedAt'
+        | 'pages'
       >
     >,
   ): Promise<void>;
@@ -52,6 +61,27 @@ export interface Store {
   setPresence(boardId: string, presence: Presence): Promise<void>;
   removePresence(boardId: string, peerId: string): Promise<void>;
   listPresence(boardId: string): Promise<Presence[]>;
+  /** Returns false when the email is already registered. */
+  createAccount(account: Account): Promise<boolean>;
+  getAccount(userId: string): Promise<Account | undefined>;
+  findAccountByEmail(email: string): Promise<Account | undefined>;
+  updateAccount(
+    userId: string,
+    fields: Partial<Pick<Account, 'name' | 'color' | 'passwordHash'>>,
+  ): Promise<void>;
+  /** Board IDs the user belongs to, for renaming them across boards. */
+  boardIdsFor(userId: string): Promise<string[]>;
+  createSession(
+    key: string,
+    record: SessionRecord,
+    ttlSeconds: number,
+  ): Promise<void>;
+  getSession(key: string): Promise<SessionRecord | undefined>;
+  deleteSession(key: string): Promise<void>;
+  /** Ends every session of a user except `keep`. */
+  deleteSessionsFor(userId: string, keep?: string): Promise<void>;
+  /** Counts an attempt in a fixed window and returns the count so far. */
+  hit(key: string, windowSeconds: number): Promise<number>;
 }
 
 const MAX_MESSAGES = 500;
@@ -67,6 +97,11 @@ const keys = {
   snapshots: (id: string) => `b:${id}:snapshots`,
   presence: (id: string) => `b:${id}:presence`,
   userBoards: (userId: string) => `u:${userId}:boards`,
+  account: (userId: string) => `acct:${userId}`,
+  email: (email: string) => `email:${email}`,
+  session: (key: string) => `sess:${key}`,
+  userSessions: (userId: string) => `u:${userId}:sessions`,
+  rate: (key: string) => `rl:${key}`,
 };
 
 // One round trip, atomic per board: tombstoned objects are never recreated,
@@ -100,7 +135,13 @@ function metaToHash(meta: Partial<BoardMeta>) {
   for (const [key, value] of Object.entries(meta)) {
     if (key === 'members' || key === 'id' || value === undefined) continue;
     hash[key] =
-      typeof value === 'boolean' ? (value ? '1' : '0') : String(value);
+      typeof value === 'boolean'
+        ? value
+          ? '1'
+          : '0'
+        : typeof value === 'object'
+          ? JSON.stringify(value)
+          : String(value);
   }
   return hash;
 }
@@ -120,6 +161,7 @@ function hashToMeta(
     locked: hash.locked === '1',
     inviteToken: hash.inviteToken ?? '',
     inviteRevoked: hash.inviteRevoked === '1',
+    pages: hash.pages ? (JSON.parse(hash.pages) as Page[]) : DEFAULT_PAGES,
     members: Object.fromEntries(
       Object.entries(members).map(([userId, value]) => [
         userId,
@@ -313,6 +355,82 @@ export class RedisStore implements Store {
     if (stale.length) await this.redis.hdel(keys.presence(boardId), ...stale);
     return live;
   }
+
+  async createAccount(account: Account) {
+    const claimed = await this.redis.set(
+      keys.email(account.email),
+      account.id,
+      'NX',
+    );
+    if (claimed !== 'OK') return false;
+    await this.redis.set(keys.account(account.id), JSON.stringify(account));
+    return true;
+  }
+
+  async getAccount(userId: string) {
+    const value = await this.redis.get(keys.account(userId));
+    return value ? (JSON.parse(value) as Account) : undefined;
+  }
+
+  async findAccountByEmail(email: string) {
+    const userId = await this.redis.get(keys.email(email));
+    return userId ? this.getAccount(userId) : undefined;
+  }
+
+  async updateAccount(userId: string, fields: Partial<Account>) {
+    const account = await this.getAccount(userId);
+    if (!account) return;
+    await this.redis.set(
+      keys.account(userId),
+      JSON.stringify({ ...account, ...fields }),
+    );
+  }
+
+  async boardIdsFor(userId: string) {
+    return this.redis.smembers(keys.userBoards(userId));
+  }
+
+  async createSession(key: string, record: SessionRecord, ttl: number) {
+    await this.redis
+      .multi()
+      .set(keys.session(key), JSON.stringify(record), 'EX', ttl)
+      .sadd(keys.userSessions(record.userId), key)
+      .expire(keys.userSessions(record.userId), ttl)
+      .exec();
+  }
+
+  async getSession(key: string) {
+    const value = await this.redis.get(keys.session(key));
+    return value ? (JSON.parse(value) as SessionRecord) : undefined;
+  }
+
+  async deleteSession(key: string) {
+    const record = await this.getSession(key);
+    const multi = this.redis.multi().del(keys.session(key));
+    if (record) multi.srem(keys.userSessions(record.userId), key);
+    await multi.exec();
+  }
+
+  async deleteSessionsFor(userId: string, keep?: string) {
+    const sessions = await this.redis.smembers(keys.userSessions(userId));
+    const ended = sessions.filter((key) => key !== keep);
+    if (!ended.length) return;
+    await this.redis
+      .multi()
+      .del(...ended.map(keys.session))
+      .srem(keys.userSessions(userId), ...ended)
+      .exec();
+  }
+
+  async hit(key: string, windowSeconds: number) {
+    const [[, count] = []] =
+      (await this.redis
+        .multi()
+        .incr(keys.rate(key))
+        .expire(keys.rate(key), windowSeconds, 'NX')
+        .exec()) ?? [];
+    return Number(count ?? 0);
+  }
 }
 
 type MemoryBoard = {
@@ -327,6 +445,9 @@ type MemoryBoard = {
 class MemoryStore implements Store {
   private boards = new Map<string, MemoryBoard>();
   private presence = new Map<string, Map<string, Presence>>();
+  private accounts = new Map<string, Account>();
+  private sessions = new Map<string, SessionRecord & { expiresAt: number }>();
+  private hits = new Map<string, { count: number; resetAt: number }>();
   private saveTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(private readonly file?: string) {}
@@ -337,9 +458,14 @@ class MemoryStore implements Store {
       const saved = JSON.parse(await readFile(this.file, 'utf8')) as {
         version?: number;
         boards?: Record<string, unknown>;
+        accounts?: Account[];
+        sessions?: [string, SessionRecord & { expiresAt: number }][];
       };
       // Older prototype files use a different shape; start fresh rather than misread them.
       if (saved.version !== 2 || !saved.boards) return;
+      for (const account of saved.accounts ?? [])
+        this.accounts.set(account.id, account);
+      this.sessions = new Map(saved.sessions ?? []);
       for (const [id, value] of Object.entries(saved.boards)) {
         const board = value as Omit<MemoryBoard, 'objects' | 'tombstones'> & {
           objects: BoardObject[];
@@ -378,7 +504,16 @@ class MemoryStore implements Store {
     );
     const temp = `${this.file}.tmp`;
     await mkdir(dirname(this.file), { recursive: true });
-    await writeFile(temp, JSON.stringify({ version: 2, boards }), 'utf8');
+    await writeFile(
+      temp,
+      JSON.stringify({
+        version: 2,
+        boards,
+        accounts: [...this.accounts.values()],
+        sessions: [...this.sessions],
+      }),
+      'utf8',
+    );
     await rename(temp, this.file);
   }
 
@@ -400,7 +535,11 @@ class MemoryStore implements Store {
 
   async getMeta(boardId: string) {
     const board = this.boards.get(boardId);
-    return board ? structuredClone(board.meta) : undefined;
+    if (!board) return;
+    // Files saved before pages existed have none.
+    const meta = structuredClone(board.meta);
+    meta.pages ??= DEFAULT_PAGES;
+    return meta;
   }
 
   async updateMeta(boardId: string, fields: Partial<BoardMeta>) {
@@ -513,6 +652,73 @@ class MemoryStore implements Store {
     for (const [peerId, presence] of room)
       if (presence.updatedAt < cutoff) room.delete(peerId);
     return [...room.values()];
+  }
+
+  async createAccount(account: Account) {
+    if (
+      [...this.accounts.values()].some((item) => item.email === account.email)
+    )
+      return false;
+    this.accounts.set(account.id, account);
+    this.scheduleSave();
+    return true;
+  }
+
+  async getAccount(userId: string) {
+    return this.accounts.get(userId);
+  }
+
+  async findAccountByEmail(email: string) {
+    return [...this.accounts.values()].find((item) => item.email === email);
+  }
+
+  async updateAccount(userId: string, fields: Partial<Account>) {
+    const account = this.accounts.get(userId);
+    if (!account) return;
+    this.accounts.set(userId, { ...account, ...fields });
+    this.scheduleSave();
+  }
+
+  async boardIdsFor(userId: string) {
+    return [...this.boards.values()]
+      .filter((board) => board.meta.members[userId])
+      .map((board) => board.meta.id);
+  }
+
+  async createSession(key: string, record: SessionRecord, ttl: number) {
+    this.sessions.set(key, { ...record, expiresAt: Date.now() + ttl * 1000 });
+    this.scheduleSave();
+  }
+
+  async getSession(key: string) {
+    const session = this.sessions.get(key);
+    if (!session || session.expiresAt < Date.now()) return;
+    return {
+      userId: session.userId,
+      ...(session.guest ? { guest: session.guest } : {}),
+    };
+  }
+
+  async deleteSession(key: string) {
+    this.sessions.delete(key);
+    this.scheduleSave();
+  }
+
+  async deleteSessionsFor(userId: string, keep?: string) {
+    for (const [key, session] of this.sessions)
+      if (session.userId === userId && key !== keep) this.sessions.delete(key);
+    this.scheduleSave();
+  }
+
+  async hit(key: string, windowSeconds: number) {
+    const now = Date.now();
+    const current = this.hits.get(key);
+    const next =
+      current && current.resetAt > now
+        ? { ...current, count: current.count + 1 }
+        : { count: 1, resetAt: now + windowSeconds * 1000 };
+    this.hits.set(key, next);
+    return next.count;
   }
 }
 

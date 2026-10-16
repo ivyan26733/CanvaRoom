@@ -10,6 +10,8 @@ type Link = {
   polite: boolean;
   makingOffer: boolean;
   ignoreOffer: boolean;
+  /** Signals for one peer must be applied strictly in arrival order. */
+  queue: Promise<void>;
   audio: HTMLAudioElement;
   analyser?: AnalyserNode | undefined;
 };
@@ -32,8 +34,10 @@ const SPEAKING_LEVEL = 0.035;
  * through the board's WebSocket. Fine for classroom-sized groups (up to ~8);
  * larger rooms would need an SFU.
  *
- * Uses the "perfect negotiation" pattern so either side may start the call
- * and simultaneous offers resolve without glare.
+ * To avoid two offers crossing (after which Chrome may never exchange ICE
+ * candidates), only the "impolite" side of each pair makes the first offer;
+ * the polite side attaches its microphone when it answers. Later
+ * renegotiations, such as ICE restarts, use the "perfect negotiation" pattern.
  */
 export class AudioCall {
   private links = new Map<string, Link>();
@@ -141,11 +145,19 @@ export class AudioCall {
       if (!inCall.has(peerId)) this.drop(peerId);
   }
 
-  async handleSignal(from: string, data: unknown) {
+  handleSignal(from: string, data: unknown) {
     if (!this.state.joined) return;
-    const signal = data as Signal;
     const link = this.link(from);
+    // A candidate applied before its offer finishes would be rejected and
+    // lost, which can leave the call silently unconnected.
+    link.queue = link.queue.then(() =>
+      this.applySignal(link, from, data as Signal),
+    );
+  }
+
+  private async applySignal(link: Link, from: string, signal: Signal) {
     const { connection } = link;
+    if (connection.signalingState === 'closed') return;
     try {
       if ('description' in signal) {
         const description = signal.description;
@@ -156,6 +168,7 @@ export class AudioCall {
         if (link.ignoreOffer) return;
         await connection.setRemoteDescription(description);
         if (description.type === 'offer') {
+          await this.attachMicrophone(connection);
           await connection.setLocalDescription();
           this.client.sendSignal(from, {
             description: connection.localDescription!.toJSON(),
@@ -187,14 +200,18 @@ export class AudioCall {
       polite: this.client.peerId < peerId,
       makingOffer: false,
       ignoreOffer: false,
+      queue: Promise.resolve(),
       audio,
     };
     this.links.set(peerId, link);
 
-    for (const track of this.stream?.getTracks() ?? [])
-      connection.addTrack(track, this.stream!);
+    if (!link.polite)
+      for (const track of this.stream?.getTracks() ?? [])
+        connection.addTrack(track, this.stream!);
 
     connection.onnegotiationneeded = async () => {
+      // The polite side waits for the first offer instead of racing it.
+      if (link.polite && !connection.remoteDescription) return;
       try {
         link.makingOffer = true;
         await connection.setLocalDescription();
@@ -225,6 +242,27 @@ export class AudioCall {
       this.update({ connected });
     };
     return link;
+  }
+
+  /** Sends this tab's microphone on the audio line the offer created. */
+  private async attachMicrophone(connection: RTCPeerConnection) {
+    const track = this.stream?.getAudioTracks()[0];
+    if (!track) return;
+    const transceivers = connection.getTransceivers();
+    if (transceivers.some((transceiver) => transceiver.sender.track === track))
+      return;
+    const audio = transceivers.find(
+      (transceiver) =>
+        transceiver.receiver.track.kind === 'audio' &&
+        !transceiver.sender.track,
+    );
+    if (!audio) {
+      connection.addTrack(track, this.stream!);
+      return;
+    }
+    audio.direction = 'sendrecv';
+    await audio.sender.replaceTrack(track);
+    audio.sender.setStreams?.(this.stream!);
   }
 
   private drop(peerId: string) {

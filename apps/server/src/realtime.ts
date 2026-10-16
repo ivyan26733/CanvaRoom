@@ -3,7 +3,7 @@ import type { IncomingMessage, Server } from 'node:http';
 import type { Duplex } from 'node:stream';
 import type { Redis } from 'ioredis';
 import { WebSocket, WebSocketServer } from 'ws';
-import { verifySession } from './auth.js';
+import { sameOrigin, userFromRequest } from './auth.js';
 import { canEdit, editBlockedReason, publicBoard } from './boards.js';
 import { config } from './config.js';
 import type {
@@ -185,9 +185,7 @@ function presenceOf(connection: Connection): Presence {
   return {
     peerId: connection.peerId,
     userId: connection.user.id,
-    name:
-      connection.board.members[connection.user.id]?.name ??
-      connection.user.name,
+    name: connection.user.name,
     color: connection.color,
     inCall: connection.inCall,
     muted: connection.muted,
@@ -332,10 +330,9 @@ async function handleMessage(connection: Connection, message: ClientMessage) {
 
 async function authenticate(
   socket: WebSocket,
+  user: User,
   hello: Extract<ClientMessage, { t: 'hello' }>,
 ): Promise<Connection | string> {
-  const user = verifySession(hello.token);
-  if (!user) return 'Your session expired. Please sign in again.';
   const board = await store.getMeta(hello.boardId);
   const member = board?.members[user.id];
   if (!board || !member) return 'Board not found or you do not have access.';
@@ -346,14 +343,14 @@ async function authenticate(
     boardId: board.id,
     role: member.role,
     board,
-    color: hello.color,
+    color: user.color,
     inCall: hello.inCall ?? false,
     muted: hello.muted ?? false,
     presenceWrittenAt: Date.now(),
   };
 }
 
-function onConnection(socket: WebSocket) {
+function onConnection(socket: WebSocket, user: User) {
   let connection: Connection | undefined;
   let pending: Promise<void> = Promise.resolve();
   const helloTimer = setTimeout(() => socket.close(4401, 'no hello'), 10_000);
@@ -379,7 +376,7 @@ function onConnection(socket: WebSocket) {
       .then(async () => {
         if (message.t === 'hello') {
           if (connection) return;
-          const result = await authenticate(socket, message);
+          const result = await authenticate(socket, user, message);
           clearTimeout(helloTimer);
           if (typeof result === 'string') {
             socket.send(
@@ -436,18 +433,26 @@ export function attachRealtime(server: Server) {
     maxPayload: 2_000_000,
     perMessageDeflate: false,
   });
-  wss.on('connection', onConnection);
   server.on(
     'upgrade',
     (request: IncomingMessage, socket: Duplex, head: Buffer) => {
       const path = (request.url ?? '').split('?')[0];
-      if (path !== '/api/ws') {
+      const reject = (status: string) => {
+        socket.write(`HTTP/1.1 ${status}\r\nConnection: close\r\n\r\n`);
         socket.destroy();
-        return;
-      }
-      wss.handleUpgrade(request, socket, head, (ws) =>
-        wss.emit('connection', ws, request),
-      );
+      };
+      if (path !== '/api/ws') return reject('404 Not Found');
+      // The session cookie authenticates the socket, so only this site's
+      // pages may open one.
+      if (!sameOrigin(request)) return reject('403 Forbidden');
+      userFromRequest(request)
+        .then((user) => {
+          if (!user) return reject('401 Unauthorized');
+          wss.handleUpgrade(request, socket, head, (ws) =>
+            onConnection(ws, user),
+          );
+        })
+        .catch(() => reject('500 Internal Server Error'));
     },
   );
   return wss;

@@ -20,7 +20,7 @@ export const RESIZABLE = new Set<BoardObject['kind']>([
   'image',
   'sticky',
 ]);
-const SELECTION = '#2f8f68';
+const SELECTION = '#2d5bff';
 
 function textLines(lines: string[], fontSize: number, x: number) {
   const lineHeight = fontSize * LINE_HEIGHT;
@@ -141,7 +141,7 @@ function Shape({ item }: { item: BoardObject }) {
       );
       return (
         <>
-          <rect y="3" width={width} height={height} rx="6" fill="#1d2a2414" />
+          <rect y="3" width={width} height={height} rx="6" fill="#1b1b1b14" />
           <rect width={width} height={height} rx="6" fill="#fffdf6" />
           <rect
             width={width}
@@ -151,7 +151,7 @@ function Shape({ item }: { item: BoardObject }) {
             stroke={tint(stroke, '80')}
           />
           <text
-            fill="#2c3a33"
+            fill="#22201c"
             fontSize={fontSize}
             fontFamily={FONT_FAMILY}
             transform={`translate(0 ${STICKY_PADDING})`}

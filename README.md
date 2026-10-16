@@ -1,4 +1,4 @@
-# CollabBoard
+# CanvaRoom
 
 A real-time collaborative whiteboard with live voice and chat. Everything one
 person draws, moves, or types streams to everyone else as it happens.
@@ -35,7 +35,17 @@ npm run format:check
 - Pen, marker, eraser (drag to erase), box, ellipse, diamond, line, arrow, text,
   sticky notes, and images. Select, marquee-select, move, resize, nudge, style,
   duplicate, copy/paste, and undo/redo.
+- **Pages:** each board holds up to 50 pages. Add, rename, duplicate, reorder,
+  and delete them; everyone sees changes live, the pages panel shows who is on
+  which page, and the current page is kept in the URL. Selections can be moved
+  to another page.
+- **Zoom:** 10%–800% with +/−, a slider, 50/100/200% presets, zoom to fit or
+  selection, and a minimap. New ink keeps the same on-screen size at any zoom
+  ("Pen size follows zoom"), so you can zoom in for fine detail.
 - Infinite canvas: scroll to pan, Ctrl/⌘ + scroll or pinch to zoom, Space+drag.
+- Accounts with profiles, guest access through invite links, and board
+  templates (brainstorm, flowchart, kanban, retrospective) with live thumbnails
+  on the dashboard.
 - Invite links, editor/viewer roles, pausing editing, saved versions, and
   PNG/SVG/PDF export.
 - Reconnects automatically. Unsent edits are kept in the browser and replayed,
@@ -76,8 +86,6 @@ calls continue because they are peer-to-peer.
 
 ## Limitations
 
-- Sessions are signed, name-only identities. Add a real identity provider before
-  using this with student data.
 - Voice is a full mesh, so it suits groups of up to about 8. Without a TURN
   server, some people on strict corporate or mobile networks may not connect.
 - Two people editing the same text at the same moment: the last committed edit

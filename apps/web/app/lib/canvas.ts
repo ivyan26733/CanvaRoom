@@ -1,4 +1,4 @@
-import type { BoardObject } from './api';
+import type { BoardObject, Page } from './api';
 
 export type Point = { x: number; y: number };
 export type Bounds = { x: number; y: number; width: number; height: number };
@@ -191,4 +191,19 @@ export function applyOperations(
     }
   }
   return next;
+}
+
+/**
+ * Where objects without a known page live: the board's original first page
+ * while it exists, so reordering pages never moves older objects.
+ */
+export function homePage(pages: readonly Page[]) {
+  return pages.some((page) => page.id === 'p1') ? 'p1' : pages[0]!.id;
+}
+
+/** The page an object is shown on, given the board's current pages. */
+export function pageOf(object: { page?: string }, pages: readonly Page[]) {
+  return object.page && pages.some((page) => page.id === object.page)
+    ? object.page
+    : homePage(pages);
 }

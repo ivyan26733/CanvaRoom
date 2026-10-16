@@ -24,6 +24,18 @@ export type BoardObject = {
   fontSize?: number;
   opacity?: number;
   fillColor?: string;
+  /** The page this object sits on. Missing or unknown pages mean the first page. */
+  page?: string;
+};
+export type Page = { id: string; name: string };
+export const DEFAULT_PAGES: Page[] = [{ id: 'p1', name: 'Page 1' }];
+export type BoardListItem = {
+  id: string;
+  title: string;
+  role: Role;
+  locked: boolean;
+  updatedAt: string;
+  objectCount: number;
 };
 export type ChatMessage = {
   id: string;
@@ -51,11 +63,19 @@ export type Board = {
   locked: boolean;
   createdAt: string;
   updatedAt: string;
+  pages: Page[];
   members: { userId: string; role: Role; name: string }[];
   inviteToken?: string;
   inviteRevoked?: boolean;
 };
-export type Session = { token: string; user: { id: string; name: string } };
+/** The signed-in person: an account holder, or a guest who joined by invite. */
+export type User = {
+  id: string;
+  name: string;
+  color: string;
+  guest: boolean;
+  email?: string;
+};
 export type Operation = {
   id: string;
   type: 'create' | 'update' | 'delete';
@@ -64,24 +84,8 @@ export type Operation = {
   fields?: Partial<BoardObject>;
 };
 
-const SESSION_KEY = 'collabboard.session';
 const outboxKey = (boardId: string) => `collabboard.outbox.${boardId}`;
 
-export function readSession(): Session | null {
-  try {
-    return JSON.parse(
-      localStorage.getItem(SESSION_KEY) ?? 'null',
-    ) as Session | null;
-  } catch {
-    return null;
-  }
-}
-export function writeSession(session: Session) {
-  localStorage.setItem(SESSION_KEY, JSON.stringify(session));
-}
-export function clearSession() {
-  localStorage.removeItem(SESSION_KEY);
-}
 export function readOutbox(boardId: string): Operation[] {
   try {
     return JSON.parse(
@@ -110,15 +114,14 @@ export class ApiError extends Error {
   }
 }
 
-export async function api<T>(
-  path: string,
-  init: RequestInit = {},
-  session = readSession(),
-): Promise<T> {
+export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
-  if (session) headers.set('Authorization', `Bearer ${session.token}`);
   if (init.body) headers.set('Content-Type', 'application/json');
-  const response = await fetch(`/api${path}`, { ...init, headers });
+  const response = await fetch(`/api${path}`, {
+    ...init,
+    headers,
+    credentials: 'same-origin',
+  });
   if (response.status === 204) return undefined as T;
   const payload = (await response.json().catch(() => ({}))) as T & {
     error?: string;

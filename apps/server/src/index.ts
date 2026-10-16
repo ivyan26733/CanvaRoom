@@ -2,25 +2,83 @@ import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
 import { randomUUID, randomBytes } from 'node:crypto';
 import { z } from 'zod';
 import { config } from './config.js';
-import { issueSession, requestUser, verifySession } from './auth.js';
-import { publicBoard } from './boards.js';
+import {
+  currentSessionKey,
+  decoyPasswordHash,
+  endSession,
+  hashPassword,
+  PROFILE_COLORS,
+  publicUser,
+  sameOrigin,
+  startSession,
+  userFromRequest,
+  verifyPassword,
+} from './auth.js';
+import { canEdit, editBlockedReason, publicBoard } from './boards.js';
 import { attachRealtime, broadcast, broadcastBoard } from './realtime.js';
 import { loadStore, store } from './store.js';
-import type { BoardMeta, BoardObject, Snapshot } from './models.js';
+import { pageIdSchema, pageNameSchema } from './schemas.js';
+import { TEMPLATES, templateObjects } from './templates.js';
+import { DEFAULT_PAGES, pageOf } from './models.js';
+import type {
+  Account,
+  BoardMeta,
+  BoardObject,
+  Operation,
+  Page,
+  Snapshot,
+  User,
+} from './models.js';
 
 const app = Fastify({ logger: true, bodyLimit: 1_000_000 });
 attachRealtime(app.server);
 
 const apiError = (reply: FastifyReply, status: number, message: string) =>
   reply.code(status).send({ error: message });
-const currentUser = (request: FastifyRequest, reply: FastifyReply) => {
-  const user = requestUser(request);
+const currentUser = async (request: FastifyRequest, reply: FastifyReply) => {
+  const user = await userFromRequest(request.raw);
   if (!user) {
-    apiError(reply, 401, 'Your session expired. Please sign in again.');
+    apiError(reply, 401, 'Please sign in to continue.');
     return;
   }
   return user;
 };
+const clientIp = (request: FastifyRequest) =>
+  (request.headers['x-forwarded-for'] as string | undefined)
+    ?.split(',')[0]
+    ?.trim() ?? request.ip;
+/** Fixed-window limit; replies 429 and returns false once exceeded. */
+const allow = async (
+  reply: FastifyReply,
+  key: string,
+  limit: number,
+  windowSeconds: number,
+) => {
+  if ((await store.hit(key, windowSeconds)) <= limit) return true;
+  apiError(
+    reply,
+    429,
+    'Too many attempts. Please wait a few minutes and try again.',
+  );
+  return false;
+};
+const nameSchema = z.string().trim().min(1, 'Enter your name.').max(48);
+const emailSchema = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .pipe(z.email('Enter a valid email address.').max(254));
+const passwordSchema = z
+  .string()
+  .min(8, 'Use at least 8 characters for your password.')
+  .max(200);
+const colorFor = (id: string) => {
+  let hash = 0;
+  for (const char of id) hash = (hash * 31 + char.charCodeAt(0)) | 0;
+  return PROFILE_COLORS[Math.abs(hash) % PROFILE_COLORS.length]!;
+};
+const firstIssue = (error: z.ZodError) =>
+  error.issues[0]?.message ?? 'Check the form and try again.';
 const getAccess = async (boardId: string, userId: string) => {
   const board = await store.getMeta(boardId);
   const membership = board?.members[userId];
@@ -29,40 +87,197 @@ const getAccess = async (boardId: string, userId: string) => {
 const inviteId = () => randomBytes(24).toString('base64url');
 
 app.addHook('onRequest', async (request, reply) => {
-  const origin = request.headers.origin;
-  if (origin)
-    reply
-      .header('Access-Control-Allow-Origin', origin)
-      .header('Vary', 'Origin');
-  reply
-    .header('Access-Control-Allow-Headers', 'Authorization, Content-Type')
-    .header('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS')
-    .header('Cache-Control', 'no-store');
-  if (request.method === 'OPTIONS') return reply.code(204).send();
+  reply.header('Cache-Control', 'no-store');
+  // The session is a cookie, so refuse writes started by other websites.
+  if (
+    !['GET', 'HEAD', 'OPTIONS'].includes(request.method) &&
+    !sameOrigin(request.raw)
+  )
+    return apiError(reply, 403, 'Cross-site request blocked.');
 });
 
-app.post('/api/session', async (request, reply) => {
+// ---- Accounts ----
+
+app.get('/api/auth/me', async (request) => ({
+  user: (await userFromRequest(request.raw)) ?? null,
+}));
+
+app.post('/api/auth/signup', async (request, reply) => {
   const body = z
-    .object({ name: z.string().trim().min(1).max(48) })
+    .object({ name: nameSchema, email: emailSchema, password: passwordSchema })
+    .safeParse(request.body);
+  if (!body.success) return apiError(reply, 400, firstIssue(body.error));
+  if (!(await allow(reply, `signup:${clientIp(request)}`, 10, 3600))) return;
+  // A guest who signs up keeps the boards they already joined.
+  const current = await userFromRequest(request.raw);
+  const id = current?.guest ? current.id : randomUUID();
+  const account: Account = {
+    id,
+    email: body.data.email,
+    name: body.data.name,
+    color: current?.color ?? colorFor(id),
+    createdAt: new Date().toISOString(),
+    passwordHash: await hashPassword(body.data.password),
+  };
+  if (!(await store.createAccount(account)))
+    return apiError(
+      reply,
+      409,
+      'An account with this email already exists. Sign in instead.',
+    );
+  if (current?.guest) {
+    const guestSession = currentSessionKey(request.raw);
+    if (guestSession) await store.deleteSession(guestSession);
+    await renameEverywhere(publicUser(account));
+  }
+  await startSession(request, reply, publicUser(account));
+  return reply.code(201).send({ user: publicUser(account) });
+});
+
+app.post('/api/auth/login', async (request, reply) => {
+  const body = z
+    .object({ email: emailSchema, password: z.string().min(1).max(200) })
     .safeParse(request.body);
   if (!body.success)
-    return apiError(reply, 400, 'Enter a name between 1 and 48 characters.');
-  const token = issueSession(body.data.name);
-  return { token, user: verifySession(token)! };
+    return apiError(reply, 400, 'Enter your email and password.');
+  if (
+    !(await allow(reply, `login-ip:${clientIp(request)}`, 30, 900)) ||
+    !(await allow(reply, `login:${body.data.email}`, 8, 900))
+  )
+    return;
+  const account = await store.findAccountByEmail(body.data.email);
+  const valid = await verifyPassword(
+    body.data.password,
+    account?.passwordHash ?? (await decoyPasswordHash()),
+  );
+  if (!account || !valid)
+    return apiError(reply, 401, 'That email and password don’t match.');
+  await startSession(request, reply, publicUser(account));
+  return { user: publicUser(account) };
 });
 
+app.post('/api/auth/guest', async (request, reply) => {
+  const body = z.object({ name: nameSchema }).safeParse(request.body);
+  if (!body.success) return apiError(reply, 400, firstIssue(body.error));
+  if (!(await allow(reply, `guest:${clientIp(request)}`, 30, 3600))) return;
+  const id = randomUUID();
+  const user: User = {
+    id,
+    name: body.data.name,
+    color: colorFor(id),
+    guest: true,
+  };
+  await startSession(request, reply, user);
+  return reply.code(201).send({ user });
+});
+
+app.post('/api/auth/logout', async (request, reply) => {
+  await endSession(request, reply);
+  return { ok: true };
+});
+
+/** Keeps a person's name and colour current on every board they belong to. */
+async function renameEverywhere(user: User) {
+  for (const boardId of await store.boardIdsFor(user.id)) {
+    const board = await store.getMeta(boardId);
+    const member = board?.members[user.id];
+    if (!board || !member || member.name === user.name) continue;
+    const updated = { ...member, name: user.name };
+    await store.setMember(boardId, user.id, updated);
+    broadcastBoard({
+      ...board,
+      members: { ...board.members, [user.id]: updated },
+    });
+  }
+}
+
+app.get('/api/profile', async (request, reply) => {
+  const user = await currentUser(request, reply);
+  if (!user) return;
+  if (user.guest) return apiError(reply, 403, 'Guests do not have a profile.');
+  const account = await store.getAccount(user.id);
+  const boards = await store.listBoards(user.id);
+  return {
+    user,
+    createdAt: account?.createdAt,
+    stats: {
+      boards: boards.length,
+      owned: boards.filter((board) => board.role === 'owner').length,
+    },
+    colors: PROFILE_COLORS,
+  };
+});
+
+app.patch('/api/profile', async (request, reply) => {
+  const user = await currentUser(request, reply);
+  if (!user) return;
+  if (user.guest) return apiError(reply, 403, 'Create an account first.');
+  const body = z
+    .object({
+      name: nameSchema.optional(),
+      color: z.enum(PROFILE_COLORS as [string, ...string[]]).optional(),
+    })
+    .safeParse(request.body);
+  if (!body.success) return apiError(reply, 400, firstIssue(body.error));
+  const fields = {
+    ...(body.data.name ? { name: body.data.name } : {}),
+    ...(body.data.color ? { color: body.data.color } : {}),
+  };
+  await store.updateAccount(user.id, fields);
+  const updated = { ...user, ...fields };
+  if (fields.name) await renameEverywhere(updated);
+  return { user: updated };
+});
+
+app.post('/api/profile/password', async (request, reply) => {
+  const user = await currentUser(request, reply);
+  if (!user) return;
+  if (user.guest) return apiError(reply, 403, 'Create an account first.');
+  const body = z
+    .object({
+      currentPassword: z.string().min(1).max(200),
+      newPassword: passwordSchema,
+    })
+    .safeParse(request.body);
+  if (!body.success) return apiError(reply, 400, firstIssue(body.error));
+  if (!(await allow(reply, `password:${user.id}`, 8, 900))) return;
+  const account = await store.getAccount(user.id);
+  if (
+    !account ||
+    !(await verifyPassword(body.data.currentPassword, account.passwordHash))
+  )
+    return apiError(reply, 400, 'Your current password is incorrect.');
+  await store.updateAccount(user.id, {
+    passwordHash: await hashPassword(body.data.newPassword),
+  });
+  // Sign out everywhere else, in case the old password was compromised.
+  await store.deleteSessionsFor(user.id, currentSessionKey(request.raw));
+  return { ok: true };
+});
+
+// ---- Boards ----
+
 app.get('/api/boards', async (request, reply) => {
-  const user = currentUser(request, reply);
+  const user = await currentUser(request, reply);
   if (!user) return;
   return store.listBoards(user.id);
 });
 
 app.post('/api/boards', async (request, reply) => {
-  const user = currentUser(request, reply);
+  const user = await currentUser(request, reply);
   if (!user) return;
   const body = z
-    .object({ title: z.string().trim().min(1).max(80) })
+    .object({
+      title: z.string().trim().min(1).max(80),
+      template: z.enum(TEMPLATES).optional(),
+    })
     .safeParse(request.body);
+  if (user.guest)
+    return apiError(
+      reply,
+      403,
+      'Create a free account to make your own boards.',
+    );
   if (!body.success)
     return apiError(reply, 400, 'Board name must be 1–80 characters.');
   const now = new Date().toISOString();
@@ -76,13 +291,17 @@ app.post('/api/boards', async (request, reply) => {
     members: { [user.id]: { role: 'owner', name: user.name } },
     inviteToken: inviteId(),
     inviteRevoked: false,
+    pages: DEFAULT_PAGES,
   };
-  await store.createBoard(board, []);
+  await store.createBoard(
+    board,
+    templateObjects(body.data.template ?? 'blank'),
+  );
   return reply.code(201).send(publicBoard(board, 'owner'));
 });
 
 app.get('/api/boards/:boardId', async (request, reply) => {
-  const user = currentUser(request, reply);
+  const user = await currentUser(request, reply);
   if (!user) return;
   const { boardId } = request.params as { boardId: string };
   const access = await getAccess(boardId, user.id);
@@ -92,7 +311,7 @@ app.get('/api/boards/:boardId', async (request, reply) => {
 });
 
 app.patch('/api/boards/:boardId', async (request, reply) => {
-  const user = currentUser(request, reply);
+  const user = await currentUser(request, reply);
   if (!user) return;
   const { boardId } = request.params as { boardId: string };
   const body = z
@@ -122,7 +341,7 @@ app.patch('/api/boards/:boardId', async (request, reply) => {
 });
 
 app.delete('/api/boards/:boardId', async (request, reply) => {
-  const user = currentUser(request, reply);
+  const user = await currentUser(request, reply);
   if (!user) return;
   const { boardId } = request.params as { boardId: string };
   const access = await getAccess(boardId, user.id);
@@ -135,11 +354,13 @@ app.delete('/api/boards/:boardId', async (request, reply) => {
 });
 
 app.post('/api/boards/:boardId/duplicate', async (request, reply) => {
-  const user = currentUser(request, reply);
+  const user = await currentUser(request, reply);
   if (!user) return;
   const { boardId } = request.params as { boardId: string };
   const source = await getAccess(boardId, user.id);
   if (!source) return apiError(reply, 404, 'Board not found.');
+  if (user.guest)
+    return apiError(reply, 403, 'Create a free account to duplicate boards.');
   if (source.role === 'viewer')
     return apiError(reply, 403, 'Viewers cannot duplicate this board.');
   const now = new Date().toISOString();
@@ -153,13 +374,14 @@ app.post('/api/boards/:boardId/duplicate', async (request, reply) => {
     members: { [user.id]: { role: 'owner', name: user.name } },
     inviteToken: inviteId(),
     inviteRevoked: false,
+    pages: source.board.pages,
   };
   await store.createBoard(duplicate, await store.getObjects(boardId));
   return reply.code(201).send(publicBoard(duplicate, 'owner'));
 });
 
 app.post('/api/boards/:boardId/join', async (request, reply) => {
-  const user = currentUser(request, reply);
+  const user = await currentUser(request, reply);
   if (!user) return;
   const { boardId } = request.params as { boardId: string };
   const body = z
@@ -183,7 +405,7 @@ app.post('/api/boards/:boardId/join', async (request, reply) => {
 });
 
 app.post('/api/boards/:boardId/invites/regenerate', async (request, reply) => {
-  const user = currentUser(request, reply);
+  const user = await currentUser(request, reply);
   if (!user) return;
   const { boardId } = request.params as { boardId: string };
   const access = await getAccess(boardId, user.id);
@@ -196,7 +418,7 @@ app.post('/api/boards/:boardId/invites/regenerate', async (request, reply) => {
 });
 
 app.delete('/api/boards/:boardId/invites', async (request, reply) => {
-  const user = currentUser(request, reply);
+  const user = await currentUser(request, reply);
   if (!user) return;
   const { boardId } = request.params as { boardId: string };
   const access = await getAccess(boardId, user.id);
@@ -207,7 +429,7 @@ app.delete('/api/boards/:boardId/invites', async (request, reply) => {
 });
 
 app.patch('/api/boards/:boardId/members/:memberId', async (request, reply) => {
-  const user = currentUser(request, reply);
+  const user = await currentUser(request, reply);
   if (!user) return;
   const { boardId, memberId } = request.params as {
     boardId: string;
@@ -232,7 +454,7 @@ app.patch('/api/boards/:boardId/members/:memberId', async (request, reply) => {
 });
 
 app.get('/api/boards/:boardId/snapshots', async (request, reply) => {
-  const user = currentUser(request, reply);
+  const user = await currentUser(request, reply);
   if (!user) return;
   const { boardId } = request.params as { boardId: string };
   const access = await getAccess(boardId, user.id);
@@ -243,7 +465,7 @@ app.get('/api/boards/:boardId/snapshots', async (request, reply) => {
 });
 
 app.post('/api/boards/:boardId/snapshots', async (request, reply) => {
-  const user = currentUser(request, reply);
+  const user = await currentUser(request, reply);
   if (!user) return;
   const { boardId } = request.params as { boardId: string };
   const access = await getAccess(boardId, user.id);
@@ -254,6 +476,7 @@ app.post('/api/boards/:boardId/snapshots', async (request, reply) => {
     title: access.board.title,
     createdAt: new Date().toISOString(),
     objects: await store.getObjects(boardId),
+    pages: access.board.pages,
   };
   await store.addSnapshot(boardId, snapshot);
   return reply.code(201).send({
@@ -266,7 +489,7 @@ app.post('/api/boards/:boardId/snapshots', async (request, reply) => {
 app.post(
   '/api/boards/:boardId/snapshots/:snapshotId/restore',
   async (request, reply) => {
-    const user = currentUser(request, reply);
+    const user = await currentUser(request, reply);
     if (!user) return;
     const { boardId, snapshotId } = request.params as {
       boardId: string;
@@ -284,11 +507,190 @@ app.post(
       ...object,
       id: randomUUID(),
     }));
+    const pages = snapshot.pages ?? access.board.pages;
     await store.replaceObjects(boardId, objects);
+    await store.updateMeta(boardId, { pages });
+    broadcastBoard({ ...access.board, pages });
     broadcast(boardId, { t: 'reset', objects });
-    return { objects };
+    return { objects, pages };
   },
 );
+
+// ---- Pages ----
+
+const MAX_PAGES = 50;
+
+/** Writes operations made by the server itself and shares them with the room. */
+async function applyServerOperations(boardId: string, operations: Operation[]) {
+  for (let index = 0; index < operations.length; index += 100)
+    await Promise.all(
+      operations.slice(index, index + 100).map(async (op) => {
+        await store.applyOperation(boardId, op);
+        broadcast(boardId, { t: 'op', op, by: 'server' });
+      }),
+    );
+}
+
+async function editablePages(
+  request: FastifyRequest,
+  reply: FastifyReply,
+): Promise<{ board: BoardMeta } | undefined> {
+  const user = await currentUser(request, reply);
+  if (!user) return;
+  const { boardId } = request.params as { boardId: string };
+  const access = await getAccess(boardId, user.id);
+  if (!access) {
+    apiError(reply, 404, 'Board not found.');
+    return;
+  }
+  if (!canEdit(access.role, access.board)) {
+    apiError(reply, 403, editBlockedReason(access.role, access.board));
+    return;
+  }
+  return { board: access.board };
+}
+
+async function savePages(board: BoardMeta, pages: Page[]) {
+  const next = { ...board, pages, updatedAt: new Date().toISOString() };
+  await store.updateMeta(board.id, { pages, updatedAt: next.updatedAt });
+  broadcastBoard(next);
+  return next.pages;
+}
+
+app.post('/api/boards/:boardId/pages', async (request, reply) => {
+  const body = z
+    .object({
+      id: pageIdSchema,
+      name: pageNameSchema,
+      duplicateOf: pageIdSchema.optional(),
+    })
+    .safeParse(request.body);
+  if (!body.success)
+    return apiError(reply, 400, 'Page names are 1–60 characters.');
+  const access = await editablePages(request, reply);
+  if (!access) return;
+  const { board } = access;
+  if (board.pages.some((page) => page.id === body.data.id))
+    return { pages: board.pages };
+  if (board.pages.length >= MAX_PAGES)
+    return apiError(reply, 400, `A board can have up to ${MAX_PAGES} pages.`);
+  const page = { id: body.data.id, name: body.data.name };
+  const source = body.data.duplicateOf;
+  const at = source
+    ? board.pages.findIndex((item) => item.id === source) + 1
+    : board.pages.length;
+  const pages = [...board.pages];
+  pages.splice(at > 0 ? at : pages.length, 0, page);
+  // The page must exist before its objects arrive, or peers would briefly
+  // show them on the first page.
+  const saved = await savePages(board, pages);
+  if (source) {
+    const copies = (await store.getObjects(board.id))
+      .filter((object) => pageOf(object, board.pages) === source)
+      .map((object): Operation => {
+        const id = randomUUID();
+        return {
+          id: randomUUID(),
+          type: 'create',
+          objectId: id,
+          object: { ...object, id, page: page.id },
+        };
+      });
+    await applyServerOperations(board.id, copies);
+  }
+  return reply.code(201).send({ pages: saved });
+});
+
+app.patch('/api/boards/:boardId/pages/:pageId', async (request, reply) => {
+  const body = z.object({ name: pageNameSchema }).safeParse(request.body);
+  if (!body.success)
+    return apiError(reply, 400, 'Page names are 1–60 characters.');
+  const access = await editablePages(request, reply);
+  if (!access) return;
+  const { pageId } = request.params as { pageId: string };
+  const { board } = access;
+  if (!board.pages.some((page) => page.id === pageId))
+    return apiError(reply, 404, 'That page no longer exists.');
+  return {
+    pages: await savePages(
+      board,
+      board.pages.map((page) =>
+        page.id === pageId ? { ...page, name: body.data.name } : page,
+      ),
+    ),
+  };
+});
+
+app.put('/api/boards/:boardId/pages/order', async (request, reply) => {
+  const body = z
+    .object({ ids: z.array(pageIdSchema).max(MAX_PAGES) })
+    .safeParse(request.body);
+  if (!body.success) return apiError(reply, 400, 'Invalid page order.');
+  const access = await editablePages(request, reply);
+  if (!access) return;
+  const { board } = access;
+  const byId = new Map(board.pages.map((page) => [page.id, page]));
+  const ordered = body.data.ids.flatMap((id) => byId.get(id) ?? []);
+  // Pages someone else added meanwhile keep their place at the end.
+  for (const page of board.pages)
+    if (!ordered.includes(page)) ordered.push(page);
+  return { pages: await savePages(board, ordered) };
+});
+
+app.delete('/api/boards/:boardId/pages/:pageId', async (request, reply) => {
+  const access = await editablePages(request, reply);
+  if (!access) return;
+  const { pageId } = request.params as { pageId: string };
+  const { board } = access;
+  if (!board.pages.some((page) => page.id === pageId))
+    return { pages: board.pages };
+  if (board.pages.length === 1)
+    return apiError(reply, 400, 'A board needs at least one page.');
+  const removed = (await store.getObjects(board.id))
+    .filter((object) => pageOf(object, board.pages) === pageId)
+    .map((object): Operation => ({
+      id: randomUUID(),
+      type: 'delete',
+      objectId: object.id,
+    }));
+  // Objects go first so they never fall back onto another page.
+  await applyServerOperations(board.id, removed);
+  return {
+    pages: await savePages(
+      board,
+      board.pages.filter((page) => page.id !== pageId),
+    ),
+  };
+});
+
+/** A lightweight copy of a board's first page for dashboard thumbnails. */
+app.get('/api/boards/:boardId/preview', async (request, reply) => {
+  const user = await currentUser(request, reply);
+  if (!user) return;
+  const { boardId } = request.params as { boardId: string };
+  const access = await getAccess(boardId, user.id);
+  if (!access) return apiError(reply, 404, 'Board not found.');
+  const { pages } = access.board;
+  const objects = (await store.getObjects(boardId))
+    .filter((object) => pageOf(object, pages) === pages[0]!.id)
+    .slice(0, 400)
+    .map((object) => {
+      const preview: BoardObject = { ...object };
+      if (preview.src) delete preview.src;
+      const points = preview.points;
+      if (points && points.length > 240) {
+        // Keep roughly 120 samples, always including the last one.
+        const step = Math.ceil(points.length / 240) * 2;
+        const thinned: number[] = [];
+        for (let index = 0; index < points.length - 1; index += step)
+          thinned.push(points[index]!, points[index + 1]!);
+        thinned.push(points.at(-2)!, points.at(-1)!);
+        preview.points = thinned;
+      }
+      return preview;
+    });
+  return { pages: pages.length, objects };
+});
 
 app.get('/api/ice-servers', async () => ({ iceServers: config.iceServers }));
 

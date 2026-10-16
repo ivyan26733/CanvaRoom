@@ -23,6 +23,7 @@ const fieldShape = {
   fontSize: z.number().min(8).max(160).optional(),
   opacity: z.number().min(0).max(1).optional(),
   fillColor: colorSchema.optional(),
+  page: z.string().min(1).max(40).optional(),
 };
 
 export const objectSchema = z.object({
@@ -73,7 +74,6 @@ export const operationSchema = z
 export const clientMessageSchema = z.discriminatedUnion('t', [
   z.object({
     t: z.literal('hello'),
-    token: z.string().min(1).max(4000),
     boardId: z.string().min(1).max(100),
     peerId: z.string().min(1).max(100),
     color: colorSchema,
@@ -87,7 +87,11 @@ export const clientMessageSchema = z.discriminatedUnion('t', [
   z.object({
     t: z.literal('live'),
     cursor: z
-      .object({ x: z.number().finite(), y: z.number().finite() })
+      .object({
+        x: z.number().finite(),
+        y: z.number().finite(),
+        page: z.string().min(1).max(40).optional(),
+      })
       .nullable()
       .optional(),
     upsert: z.array(objectSchema).max(200).optional(),
@@ -117,3 +121,6 @@ export const clientMessageSchema = z.discriminatedUnion('t', [
 ]);
 
 export type ClientMessage = z.infer<typeof clientMessageSchema>;
+
+export const pageIdSchema = z.string().regex(/^[A-Za-z0-9_-]{1,40}$/);
+export const pageNameSchema = z.string().trim().min(1).max(60);

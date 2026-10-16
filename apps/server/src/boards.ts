@@ -18,6 +18,7 @@ export function publicBoard(board: BoardMeta, role: Role) {
     locked: board.locked,
     createdAt: board.createdAt,
     updatedAt: board.updatedAt,
+    pages: board.pages,
     members: Object.entries(board.members).map(([userId, member]) => ({
       userId,
       ...member,

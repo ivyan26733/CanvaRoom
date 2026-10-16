@@ -5,8 +5,8 @@ import {
   useState,
   useSyncExternalStore,
 } from 'react';
-import type { BoardObject, Peer } from '../../lib/api';
-import type { Bounds } from '../../lib/canvas';
+import type { BoardObject, Page, Peer } from '../../lib/api';
+import { pageOf, type Bounds } from '../../lib/canvas';
 import type { LiveMessage } from '../../lib/realtime';
 import { BoardShape } from './board-shape';
 
@@ -24,8 +24,13 @@ export class RemoteActivity {
     string,
     { peerId: string; object: BoardObject; at: number }
   >();
-  cursors = new Map<string, { x: number; y: number; at: number }>();
+  cursors = new Map<
+    string,
+    { x: number; y: number; page?: string; at: number }
+  >();
   private version = 0;
+  /** When the layer last changed, for fading idle cursors without impure renders. */
+  renderedAt = 0;
   private listeners = new Set<() => void>();
   private frame: number | undefined;
   private sweep = setInterval(() => this.expire(), 5_000);
@@ -81,6 +86,7 @@ export class RemoteActivity {
     this.frame = requestAnimationFrame(() => {
       this.frame = undefined;
       this.version++;
+      this.renderedAt = Date.now();
       for (const listener of this.listeners) listener();
     });
   }
@@ -105,28 +111,54 @@ function hideRule(ids: Iterable<string>) {
   return selectors.length ? `${selectors.join(',')}{visibility:hidden}` : '';
 }
 
+/** Which page each remote cursor is on, for the pages panel. */
+export function usePeersByPage(
+  activity: RemoteActivity,
+  peers: Peer[],
+  pages: readonly Page[],
+) {
+  useSyncExternalStore(activity.subscribe, activity.getVersion, () => 0);
+  const byPage = new Map<string, Peer[]>();
+  for (const peer of peers) {
+    const cursor = activity.cursors.get(peer.peerId);
+    if (!cursor) continue;
+    const page = pageOf(cursor, pages);
+    byPage.set(page, [...(byPage.get(page) ?? []), peer]);
+  }
+  return byPage;
+}
+
 export const RemoteLayer = memo(function RemoteLayer({
   activity,
   peers,
   zoom,
+  page,
+  pages,
 }: {
   activity: RemoteActivity;
   peers: Peer[];
   zoom: number;
+  page: string;
+  pages: readonly Page[];
 }) {
   useSyncExternalStore(activity.subscribe, activity.getVersion, () => 0);
   const names = new Map(peers.map((peer) => [peer.peerId, peer]));
   const scale = 1 / zoom;
-  const now = Date.now();
+  const now = activity.renderedAt;
   return (
     <g className="remote-layer">
       <style>{hideRule(activity.drafts.keys())}</style>
-      {[...activity.drafts.values()].map(({ object }) => (
-        <BoardShape key={object.id} item={object} ghost />
-      ))}
+      <g className="remote-drafts">
+        {[...activity.drafts.values()].map(({ object }) =>
+          pageOf(object, pages) === page ? (
+            <BoardShape key={object.id} item={object} ghost />
+          ) : null,
+        )}
+      </g>
       {[...activity.cursors].map(([peerId, cursor]) => {
         const peer = names.get(peerId);
         if (!peer) return null;
+        if (pageOf(cursor, pages) !== page) return null;
         return (
           <g
             key={peerId}
@@ -199,8 +231,8 @@ export const LocalOverlay = forwardRef<LocalOverlayHandle, { zoom: number }>(
             y={state.marquee.y}
             width={state.marquee.width}
             height={state.marquee.height}
-            fill="#2f8f6814"
-            stroke="#2f8f68"
+            fill="#2d5bff14"
+            stroke="#2d5bff"
             strokeWidth={scale}
             strokeDasharray={`${4 * scale} ${3 * scale}`}
             pointerEvents="none"

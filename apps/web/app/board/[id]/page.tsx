@@ -14,17 +14,16 @@ import {
 import {
   api,
   ApiError,
-  clearSession,
   id,
-  readSession,
   send,
-  writeSession,
+  DEFAULT_PAGES,
   type Board,
   type BoardObject,
   type ChatMessage,
   type Operation,
+  type Page,
   type Peer,
-  type Session,
+  type User,
 } from '../../lib/api';
 import { AudioCall, type CallState } from '../../lib/audio';
 import {
@@ -35,6 +34,7 @@ import {
   layoutText,
   LINE_HEIGHT,
   objectBounds,
+  pageOf,
   round,
   STICKY_PADDING,
   unionBounds,
@@ -47,7 +47,12 @@ import {
   type ConnectionStatus,
   type ServerMessage,
 } from '../../lib/realtime';
+import { AuthForm } from '../../components/auth-form';
+import { Icon, Logo, type IconName } from '../../components/icons';
+import { Modal } from '../../components/modal';
 import { ThemeToggle } from '../../components/theme-toggle';
+import { useDismiss, UserMenu } from '../../components/user-menu';
+import { useAuth } from '../../lib/auth';
 import { BoardShape } from './board-shape';
 import { CallControls } from './call-controls';
 import { ChatPanel } from './chat-panel';
@@ -57,6 +62,8 @@ import {
   RemoteLayer,
   type LocalOverlayHandle,
 } from './live-layers';
+import { Minimap } from './minimap';
+import { PagesPanel } from './pages-panel';
 
 type Tool =
   | 'select'
@@ -99,20 +106,22 @@ type Gesture =
   | { kind: 'erase'; erased: Set<string> };
 type TextEditor = { object: BoardObject; isNew: boolean };
 
-const TOOLS: { tool: Tool; icon: string; label: string; key?: string }[] = [
-  { tool: 'select', icon: '↖', label: 'Select', key: 'V' },
-  { tool: 'hand', icon: '✋', label: 'Pan', key: 'H' },
-  { tool: 'pen', icon: '✎', label: 'Pen', key: 'P' },
-  { tool: 'highlighter', icon: '▰', label: 'Marker', key: 'K' },
-  { tool: 'eraser', icon: '⌫', label: 'Eraser', key: 'E' },
-  { tool: 'rect', icon: '▭', label: 'Box', key: 'R' },
-  { tool: 'ellipse', icon: '◯', label: 'Ellipse', key: 'O' },
-  { tool: 'diamond', icon: '◇', label: 'Diamond', key: 'D' },
-  { tool: 'line', icon: '／', label: 'Line', key: 'L' },
-  { tool: 'arrow', icon: '↗', label: 'Arrow', key: 'A' },
-  { tool: 'text', icon: 'T', label: 'Text', key: 'T' },
-  { tool: 'sticky', icon: '▤', label: 'Note', key: 'N' },
+const TOOLS: { tool: Tool; icon: IconName; label: string; key?: string }[] = [
+  { tool: 'select', icon: 'select', label: 'Select', key: 'V' },
+  { tool: 'hand', icon: 'hand', label: 'Hand', key: 'H' },
+  { tool: 'pen', icon: 'pen', label: 'Pen', key: 'P' },
+  { tool: 'highlighter', icon: 'marker', label: 'Marker', key: 'K' },
+  { tool: 'eraser', icon: 'eraser', label: 'Eraser', key: 'E' },
+  { tool: 'rect', icon: 'rect', label: 'Rectangle', key: 'R' },
+  { tool: 'ellipse', icon: 'ellipse', label: 'Ellipse', key: 'O' },
+  { tool: 'diamond', icon: 'diamond', label: 'Diamond', key: 'D' },
+  { tool: 'line', icon: 'line', label: 'Line', key: 'L' },
+  { tool: 'arrow', icon: 'arrow', label: 'Arrow', key: 'A' },
+  { tool: 'text', icon: 'text', label: 'Text', key: 'T' },
+  { tool: 'sticky', icon: 'sticky', label: 'Sticky note', key: 'N' },
 ];
+/** Where the dock draws dividers between tool groups. */
+const DOCK_BREAKS = new Set<Tool>(['pen', 'rect', 'text']);
 const TOOL_KEYS = Object.fromEntries(
   TOOLS.filter((item) => item.key).map((item) => [
     item.key!.toLowerCase(),
@@ -120,26 +129,28 @@ const TOOL_KEYS = Object.fromEntries(
   ]),
 ) as Record<string, Tool>;
 const COLORS = [
-  '#1f2d27',
-  '#2f8f68',
-  '#2f6fb0',
-  '#7a5cc4',
-  '#d1495b',
-  '#e58b3a',
-  '#d6a21e',
-  '#7d8a83',
+  '#1b1b1b',
+  '#ff4f1f',
+  '#f5a623',
+  '#12a150',
+  '#2d5bff',
+  '#7c4dff',
+  '#e8458b',
+  '#8a877f',
 ];
-const STICKY_COLORS = ['#f5cf4b', '#f59e8b', '#8fd1a6', '#8ec5f0', '#c8a8f0'];
+const STICKY_COLORS = ['#ffe45c', '#ffb4a2', '#9be7c4', '#a5c8ff', '#d7b8ff'];
+const STROKES = [2, 4, 8, 14];
 const PEER_COLORS = [
-  '#2f8f68',
-  '#d9772e',
-  '#7a5cc4',
-  '#d1495b',
-  '#2f6fb0',
-  '#b08300',
+  '#ff4f1f',
+  '#2d5bff',
+  '#12a150',
+  '#7c4dff',
+  '#e8458b',
+  '#f5a623',
 ];
 const MIN_ZOOM = 0.1;
-const MAX_ZOOM = 4;
+const MAX_ZOOM = 8;
+const ZOOM_STEP = 1.25;
 const EMPTY_CALL: CallState = {
   joined: false,
   joining: false,
@@ -149,8 +160,19 @@ const EMPTY_CALL: CallState = {
   error: '',
 };
 
+const LOCAL_USER: User = {
+  id: 'local-user',
+  name: 'You',
+  color: '#ff4f1f',
+  guest: true,
+};
+
 const clampZoom = (zoom: number) =>
   Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom));
+const clamp = (value: number, min: number, max: number) =>
+  Math.min(max, Math.max(min, value));
+const easeOut = (t: number) => 1 - (1 - t) ** 3;
+const newPageId = () => `pg${Math.random().toString(36).slice(2, 10)}`;
 
 function colorFor(userId: string) {
   let hash = 0;
@@ -187,10 +209,11 @@ export default function BoardPage() {
   const boardId = params.id;
   const isLocal = boardId.startsWith('local-');
 
-  // ---- Session and board ----
-  const [session, setSession] = useState<Session | null>(null);
-  const [sessionChecked, setSessionChecked] = useState(false);
-  const [nameInput, setNameInput] = useState('');
+  // ---- Signed-in person and board ----
+  const { user: authUser, setUser } = useAuth();
+  // Local boards work without an account.
+  const me: User | null | undefined = isLocal ? LOCAL_USER : authUser;
+  const meId = me?.id;
   const [board, setBoard] = useState<Board | null>(null);
   const [loadError, setLoadError] = useState('');
   const [objects, setObjects] = useState<BoardObject[]>([]);
@@ -205,7 +228,11 @@ export default function BoardPage() {
   const [selected, setSelected] = useState<string[]>([]);
   const [color, setColor] = useState(COLORS[0]!);
   const [stickyColor, setStickyColor] = useState(STICKY_COLORS[0]!);
-  const [strokeWidth, setStrokeWidth] = useState(3);
+  const [strokeWidth, setStrokeWidth] = useState(4);
+  // New ink keeps the same on-screen size at any zoom, so zooming in gives
+  // fine detail and zooming out gives bold overview strokes.
+  const [inkFollowsZoom, setInkFollowsZoom] = useState(true);
+  const [pageId, setPageId] = useState(search.get('page') ?? 'p1');
   const [view, setView] = useState<View>({ x: 0, y: 0, zoom: 1 });
   const [size, setSize] = useState({ width: 1, height: 1 });
   const [textEditor, setTextEditorState] = useState<TextEditor | null>(null);
@@ -226,8 +253,10 @@ export default function BoardPage() {
   const [membersOpen, setMembersOpen] = useState(false);
   const [snapshotsOpen, setSnapshotsOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
-  const [propertiesOpen, setPropertiesOpen] = useState(false);
-  const [exportOpen, setExportOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [zoomMenuOpen, setZoomMenuOpen] = useState(false);
+  const [pagesOpen, setPagesOpen] = useState(false);
+  const [minimapOpen, setMinimapOpen] = useState(true);
   const [editingTitle, setEditingTitle] = useState(false);
   const [snapshots, setSnapshots] = useState<
     { id: string; title: string; createdAt: string }[]
@@ -249,6 +278,12 @@ export default function BoardPage() {
   const clipboard = useRef<BoardObject[]>([]);
   const propertyOrigin = useRef<BoardObject | null>(null);
   const fittedOnce = useRef(false);
+  const pageViews = useRef(new Map<string, View>());
+  const viewAnimation = useRef<number | undefined>(undefined);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const zoomMenuRef = useRef<HTMLDivElement>(null);
+  useDismiss(menuOpen, setMenuOpen, menuRef);
+  useDismiss(zoomMenuOpen, setZoomMenuOpen, zoomMenuRef);
   const callPeers = useRef(new Set<string>());
   // Mirrors `textEditor` so finishing is idempotent when both a click on the
   // canvas and the textarea's blur try to finish the same edit.
@@ -266,9 +301,16 @@ export default function BoardPage() {
   );
 
   const readonly = !board || board.role === 'viewer' || board.locked;
+  const pages: Page[] = board?.pages?.length ? board.pages : DEFAULT_PAGES;
+  const currentPage = pages.find((page) => page.id === pageId) ?? pages[0]!;
+  const pageObjects = useMemo(
+    () => objects.filter((item) => pageOf(item, pages) === currentPage.id),
+    [objects, pages, currentPage.id],
+  );
+  const pageObjectsRef = useRef<BoardObject[]>([]);
   const selectedObjects = useMemo(
-    () => objects.filter((item) => selected.includes(item.id)),
-    [objects, selected],
+    () => pageObjects.filter((item) => selected.includes(item.id)),
+    [pageObjects, selected],
   );
   const selectedObject =
     selectedObjects.length === 1 ? selectedObjects[0] : undefined;
@@ -283,30 +325,28 @@ export default function BoardPage() {
     objectsRef.current = objects;
   }, [objects]);
   useLayoutEffect(() => {
+    pageObjectsRef.current = pageObjects;
+  }, [pageObjects]);
+
+  // Someone deleted the page this tab was on.
+  useEffect(() => {
+    if (board && currentPage.id !== pageId) setPageId(currentPage.id);
+  }, [board, currentPage.id, pageId]);
+
+  // Panels that only fit on wide screens start open there.
+  useEffect(() => {
+    const wide = window.matchMedia('(min-width: 1100px)').matches;
+    setPagesOpen(wide);
+    setMinimapOpen(wide);
+  }, []);
+  useLayoutEffect(() => {
     viewRef.current = view;
   }, [view]);
   useEffect(() => () => remote.dispose(), [remote]);
 
-  // ---- Session ----
-  useEffect(() => {
-    if (isLocal) {
-      setSession({
-        token: 'local-only',
-        user: { id: 'local-user', name: 'You' },
-      });
-    } else {
-      const existing = readSession();
-      if (existing) {
-        setSession(existing);
-        setNameInput(existing.user.name);
-      }
-    }
-    setSessionChecked(true);
-  }, [isLocal]);
-
   // ---- Board access (and joining through an invite link) ----
   useEffect(() => {
-    if (!session) return;
+    if (!meId) return;
     if (isLocal) {
       const now = new Date().toISOString();
       setBoard({
@@ -318,6 +358,7 @@ export default function BoardPage() {
         createdAt: now,
         updatedAt: now,
         members: [{ userId: 'local-user', role: 'owner', name: 'You' }],
+        pages: DEFAULT_PAGES,
       });
       setStatus('live');
       return;
@@ -335,12 +376,18 @@ export default function BoardPage() {
         setBoard(value);
         setLoadError('');
         // Keep the invite token out of the address bar once it is used.
-        if (invite) window.history.replaceState(null, '', `/board/${boardId}`);
+        if (invite) {
+          const page = search.get('page');
+          window.history.replaceState(
+            null,
+            '',
+            `/board/${boardId}${page ? `?page=${encodeURIComponent(page)}` : ''}`,
+          );
+        }
       } catch (error) {
         if (cancelled) return;
         if (error instanceof ApiError && error.status === 401) {
-          clearSession();
-          setSession(null);
+          setUser(null);
           return;
         }
         setLoadError((error as Error).message);
@@ -351,7 +398,7 @@ export default function BoardPage() {
     };
     // `search` is read once: replacing the URL must not reload the board.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session, boardId, isLocal]);
+  }, [meId, boardId, isLocal]);
 
   // ---- Realtime connection ----
   const onServerMessage = useEffectEvent((message: ServerMessage) => {
@@ -413,7 +460,7 @@ export default function BoardPage() {
             ? current
             : [...current, chat];
         });
-        if (chat.userId !== session?.user.id) {
+        if (chat.userId !== me?.id) {
           if (!chatOpen) setUnread((count) => count + 1);
           setTyping((current) =>
             current.filter((item) => item.name !== chat.name),
@@ -449,7 +496,7 @@ export default function BoardPage() {
         return;
       }
       case 'signal':
-        void callRef.current?.handleSignal(message.from, message.data);
+        callRef.current?.handleSignal(message.from, message.data);
         return;
       case 'board':
         setBoard(message.board);
@@ -475,17 +522,12 @@ export default function BoardPage() {
 
   const boardReady = board !== null;
   useEffect(() => {
-    if (!session || !boardReady || isLocal) return;
-    const client = new RealtimeClient(
-      boardId,
-      session.token,
-      colorFor(session.user.id),
-      {
-        onMessage: (message) => onServerMessage(message),
-        onStatus: setStatus,
-        onPending: setPending,
-      },
-    );
+    if (!me || !boardReady || isLocal) return;
+    const client = new RealtimeClient(boardId, me.id, me.color, {
+      onMessage: (message) => onServerMessage(message),
+      onStatus: setStatus,
+      onPending: setPending,
+    });
     clientRef.current = client;
     setPending(client.pendingOperations.length);
     const audio = new AudioCall(client, [], setCall);
@@ -496,7 +538,9 @@ export default function BoardPage() {
       clientRef.current = null;
       callRef.current = null;
     };
-  }, [session, boardReady, boardId, isLocal]);
+    // Reconnect only when the person changes, not when their profile does.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [meId, boardReady, boardId, isLocal]);
 
   // Expire "is typing" hints.
   useEffect(() => {
@@ -538,13 +582,59 @@ export default function BoardPage() {
     return () => observer.disconnect();
   }, [boardReady]);
 
-  const fitTo = useCallback(
-    (bounds: Bounds | null) => {
-      if (!bounds) {
-        setView({ x: -size.width / 2, y: -size.height / 2, zoom: 1 });
+  /** Moves the camera, easing into place unless `animate` is false. */
+  const moveView = useCallback(
+    (target: View, animate = true) => {
+      if (viewAnimation.current !== undefined)
+        cancelAnimationFrame(viewAnimation.current);
+      viewAnimation.current = undefined;
+      const from = viewRef.current;
+      if (
+        !animate ||
+        window.matchMedia('(prefers-reduced-motion: reduce)').matches
+      ) {
+        setView(target);
         return;
       }
-      const padding = 80;
+      const start = performance.now();
+      const step = (now: number) => {
+        const t = easeOut(Math.min(1, (now - start) / 220));
+        // Zoom eases geometrically so the motion feels even at every scale.
+        const zoom = from.zoom * (target.zoom / from.zoom) ** t;
+        // Keep the screen centre on a straight path between the two views.
+        const cx =
+          from.x +
+          size.width / from.zoom / 2 +
+          (target.x +
+            size.width / target.zoom / 2 -
+            (from.x + size.width / from.zoom / 2)) *
+            t;
+        const cy =
+          from.y +
+          size.height / from.zoom / 2 +
+          (target.y +
+            size.height / target.zoom / 2 -
+            (from.y + size.height / from.zoom / 2)) *
+            t;
+        setView({
+          x: cx - size.width / zoom / 2,
+          y: cy - size.height / zoom / 2,
+          zoom,
+        });
+        viewAnimation.current = t < 1 ? requestAnimationFrame(step) : undefined;
+      };
+      viewAnimation.current = requestAnimationFrame(step);
+    },
+    [size],
+  );
+
+  const fitTo = useCallback(
+    (bounds: Bounds | null, animate = true) => {
+      if (!bounds) {
+        moveView({ x: -size.width / 2, y: -size.height / 2, zoom: 1 }, animate);
+        return;
+      }
+      const padding = Math.min(120, size.width * 0.08 + 40);
       const zoom = clampZoom(
         Math.min(
           1.5,
@@ -552,13 +642,16 @@ export default function BoardPage() {
           (size.height - padding * 2) / Math.max(bounds.height, 1),
         ),
       );
-      setView({
-        x: bounds.x + bounds.width / 2 - size.width / zoom / 2,
-        y: bounds.y + bounds.height / 2 - size.height / zoom / 2,
-        zoom,
-      });
+      moveView(
+        {
+          x: bounds.x + bounds.width / 2 - size.width / zoom / 2,
+          y: bounds.y + bounds.height / 2 - size.height / zoom / 2,
+          zoom,
+        },
+        animate,
+      );
     },
-    [size],
+    [size, moveView],
   );
 
   // Frame the content the first time the board appears.
@@ -566,18 +659,24 @@ export default function BoardPage() {
     if (fittedOnce.current || size.width <= 1 || !boardReady) return;
     if (!isLocal && status !== 'live') return;
     fittedOnce.current = true;
-    fitTo(unionBounds(objects));
-  }, [size, boardReady, status, isLocal, objects, fitTo]);
+    fitTo(unionBounds(pageObjects), false);
+  }, [size, boardReady, status, isLocal, pageObjects, fitTo]);
 
-  function zoomAt(factor: number, screen?: Point) {
-    setView((current) => {
-      const zoom = clampZoom(current.zoom * factor);
-      const sx = screen?.x ?? size.width / 2;
-      const sy = screen?.y ?? size.height / 2;
-      const wx = current.x + sx / current.zoom;
-      const wy = current.y + sy / current.zoom;
-      return { x: wx - sx / zoom, y: wy - sy / zoom, zoom };
+  /** Zooms around the screen centre, keeping what is in the middle in place. */
+  function zoomTo(zoom: number) {
+    const current = viewRef.current;
+    const next = clampZoom(zoom);
+    const cx = current.x + size.width / current.zoom / 2;
+    const cy = current.y + size.height / current.zoom / 2;
+    moveView({
+      x: cx - size.width / next / 2,
+      y: cy - size.height / next / 2,
+      zoom: next,
     });
+  }
+
+  function zoomAt(factor: number) {
+    zoomTo(viewRef.current.zoom * factor);
   }
 
   useEffect(() => {
@@ -585,6 +684,10 @@ export default function BoardPage() {
     if (!stage) return;
     const onWheel = (event: WheelEvent) => {
       event.preventDefault();
+      if (viewAnimation.current !== undefined) {
+        cancelAnimationFrame(viewAnimation.current);
+        viewAnimation.current = undefined;
+      }
       const rect = stage.getBoundingClientRect();
       if (event.ctrlKey || event.metaKey) {
         const factor = Math.exp(
@@ -694,27 +797,6 @@ export default function BoardPage() {
     perform(drafts, { record: false });
   }
 
-  function undo() {
-    if (readonly) return;
-    const entry = history.current.pop();
-    if (!entry) return;
-    redoStack.current.push(entry);
-    restore(entry, 'before');
-    setCanUndo(history.current.length > 0);
-    setCanRedo(true);
-    setSelected([]);
-  }
-
-  function redo() {
-    if (readonly) return;
-    const entry = redoStack.current.pop();
-    if (!entry) return;
-    history.current.push(entry);
-    restore(entry, 'after');
-    setCanUndo(true);
-    setCanRedo(redoStack.current.length > 0);
-  }
-
   function deleteObjects(ids: string[]) {
     if (readonly || !ids.length) return;
     perform(ids.map((objectId) => ({ type: 'delete', objectId })));
@@ -723,11 +805,13 @@ export default function BoardPage() {
 
   function pasteObjects(sources: BoardObject[], offset = 24) {
     if (readonly || !sources.length) return;
+    const step = offset / viewRef.current.zoom;
     const copies = sources.map((item) => ({
       ...item,
       id: id(),
-      x: round(item.x + offset),
-      y: round(item.y + offset),
+      x: round(item.x + step),
+      y: round(item.y + step),
+      page: currentPage.id,
     }));
     perform(
       copies.map((object) => ({ type: 'create', objectId: object.id, object })),
@@ -764,6 +848,12 @@ export default function BoardPage() {
     });
   }
 
+  /** Converts an on-screen size to canvas units for new objects. */
+  function screenSize(value: number, min: number, max: number) {
+    const zoom = inkFollowsZoom ? viewRef.current.zoom : 1;
+    return round(clamp(value / zoom, min, max));
+  }
+
   function newObject(
     kind: BoardObject['kind'],
     point: Point,
@@ -775,7 +865,8 @@ export default function BoardPage() {
       x: round(point.x),
       y: round(point.y),
       color,
-      strokeWidth,
+      strokeWidth: screenSize(strokeWidth, 0.5, 160),
+      page: currentPage.id,
       ...extra,
     };
   }
@@ -816,6 +907,15 @@ export default function BoardPage() {
       width: round(Math.max(1, Math.abs(dx))),
       height: round(Math.max(1, Math.abs(dy))),
     };
+  }
+
+  function newText(point: Point) {
+    const fontSize = screenSize(28, 8, 160);
+    return newObject(
+      'text',
+      { x: point.x, y: point.y - fontSize * 0.6 },
+      { text: '', fontSize },
+    );
   }
 
   // ---- Text editing ----
@@ -957,7 +1057,7 @@ export default function BoardPage() {
           }
           const ids = selected.includes(oid) ? selected : [oid];
           setSelected(ids);
-          const originals = objectsRef.current.filter((item) =>
+          const originals = pageObjectsRef.current.filter((item) =>
             ids.includes(item.id),
           );
           gesture.current = {
@@ -983,9 +1083,11 @@ export default function BoardPage() {
         const object = newObject('path', point, {
           points: [0, 0],
           color: highlighter ? `${color.slice(0, 7)}66` : color,
-          strokeWidth: highlighter
-            ? Math.max(12, strokeWidth * 4)
-            : strokeWidth,
+          strokeWidth: screenSize(
+            highlighter ? Math.max(12, strokeWidth * 4) : strokeWidth,
+            0.5,
+            160,
+          ),
         });
         gesture.current = { kind: 'draw', object, last: point };
         setOverlay({ objects: [object] });
@@ -1007,31 +1109,26 @@ export default function BoardPage() {
           : undefined;
         if (existing?.kind === 'text' || existing?.kind === 'sticky')
           return openText(existing, false);
-        return openText(
-          newObject(
-            'text',
-            { x: point.x, y: point.y - 16 },
-            { text: '', fontSize: 28 },
-          ),
-          true,
-        );
+        return openText(newText(point), true);
       }
-      case 'sticky':
+      case 'sticky': {
+        const side = screenSize(200, 40, 4000);
         return openText(
           newObject(
             'sticky',
-            { x: point.x - 100, y: point.y - 100 },
+            { x: point.x - side / 2, y: point.y - side / 2 },
             {
-              width: 200,
-              height: 200,
+              width: side,
+              height: side,
               text: '',
               color: stickyColor,
               strokeWidth: 1,
-              fontSize: 18,
+              fontSize: screenSize(18, 8, 160),
             },
           ),
           true,
         );
+      }
     }
   }
 
@@ -1043,7 +1140,11 @@ export default function BoardPage() {
       });
     const current = gesture.current;
     const point = toWorld(event.clientX, event.clientY);
-    clientRef.current?.liveCursor({ x: round(point.x), y: round(point.y) });
+    clientRef.current?.liveCursor({
+      x: round(point.x),
+      y: round(point.y),
+      page: currentPage.id,
+    });
     if (!current) return;
 
     switch (current.kind) {
@@ -1166,7 +1267,7 @@ export default function BoardPage() {
           height: Math.abs(point.y - current.start.y),
         };
         setOverlay({ marquee: box });
-        const hits = objectsRef.current
+        const hits = pageObjectsRef.current
           .filter((item) => intersects(box, objectBounds(item)))
           .map((item) => item.id);
         setSelected([...new Set([...current.base, ...hits])]);
@@ -1209,14 +1310,17 @@ export default function BoardPage() {
           break;
         }
         // A click without dragging drops a default-sized shape.
-        if (tiny)
+        if (tiny) {
+          const width = screenSize(120, 16, 20_000);
+          const height = screenSize(80, 16, 20_000);
           object = {
             ...object,
-            x: round(object.x - 60),
-            y: round(object.y - 40),
-            width: 120,
-            height: 80,
+            x: round(object.x - width / 2),
+            y: round(object.y - height / 2),
+            width,
+            height,
           };
+        }
         perform([{ type: 'create', objectId: object.id, object }]);
         setSelected([object.id]);
         break;
@@ -1267,17 +1371,213 @@ export default function BoardPage() {
       : undefined;
     if (item?.kind === 'text' || item?.kind === 'sticky')
       return openText(item, false);
-    if (!oid) {
-      const point = toWorld(event.clientX, event.clientY);
-      openText(
-        newObject(
-          'text',
-          { x: point.x, y: point.y - 16 },
-          { text: '', fontSize: 28 },
+    if (!oid) openText(newText(toWorld(event.clientX, event.clientY)), true);
+  }
+
+  // ---- Pages ----
+  function switchPage(target: string) {
+    if (target === currentPage.id) return;
+    finishText();
+    cancelGesture();
+    setSelected([]);
+    pageViews.current.set(currentPage.id, viewRef.current);
+    setPageId(target);
+    clientRef.current?.liveCursor(null);
+    const url = new URL(location.href);
+    if (target === pages[0]!.id) url.searchParams.delete('page');
+    else url.searchParams.set('page', target);
+    window.history.replaceState(null, '', url);
+    const saved = pageViews.current.get(target);
+    if (saved) moveView(saved, false);
+    else
+      fitTo(
+        unionBounds(
+          objectsRef.current.filter((item) => pageOf(item, pages) === target),
         ),
-        true,
+        false,
       );
+  }
+
+  /** Applies a page change locally, then confirms it with the server. */
+  async function changePages(
+    next: Page[],
+    request?: () => Promise<{ pages: Page[] }>,
+  ) {
+    if (!board) return;
+    const previous = board.pages;
+    setBoard({ ...board, pages: next });
+    if (!request) return;
+    try {
+      const result = await request();
+      setBoard((current) =>
+        current ? { ...current, pages: result.pages } : current,
+      );
+    } catch (error) {
+      setBoard((current) =>
+        current ? { ...current, pages: previous } : current,
+      );
+      setNotice((error as Error).message);
     }
+  }
+
+  function uniquePageName(base: string) {
+    const names = new Set(pages.map((page) => page.name));
+    if (!names.has(base)) return base;
+    let index = 2;
+    while (names.has(`${base} ${index}`)) index++;
+    return `${base} ${index}`;
+  }
+
+  function addPage(duplicateOf?: Page) {
+    if (readonly) return;
+    const page = {
+      id: newPageId(),
+      name: duplicateOf
+        ? uniquePageName(`${duplicateOf.name} copy`.slice(0, 54))
+        : uniquePageName(`Page ${pages.length + 1}`),
+    };
+    const next = [...pages];
+    const at = duplicateOf
+      ? pages.findIndex((item) => item.id === duplicateOf.id) + 1
+      : pages.length;
+    next.splice(at, 0, page);
+    if (isLocal) {
+      void changePages(next);
+      if (duplicateOf) {
+        const copies = objectsRef.current
+          .filter((item) => pageOf(item, pages) === duplicateOf.id)
+          .map((item) => ({ ...item, id: id(), page: page.id }));
+        perform(
+          copies.map((object) => ({
+            type: 'create',
+            objectId: object.id,
+            object,
+          })),
+          { record: false },
+        );
+      }
+    } else
+      void changePages(next, () =>
+        send(`/boards/${boardId}/pages`, 'POST', {
+          ...page,
+          ...(duplicateOf ? { duplicateOf: duplicateOf.id } : {}),
+        }),
+      );
+    pageViews.current.set(currentPage.id, viewRef.current);
+    if (duplicateOf) pageViews.current.set(page.id, viewRef.current);
+    setSelected([]);
+    setPageId(page.id);
+    const url = new URL(location.href);
+    url.searchParams.set('page', page.id);
+    window.history.replaceState(null, '', url);
+    if (!duplicateOf)
+      moveView({ x: -size.width / 2, y: -size.height / 2, zoom: 1 }, false);
+  }
+
+  function renamePage(page: Page, name: string) {
+    const trimmed = name.trim().slice(0, 60);
+    if (!trimmed || trimmed === page.name || readonly) return;
+    const next = pages.map((item) =>
+      item.id === page.id ? { ...item, name: trimmed } : item,
+    );
+    void changePages(
+      next,
+      isLocal
+        ? undefined
+        : () =>
+            send(`/boards/${boardId}/pages/${page.id}`, 'PATCH', {
+              name: trimmed,
+            }),
+    );
+  }
+
+  function deletePage(page: Page) {
+    if (readonly || pages.length < 2) return;
+    const count = objectsRef.current.filter(
+      (item) => pageOf(item, pages) === page.id,
+    ).length;
+    if (
+      count &&
+      !window.confirm(
+        `Delete “${page.name}” and its ${count} ${count === 1 ? 'item' : 'items'} for everyone?`,
+      )
+    )
+      return;
+    const index = pages.findIndex((item) => item.id === page.id);
+    const next = pages.filter((item) => item.id !== page.id);
+    if (page.id === currentPage.id)
+      switchPage((pages[index + 1] ?? pages[index - 1])!.id);
+    if (isLocal) {
+      perform(
+        objectsRef.current
+          .filter((item) => pageOf(item, pages) === page.id)
+          .map((item) => ({ type: 'delete', objectId: item.id })),
+        { record: false },
+      );
+      void changePages(next);
+    } else
+      void changePages(next, () =>
+        send(`/boards/${boardId}/pages/${page.id}`, 'DELETE'),
+      );
+  }
+
+  function movePage(page: Page, offset: number) {
+    const index = pages.findIndex((item) => item.id === page.id);
+    const target = index + offset;
+    if (readonly || target < 0 || target >= pages.length) return;
+    const next = [...pages];
+    next.splice(index, 1);
+    next.splice(target, 0, page);
+    void changePages(
+      next,
+      isLocal
+        ? undefined
+        : () =>
+            send(`/boards/${boardId}/pages/order`, 'PUT', {
+              ids: next.map((item) => item.id),
+            }),
+    );
+  }
+
+  function moveSelectionTo(target: string) {
+    if (readonly || target === currentPage.id) return;
+    const name = pages.find((page) => page.id === target)?.name;
+    updateSelected({ page: target });
+    setSelected([]);
+    setNotice(`Moved to ${name}.`);
+  }
+
+  // ---- History ----
+  /** Shows the page a history step touches, so undo never acts out of sight. */
+  function revealChange(entry: Change[]) {
+    const change = entry[0];
+    const object = change?.before ?? change?.after;
+    if (!object) return;
+    const target = pageOf(object, pages);
+    if (target !== currentPage.id) switchPage(target);
+  }
+
+  function undo() {
+    if (readonly) return;
+    const entry = history.current.pop();
+    if (!entry) return;
+    revealChange(entry);
+    redoStack.current.push(entry);
+    restore(entry, 'before');
+    setCanUndo(history.current.length > 0);
+    setCanRedo(true);
+    setSelected([]);
+  }
+
+  function redo() {
+    if (readonly) return;
+    const entry = redoStack.current.pop();
+    if (!entry) return;
+    revealChange(entry);
+    history.current.push(entry);
+    restore(entry, 'after');
+    setCanUndo(true);
+    setCanRedo(redoStack.current.length > 0);
   }
 
   // ---- Keyboard ----
@@ -1289,12 +1589,11 @@ export default function BoardPage() {
 
   const onKeyDown = useEffectEvent((event: KeyboardEvent) => {
     if (event.key === 'Escape') {
-      if (shareOpen || membersOpen || snapshotsOpen || helpOpen || exportOpen) {
+      if (shareOpen || membersOpen || snapshotsOpen || helpOpen) {
         setShareOpen(false);
         setMembersOpen(false);
         setSnapshotsOpen(false);
         setHelpOpen(false);
-        setExportOpen(false);
         return;
       }
     }
@@ -1319,7 +1618,7 @@ export default function BoardPage() {
     } else if (modifier && key === 'a') {
       event.preventDefault();
       setTool('select');
-      setSelected(objectsRef.current.map((item) => item.id));
+      setSelected(pageObjectsRef.current.map((item) => item.id));
     } else if (modifier && key === 'c' && selectedObjects.length) {
       clipboard.current = selectedObjects.map((item) => ({ ...item }));
     } else if (modifier && key === 'x' && selectedObjects.length) {
@@ -1331,15 +1630,26 @@ export default function BoardPage() {
       if (copies) clipboard.current = copies;
     } else if (modifier && (key === '=' || key === '+')) {
       event.preventDefault();
-      zoomAt(1.2);
+      zoomAt(ZOOM_STEP);
     } else if (modifier && key === '-') {
       event.preventDefault();
-      zoomAt(1 / 1.2);
+      zoomAt(1 / ZOOM_STEP);
     } else if (modifier && key === '0') {
       event.preventDefault();
-      setView((current) => ({ ...current, zoom: 1 }));
-    } else if (event.shiftKey && key === '1') {
-      fitTo(unionBounds(objectsRef.current));
+      zoomTo(1);
+    } else if (event.shiftKey && (key === '1' || key === '!')) {
+      fitTo(unionBounds(pageObjectsRef.current));
+    } else if (event.shiftKey && (key === '2' || key === '@')) {
+      fitTo(
+        unionBounds(
+          selectedObjects.length ? selectedObjects : pageObjectsRef.current,
+        ),
+      );
+    } else if (key === 'pagedown' || key === 'pageup') {
+      event.preventDefault();
+      const index = pages.findIndex((page) => page.id === currentPage.id);
+      const next = pages[index + (key === 'pagedown' ? 1 : -1)];
+      if (next) switchPage(next.id);
     } else if ((key === 'delete' || key === 'backspace') && selected.length) {
       event.preventDefault();
       deleteObjects(selected);
@@ -1519,7 +1829,7 @@ export default function BoardPage() {
 
   function sendChat(text: string) {
     const client = clientRef.current;
-    if (!client || !session) return;
+    if (!client || !me) return;
     const clientId = id();
     if (!client.sendChat(clientId, text)) {
       setNotice('You are offline. Your message was not sent.');
@@ -1529,8 +1839,8 @@ export default function BoardPage() {
       ...current,
       {
         id: clientId,
-        userId: session.user.id,
-        name: session.user.name,
+        userId: me.id,
+        name: me.name,
         text,
         createdAt: new Date().toISOString(),
         pending: true,
@@ -1542,7 +1852,9 @@ export default function BoardPage() {
     if (!file || readonly) return;
     try {
       const image = await prepareImage(file);
-      const scale = Math.min(1, 520 / image.width, 380 / image.height);
+      const scale =
+        Math.min(1, 520 / image.width, 380 / image.height) /
+        viewRef.current.zoom;
       const width = round(image.width * scale);
       const height = round(image.height * scale);
       const object = newObject(
@@ -1562,13 +1874,13 @@ export default function BoardPage() {
   }
 
   async function doExport(format: 'png' | 'pdf' | 'svg') {
-    setExportOpen(false);
+    setMenuOpen(false);
     if (!board || !objectLayerRef.current) return;
     try {
       await exportBoard(
         objectLayerRef.current,
-        objectsRef.current,
-        board.title,
+        pageObjectsRef.current,
+        pages.length > 1 ? `${board.title} - ${currentPage.name}` : board.title,
         format,
       );
     } catch (error) {
@@ -1577,60 +1889,49 @@ export default function BoardPage() {
   }
 
   // ---- Render ----
-  if (!sessionChecked) return <main className="board-loading" />;
-
-  if (!session)
+  if (me === undefined)
     return (
-      <main className="board-signin">
+      <main className="page-loading">
+        <span className="loader" />
+      </main>
+    );
+
+  if (!me)
+    return (
+      <main className="board-gate">
         <Link className="brand" href="/">
-          <span className="brand-mark">✳</span> CollabBoard
+          <Logo />
+          <span>CanvaRoom</span>
         </Link>
-        <div className="signin-card">
-          <div className="signin-icon">✎</div>
-          <h1>Join the board.</h1>
-          <p>Add your name so others know who’s drawing.</p>
-          <form
-            onSubmit={async (event) => {
-              event.preventDefault();
-              try {
-                const result = await send<Session>('/session', 'POST', {
-                  name: nameInput,
-                });
-                writeSession(result);
-                setSession(result);
-              } catch (error) {
-                setNotice((error as Error).message);
-              }
-            }}
-          >
-            <input
-              aria-label="Your name"
-              value={nameInput}
-              onChange={(event) => setNameInput(event.target.value)}
-              placeholder="Your name"
-              required
-              maxLength={48}
-              autoFocus
-            />
-            <button className="button primary">
-              Join board <span aria-hidden="true">→</span>
-            </button>
-          </form>
-          {notice && <p className="notice error">{notice}</p>}
+        <div className="gate-card">
+          <span className="gate-icon">
+            <Icon name={search.get('invite') ? 'users' : 'lock'} size={22} />
+          </span>
+          <h1>
+            {search.get('invite')
+              ? 'You’re invited to a board.'
+              : 'Sign in to open this board.'}
+          </h1>
+          <p>
+            {search.get('invite')
+              ? 'Join as a guest to start drawing right away, or sign in to keep it in your boards.'
+              : 'Boards are saved to your account.'}
+          </p>
+          <AuthForm
+            initialMode={search.get('invite') ? 'guest' : 'login'}
+            allowGuest={Boolean(search.get('invite'))}
+          />
         </div>
       </main>
     );
 
   if (!board)
     return (
-      <main className="board-loading">
-        <Link className="brand" href="/">
-          <span className="brand-mark">✳</span> CollabBoard
-        </Link>
-        {!loadError && <div className="loading-orbit" />}
+      <main className="page-loading">
+        {!loadError && <span className="loader" />}
         <p>{loadError || 'Opening your board…'}</p>
         {loadError && (
-          <Link className="button subtle" href="/">
+          <Link className="button ghost" href="/">
             Back to boards
           </Link>
         )}
@@ -1639,7 +1940,7 @@ export default function BoardPage() {
 
   const scale = 1 / view.zoom;
   const saveLabel = isLocal
-    ? 'Local · not saved'
+    ? 'Scratch · not saved'
     : status === 'offline'
       ? pending
         ? `Offline · ${pending} unsynced`
@@ -1648,7 +1949,7 @@ export default function BoardPage() {
         ? 'Connecting…'
         : pending
           ? 'Saving…'
-          : 'All changes saved';
+          : 'Saved';
   const editorObject = textEditor?.object;
   const editorFont = editorObject ? defaultFontSize(editorObject) : 0;
   const editorLayout =
@@ -1660,28 +1961,192 @@ export default function BoardPage() {
     : spaceHeld || tool === 'hand' || readonly
       ? 'grab'
       : undefined;
-  const otherPeople = onlinePeople.filter(
-    (peer) => peer.userId !== session.user.id,
-  );
+  const otherPeople = onlinePeople.filter((peer) => peer.userId !== me.id);
+  const drawingTool = !['select', 'hand', 'eraser'].includes(tool);
+  const showStyle = drawingTool && !readonly && !selectedObjects.length;
+  const zoomPercent = Math.round(view.zoom * 100);
+  const gridStep = view.zoom < 0.5 ? 96 : view.zoom < 2 ? 24 : 12;
+  const leave = (event: React.MouseEvent) => {
+    if (
+      isLocal &&
+      objects.length &&
+      !window.confirm('This scratch board is not saved. Leave it?')
+    )
+      event.preventDefault();
+  };
 
   return (
-    <main className="editor-shell">
-      <header className="editor-topbar">
+    <main
+      className={`editor ${pagesOpen ? 'pages-open' : ''} ${chatOpen && !isLocal ? 'chat-open' : ''}`}
+    >
+      <div className="canvas-region">
+        <input
+          ref={imagePicker}
+          className="visually-hidden"
+          type="file"
+          accept="image/png,image/jpeg,image/webp"
+          aria-label="Choose an image file"
+          onChange={(event) => {
+            void addImage(event.currentTarget.files?.[0]);
+            event.currentTarget.value = '';
+          }}
+        />
+        <svg
+          ref={stageRef}
+          className={`board-stage tool-${tool}`}
+          style={stageCursor ? { cursor: stageCursor } : undefined}
+          viewBox={`${view.x} ${view.y} ${size.width / view.zoom} ${size.height / view.zoom}`}
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+          onPointerCancel={(event) => {
+            pointers.current.delete(event.pointerId);
+            cancelGesture();
+          }}
+          onPointerLeave={() => clientRef.current?.liveCursor(null)}
+          onDoubleClick={onDoubleClick}
+          onContextMenu={(event) => event.preventDefault()}
+        >
+          <defs>
+            <pattern
+              id="dot-grid"
+              width={gridStep}
+              height={gridStep}
+              patternUnits="userSpaceOnUse"
+            >
+              <circle
+                cx={gridStep / 2}
+                cy={gridStep / 2}
+                r={1.15 * scale}
+                className="grid-dot"
+              />
+            </pattern>
+          </defs>
+          <rect
+            className="stage-grid"
+            x={view.x}
+            y={view.y}
+            width={size.width / view.zoom}
+            height={size.height / view.zoom}
+            fill={view.zoom > 0.15 ? 'url(#dot-grid)' : 'transparent'}
+          />
+          {textEditor && !textEditor.isNew && (
+            <style>{`[data-oid="${CSS.escape(textEditor.object.id)}"]{visibility:hidden}`}</style>
+          )}
+          <g ref={objectLayerRef} className="objects-layer">
+            {pageObjects.map((item) => {
+              const isSelected = selected.includes(item.id);
+              return (
+                <BoardShape
+                  key={item.id}
+                  item={item}
+                  selected={isSelected}
+                  scale={isSelected ? scale : 1}
+                  showHandle={isSelected && selected.length === 1 && !readonly}
+                />
+              );
+            })}
+          </g>
+          <RemoteLayer
+            activity={remote}
+            peers={peers}
+            zoom={view.zoom}
+            page={currentPage.id}
+            pages={pages}
+          />
+          <LocalOverlay ref={overlayRef} zoom={view.zoom} />
+        </svg>
+
+        {editorObject && (
+          <textarea
+            className={`canvas-text-editor ${editorObject.kind === 'sticky' ? 'sticky-editor' : ''}`}
+            aria-label={
+              editorObject.kind === 'sticky' ? 'Sticky note text' : 'Text'
+            }
+            autoFocus
+            value={editorObject.text ?? ''}
+            placeholder={
+              editorObject.kind === 'sticky' ? 'Write a note…' : 'Type here'
+            }
+            spellCheck
+            style={{
+              left: (editorObject.x - view.x) * view.zoom,
+              top: (editorObject.y - view.y) * view.zoom,
+              fontSize: editorFont * view.zoom,
+              lineHeight: LINE_HEIGHT,
+              fontFamily: FONT_FAMILY,
+              color:
+                editorObject.kind === 'sticky' ? '#22201c' : editorObject.color,
+              ...(editorObject.kind === 'sticky'
+                ? {
+                    width: (editorObject.width ?? 200) * view.zoom,
+                    height: (editorObject.height ?? 200) * view.zoom,
+                    padding: STICKY_PADDING * view.zoom,
+                    background: `linear-gradient(${editorObject.color.slice(0, 7)}59, ${editorObject.color.slice(0, 7)}59), #fffdf6`,
+                  }
+                : {
+                    width:
+                      Math.max(80, editorLayout!.width + editorFont) *
+                      view.zoom,
+                    height: editorLayout!.height * view.zoom,
+                  }),
+            }}
+            onChange={(event) => {
+              const object = { ...editorObject, text: event.target.value };
+              setTextEditor({ ...textEditor!, object });
+              clientRef.current?.liveUpsert([object]);
+            }}
+            onBlur={finishText}
+            onKeyDown={(event) => {
+              if (
+                event.key === 'Escape' ||
+                (event.key === 'Enter' && (event.metaKey || event.ctrlKey))
+              ) {
+                event.preventDefault();
+                event.currentTarget.blur();
+              }
+            }}
+          />
+        )}
+
+        {pageObjects.length === 0 && !textEditor && (
+          <div className="canvas-empty-hint">
+            <p>
+              {readonly
+                ? 'Nothing on this page yet.'
+                : pages.length > 1
+                  ? `${currentPage.name} is empty — start anywhere.`
+                  : 'Pick a tool and start anywhere.'}
+            </p>
+            <small>
+              {isLocal
+                ? 'Scratch boards live only in this tab.'
+                : 'Everyone here sees each stroke as you draw it.'}
+            </small>
+          </div>
+        )}
+      </div>
+
+      {/* ---- Top left: board identity ---- */}
+      <header className="island island-board">
         <Link
           href="/"
-          className="brand editor-brand"
-          onClick={(event) => {
-            if (
-              isLocal &&
-              objects.length &&
-              !window.confirm('This board is not saved. Leave it?')
-            )
-              event.preventDefault();
-          }}
+          className="island-logo"
+          onClick={leave}
+          title="All boards"
         >
-          <span className="brand-mark">✳</span>
-          <span>CollabBoard</span>
+          <Logo size={26} />
         </Link>
+        <span className="island-sep" />
+        <button
+          className={`icon-button ${pagesOpen ? 'is-active' : ''}`}
+          aria-label="Pages"
+          aria-pressed={pagesOpen}
+          title="Pages"
+          onClick={() => setPagesOpen((open) => !open)}
+        >
+          <Icon name="pages" />
+        </button>
         <div className="board-title-block">
           {editingTitle ? (
             <input
@@ -1707,37 +2172,26 @@ export default function BoardPage() {
               {board.title}
             </button>
           )}
-          <div className="save-indicator" aria-live="polite">
-            {!isLocal && (
-              <span
-                className={`connection-dot ${status === 'live' && pending ? 'saving' : status}`}
-              />
+          <span className="board-subtitle">
+            {pages.length > 1 && (
+              <>
+                <span className="page-crumb">{currentPage.name}</span>
+                <span aria-hidden="true">·</span>
+              </>
             )}
-            {saveLabel}
-          </div>
+            <span className="save-indicator" aria-live="polite">
+              <span
+                className={`status-dot ${isLocal ? 'local' : status === 'live' && pending ? 'saving' : status}`}
+              />
+              {saveLabel}
+            </span>
+          </span>
         </div>
-        <div className="top-history-actions" aria-label="History">
-          <button
-            aria-label="Undo"
-            title="Undo · Ctrl/⌘ Z"
-            disabled={!canUndo || readonly}
-            onClick={undo}
-          >
-            ↶
-          </button>
-          <button
-            aria-label="Redo"
-            title="Redo · Ctrl/⌘ Shift Z"
-            disabled={!canRedo || readonly}
-            onClick={redo}
-          >
-            ↷
-          </button>
-        </div>
-        <div className="topbar-spacer" />
-        {isLocal ? (
-          <span className="local-mode-badge">Local board</span>
-        ) : (
+      </header>
+
+      {/* ---- Top right: people, call, chat, share ---- */}
+      <div className="island island-people">
+        {!isLocal && (
           <>
             <button
               className="participant-stack"
@@ -1749,7 +2203,7 @@ export default function BoardPage() {
                   key={peer.userId}
                   className="avatar"
                   style={{ background: peer.color }}
-                  title={peer.userId === session.user.id ? 'You' : peer.name}
+                  title={peer.userId === me.id ? 'You' : peer.name}
                 >
                   {peer.name[0]?.toUpperCase()}
                 </span>
@@ -1770,711 +2224,657 @@ export default function BoardPage() {
               onToggleMute={() => callRef.current?.setMuted(!call.muted)}
             />
             <button
-              className={`top-action ${chatOpen ? 'is-active' : ''}`}
+              className={`icon-button chat-toggle ${chatOpen ? 'is-active' : ''}`}
               onClick={() => {
                 setChatOpen((open) => !open);
                 setUnread(0);
               }}
               aria-label={unread ? `Chat, ${unread} unread` : 'Chat'}
+              title="Chat"
             >
-              <span className="action-glyph" aria-hidden="true">
-                💬
-              </span>
-              <span className="top-action-label">Chat</span>
+              <Icon name="chat" />
               {unread > 0 && !chatOpen && (
                 <span className="unread-badge">
                   {unread > 9 ? '9+' : unread}
                 </span>
               )}
             </button>
-            {board.role === 'owner' && (
-              <button
-                className="button share-button"
-                onClick={() => setShareOpen(true)}
-              >
-                Share
-              </button>
-            )}
           </>
         )}
-        <div className="export-menu">
+        {board.role === 'owner' && !isLocal && (
           <button
-            className="button subtle export-button"
-            aria-expanded={exportOpen}
-            onClick={() => setExportOpen((open) => !open)}
+            className="button primary small share-button"
+            onClick={() => setShareOpen(true)}
           >
-            Export
+            <Icon name="share" size={16} />
+            <span>Share</span>
           </button>
-          {exportOpen && (
-            <div className="export-options" role="menu">
-              <button role="menuitem" onClick={() => void doExport('png')}>
-                PNG image
+        )}
+        <div className="menu-anchor" ref={menuRef}>
+          <button
+            className={`icon-button ${menuOpen ? 'is-active' : ''}`}
+            aria-label="Board menu"
+            aria-expanded={menuOpen}
+            onClick={() => setMenuOpen((open) => !open)}
+          >
+            <Icon name="more" />
+          </button>
+          {menuOpen && (
+            <div className="popover board-menu" role="menu">
+              <p className="menu-label">
+                Export {pages.length > 1 ? 'this page' : ''}
+              </p>
+              <button
+                className="menu-row"
+                role="menuitem"
+                onClick={() => void doExport('png')}
+              >
+                <Icon name="image" />
+                <span>PNG image</span>
               </button>
-              <button role="menuitem" onClick={() => void doExport('svg')}>
-                SVG vector
+              <button
+                className="menu-row"
+                role="menuitem"
+                onClick={() => void doExport('svg')}
+              >
+                <Icon name="download" />
+                <span>SVG vector</span>
               </button>
-              <button role="menuitem" onClick={() => void doExport('pdf')}>
-                PDF document
+              <button
+                className="menu-row"
+                role="menuitem"
+                onClick={() => void doExport('pdf')}
+              >
+                <Icon name="download" />
+                <span>PDF document</span>
               </button>
+              {!isLocal && board.role !== 'viewer' && (
+                <>
+                  <div className="menu-divider" />
+                  <button
+                    className="menu-row"
+                    role="menuitem"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      void saveSnapshot();
+                    }}
+                  >
+                    <Icon name="save" />
+                    <span>Save a version</span>
+                  </button>
+                  <button
+                    className="menu-row"
+                    role="menuitem"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      void openSnapshots();
+                    }}
+                  >
+                    <Icon name="history" />
+                    <span>Version history</span>
+                  </button>
+                </>
+              )}
+              {!isLocal && (
+                <button
+                  className="menu-row"
+                  role="menuitem"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    setMembersOpen(true);
+                  }}
+                >
+                  <Icon name="users" />
+                  <span>Participants</span>
+                  <span className="menu-row-hint">{board.members.length}</span>
+                </button>
+              )}
+              {board.role === 'owner' && !isLocal && (
+                <button
+                  className="menu-row"
+                  role="menuitem"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    void toggleLock();
+                  }}
+                >
+                  <Icon name={board.locked ? 'unlock' : 'lock'} />
+                  <span>
+                    {board.locked
+                      ? 'Resume editing for all'
+                      : 'Pause editing for others'}
+                  </span>
+                </button>
+              )}
+              <div className="menu-divider" />
+              <button
+                className="menu-row"
+                role="menuitem"
+                onClick={() => {
+                  setMenuOpen(false);
+                  setHelpOpen(true);
+                }}
+              >
+                <Icon name="keyboard" />
+                <span>Keyboard shortcuts</span>
+                <span className="menu-row-hint">?</span>
+              </button>
+              <ThemeToggle withLabel />
+              <Link
+                className="menu-row"
+                role="menuitem"
+                href="/"
+                onClick={leave}
+              >
+                <Icon name="home" />
+                <span>All boards</span>
+              </Link>
             </div>
           )}
         </div>
-        <ThemeToggle />
-      </header>
+        {!isLocal && <UserMenu />}
+      </div>
 
-      <section className="editor-main">
-        <aside className="tool-rail" aria-label="Drawing tools">
-          {TOOLS.map((item, index) => (
-            <div key={item.tool} className="tool-slot">
-              {(index === 2 || index === 5 || index === 10) && (
-                <div className="rail-divider" />
+      {/* ---- Banners and toasts ---- */}
+      <div className="canvas-messages">
+        {readonly && (
+          <div className="banner">
+            <Icon name="lock" size={15} />
+            {board.locked && board.role !== 'viewer'
+              ? 'Editing is paused by the board owner.'
+              : 'You have view-only access.'}
+          </div>
+        )}
+        {!isLocal && status === 'offline' && (
+          <div className="banner warn" role="status">
+            Connection lost — reconnecting. Your edits are kept and will sync.
+          </div>
+        )}
+        {notice && (
+          <div className="toast" role="status">
+            <span>{notice}</span>
+            <button aria-label="Dismiss" onClick={() => setNotice('')}>
+              <Icon name="close" size={15} />
+            </button>
+          </div>
+        )}
+      </div>
+
+      {pagesOpen && (
+        <PagesPanel
+          pages={pages}
+          current={currentPage.id}
+          objects={objects}
+          activity={remote}
+          peers={
+            otherPeople.length
+              ? peers.filter((peer) => peer.userId !== me.id)
+              : []
+          }
+          readonly={readonly}
+          onSelect={switchPage}
+          onAdd={() => addPage()}
+          onDuplicate={(page) => addPage(page)}
+          onRename={renamePage}
+          onDelete={deletePage}
+          onMove={movePage}
+          onClose={() => setPagesOpen(false)}
+        />
+      )}
+
+      {/* ---- Bottom centre: tools ---- */}
+      <div className="dock-wrap">
+        {showStyle && (
+          <div className="style-strip" aria-label="Style">
+            <div className="swatch-row">
+              {(tool === 'sticky' ? STICKY_COLORS : COLORS).map((swatch) => (
+                <button
+                  key={swatch}
+                  aria-label={`Colour ${swatch}`}
+                  aria-pressed={
+                    (tool === 'sticky' ? stickyColor : color) === swatch
+                  }
+                  className="swatch"
+                  style={{ '--swatch': swatch } as React.CSSProperties}
+                  onClick={() =>
+                    tool === 'sticky'
+                      ? setStickyColor(swatch)
+                      : setColor(swatch)
+                  }
+                />
+              ))}
+              {tool !== 'sticky' && (
+                <label className="swatch custom" title="Custom colour">
+                  <input
+                    type="color"
+                    aria-label="Custom colour"
+                    value={color.slice(0, 7)}
+                    onChange={(event) => setColor(event.target.value)}
+                  />
+                </label>
               )}
+            </div>
+            {tool !== 'sticky' && tool !== 'text' && (
+              <>
+                <span className="strip-sep" />
+                <div className="stroke-row">
+                  {STROKES.map((width) => (
+                    <button
+                      key={width}
+                      aria-label={`Stroke ${width}`}
+                      aria-pressed={strokeWidth === width}
+                      onClick={() => setStrokeWidth(width)}
+                    >
+                      <span
+                        style={{
+                          width: Math.max(4, width + 2),
+                          height: Math.max(4, width + 2),
+                          background: color,
+                        }}
+                      />
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        )}
+        <nav className="dock" aria-label="Drawing tools">
+          {TOOLS.map((item) => (
+            <div key={item.tool} className="dock-slot">
+              {DOCK_BREAKS.has(item.tool) && <span className="dock-sep" />}
               <button
-                className={`tool-button ${tool === item.tool ? 'tool-selected' : ''}`}
+                className={`dock-tool ${tool === item.tool ? 'is-active' : ''}`}
                 onClick={() => chooseTool(item.tool)}
                 aria-pressed={tool === item.tool}
                 aria-label={item.label}
-                title={`${item.label}${item.key ? ` · ${item.key}` : ''}`}
+                data-tip={`${item.label}${item.key ? ` · ${item.key}` : ''}`}
                 disabled={
                   readonly && item.tool !== 'select' && item.tool !== 'hand'
                 }
               >
-                <span aria-hidden="true">{item.icon}</span>
-                <small>{item.label}</small>
+                <Icon name={item.icon} size={20} />
+                {item.key && <kbd>{item.key}</kbd>}
               </button>
             </div>
           ))}
-          <div className="rail-divider" />
+          <span className="dock-sep" />
           <button
-            className="tool-button"
+            className="dock-tool"
             onClick={() => imagePicker.current?.click()}
-            title="Add an image"
             aria-label="Add an image"
+            data-tip="Image"
             disabled={readonly}
           >
-            <span aria-hidden="true">🖼</span>
-            <small>Image</small>
+            <Icon name="image" size={20} />
           </button>
-        </aside>
+        </nav>
+      </div>
 
-        <div className="canvas-region">
-          <input
-            ref={imagePicker}
-            className="visually-hidden"
-            type="file"
-            accept="image/png,image/jpeg,image/webp"
-            aria-label="Choose an image file"
-            onChange={(event) => {
-              void addImage(event.currentTarget.files?.[0]);
-              event.currentTarget.value = '';
-            }}
-          />
-          {notice && (
-            <div className="toast-notice" role="status">
-              <span>{notice}</span>
-              <button aria-label="Dismiss" onClick={() => setNotice('')}>
-                ×
-              </button>
-            </div>
-          )}
-          {readonly && (
-            <div className="readonly-banner">
-              {board.locked && board.role !== 'viewer'
-                ? 'Editing is paused by the board owner.'
-                : 'You have view-only access.'}
-            </div>
-          )}
-          {!isLocal && status === 'offline' && (
-            <div className="offline-banner" role="status">
-              Connection lost — reconnecting. Your edits are kept and will sync.
-            </div>
-          )}
-          <svg
-            ref={stageRef}
-            className={`board-stage tool-${tool}`}
-            style={stageCursor ? { cursor: stageCursor } : undefined}
-            viewBox={`${view.x} ${view.y} ${size.width / view.zoom} ${size.height / view.zoom}`}
-            onPointerDown={onPointerDown}
-            onPointerMove={onPointerMove}
-            onPointerUp={onPointerUp}
-            onPointerCancel={(event) => {
-              pointers.current.delete(event.pointerId);
-              cancelGesture();
-            }}
-            onPointerLeave={() => clientRef.current?.liveCursor(null)}
-            onDoubleClick={onDoubleClick}
-            onContextMenu={(event) => event.preventDefault()}
+      {/* ---- Bottom left: history and zoom ---- */}
+      <div className="island island-zoom">
+        <button
+          className="icon-button"
+          aria-label="Undo"
+          title="Undo · Ctrl/⌘ Z"
+          disabled={!canUndo || readonly}
+          onClick={undo}
+        >
+          <Icon name="undo" />
+        </button>
+        <button
+          className="icon-button"
+          aria-label="Redo"
+          title="Redo · Ctrl/⌘ Shift Z"
+          disabled={!canRedo || readonly}
+          onClick={redo}
+        >
+          <Icon name="redo" />
+        </button>
+        <span className="island-sep" />
+        <button
+          className="icon-button"
+          aria-label="Zoom out"
+          title="Zoom out · Ctrl/⌘ −"
+          onClick={() => zoomAt(1 / ZOOM_STEP)}
+          disabled={view.zoom <= MIN_ZOOM + 0.001}
+        >
+          <Icon name="minus" />
+        </button>
+        <div className="menu-anchor" ref={zoomMenuRef}>
+          <button
+            className="zoom-value"
+            aria-label={`Zoom ${zoomPercent}%. Zoom options`}
+            aria-expanded={zoomMenuOpen}
+            onClick={() => setZoomMenuOpen((open) => !open)}
           >
-            <defs>
-              <pattern
-                id="dot-grid"
-                width="24"
-                height="24"
-                patternUnits="userSpaceOnUse"
-              >
-                <circle
-                  cx="1"
-                  cy="1"
-                  r={Math.min(1.6, 1.1 * scale)}
-                  fill="#c9d3cb"
-                />
-              </pattern>
-            </defs>
-            <rect
-              className="stage-grid"
-              x={view.x}
-              y={view.y}
-              width={size.width / view.zoom}
-              height={size.height / view.zoom}
-              fill={view.zoom > 0.35 ? 'url(#dot-grid)' : 'transparent'}
-            />
-            {textEditor && !textEditor.isNew && (
-              <style>{`[data-oid="${CSS.escape(textEditor.object.id)}"]{visibility:hidden}`}</style>
-            )}
-            <g ref={objectLayerRef} className="objects-layer">
-              {objects.map((item) => {
-                const isSelected = selected.includes(item.id);
-                return (
-                  <BoardShape
-                    key={item.id}
-                    item={item}
-                    selected={isSelected}
-                    scale={isSelected ? scale : 1}
-                    showHandle={
-                      isSelected && selected.length === 1 && !readonly
-                    }
-                  />
-                );
-              })}
-            </g>
-            <RemoteLayer activity={remote} peers={peers} zoom={view.zoom} />
-            <LocalOverlay ref={overlayRef} zoom={view.zoom} />
-          </svg>
-
-          {editorObject && (
-            <textarea
-              className={`canvas-text-editor ${editorObject.kind === 'sticky' ? 'sticky-editor' : ''}`}
-              aria-label={
-                editorObject.kind === 'sticky' ? 'Sticky note text' : 'Text'
-              }
-              autoFocus
-              value={editorObject.text ?? ''}
-              placeholder={
-                editorObject.kind === 'sticky' ? 'Write a note…' : 'Type here'
-              }
-              spellCheck
-              style={{
-                left: (editorObject.x - view.x) * view.zoom,
-                top: (editorObject.y - view.y) * view.zoom,
-                fontSize: editorFont * view.zoom,
-                lineHeight: LINE_HEIGHT,
-                fontFamily: FONT_FAMILY,
-                color:
-                  editorObject.kind === 'sticky'
-                    ? '#2c3a33'
-                    : editorObject.color,
-                ...(editorObject.kind === 'sticky'
-                  ? {
-                      width: (editorObject.width ?? 200) * view.zoom,
-                      height: (editorObject.height ?? 200) * view.zoom,
-                      padding: STICKY_PADDING * view.zoom,
-                      background: `linear-gradient(${editorObject.color.slice(0, 7)}59, ${editorObject.color.slice(0, 7)}59), #fffdf6`,
-                    }
-                  : {
-                      width:
-                        Math.max(80, editorLayout!.width + editorFont) *
-                        view.zoom,
-                      height: editorLayout!.height * view.zoom,
-                    }),
-              }}
-              onChange={(event) => {
-                const object = { ...editorObject, text: event.target.value };
-                setTextEditor({ ...textEditor!, object });
-                clientRef.current?.liveUpsert([object]);
-              }}
-              onBlur={finishText}
-              onKeyDown={(event) => {
-                if (
-                  event.key === 'Escape' ||
-                  (event.key === 'Enter' && (event.metaKey || event.ctrlKey))
-                ) {
-                  event.preventDefault();
-                  event.currentTarget.blur();
+            {zoomPercent}%
+          </button>
+          {zoomMenuOpen && (
+            <div className="popover zoom-menu above" role="menu">
+              <input
+                className="zoom-slider"
+                type="range"
+                min={Math.log(MIN_ZOOM)}
+                max={Math.log(MAX_ZOOM)}
+                step="0.01"
+                value={Math.log(view.zoom)}
+                aria-label="Zoom level"
+                onChange={(event) =>
+                  zoomTo(Math.exp(Number(event.target.value)))
                 }
-              }}
-            />
-          )}
-
-          {objects.length === 0 && !textEditor && (
-            <div className="canvas-empty-hint">
-              <span className="hint-star">✳</span>
-              <p>
-                {readonly
-                  ? 'Nothing here yet.'
-                  : 'Pick a tool and start anywhere.'}
-              </p>
-              <small>
-                {isLocal
-                  ? 'This board lives only in this tab.'
-                  : 'Everything appears for everyone as you draw.'}
-              </small>
-            </div>
-          )}
-          {otherPeople.length > 0 && !isLocal && (
-            <div className="presence-chip" aria-live="polite">
-              <span className="connection-dot live" />
-              {otherPeople.length === 1
-                ? `${otherPeople[0]!.name} is here`
-                : `${otherPeople.length} others here`}
+              />
+              <div className="zoom-presets">
+                {[0.5, 1, 2].map((preset) => (
+                  <button
+                    key={preset}
+                    className={
+                      Math.abs(view.zoom - preset) < 0.005 ? 'is-active' : ''
+                    }
+                    onClick={() => zoomTo(preset)}
+                  >
+                    {preset * 100}%
+                  </button>
+                ))}
+              </div>
+              <button
+                className="menu-row"
+                role="menuitem"
+                onClick={() => {
+                  setZoomMenuOpen(false);
+                  fitTo(unionBounds(pageObjects));
+                }}
+              >
+                <Icon name="fit" />
+                <span>Zoom to fit</span>
+                <span className="menu-row-hint">⇧1</span>
+              </button>
+              <button
+                className="menu-row"
+                role="menuitem"
+                disabled={!selectedObjects.length}
+                onClick={() => {
+                  setZoomMenuOpen(false);
+                  fitTo(unionBounds(selectedObjects));
+                }}
+              >
+                <Icon name="select" />
+                <span>Zoom to selection</span>
+                <span className="menu-row-hint">⇧2</span>
+              </button>
+              <div className="menu-divider" />
+              <label className="menu-row toggle-row">
+                <Icon name="pen" />
+                <span>Pen size follows zoom</span>
+                <input
+                  type="checkbox"
+                  checked={inkFollowsZoom}
+                  onChange={(event) => setInkFollowsZoom(event.target.checked)}
+                />
+              </label>
+              <label className="menu-row toggle-row">
+                <Icon name="map" />
+                <span>Show minimap</span>
+                <input
+                  type="checkbox"
+                  checked={minimapOpen}
+                  onChange={(event) => setMinimapOpen(event.target.checked)}
+                />
+              </label>
             </div>
           )}
         </div>
-
-        <aside
-          className={`properties-panel ${propertiesOpen ? 'properties-open' : ''}`}
+        <button
+          className="icon-button"
+          aria-label="Zoom in"
+          title="Zoom in · Ctrl/⌘ +"
+          onClick={() => zoomAt(ZOOM_STEP)}
+          disabled={view.zoom >= MAX_ZOOM - 0.001}
         >
-          <button
-            className="property-close"
-            aria-label="Close properties panel"
-            onClick={() => setPropertiesOpen(false)}
-          >
-            ×
-          </button>
-          {selectedObject ? (
-            <>
-              <div className="panel-heading">
-                <div>
-                  <p className="eyebrow">SELECTED</p>
-                  <h2>
-                    {selectedObject.kind === 'sticky'
-                      ? 'Sticky note'
-                      : selectedObject.kind === 'path'
-                        ? 'Drawing'
-                        : selectedObject.kind[0]!.toUpperCase() +
-                          selectedObject.kind.slice(1)}
-                  </h2>
-                </div>
-              </div>
-              {selectedObject.kind !== 'image' && (
-                <div className="property-section">
-                  <span className="property-label">
-                    {selectedObject.kind === 'sticky' ? 'Note color' : 'Color'}
-                  </span>
-                  <div className="color-swatches">
-                    {(selectedObject.kind === 'sticky'
-                      ? STICKY_COLORS
-                      : COLORS
-                    ).map((swatch) => (
-                      <button
-                        key={swatch}
-                        aria-label={`Color ${swatch}`}
-                        className={`color-swatch ${selectedObject.color.slice(0, 7) === swatch ? 'swatch-selected' : ''}`}
-                        style={{ background: swatch }}
-                        disabled={readonly}
-                        onClick={() =>
-                          updateSelected({
+          <Icon name="plus" />
+        </button>
+        <button
+          className="icon-button"
+          aria-label="Zoom to fit"
+          title="Zoom to fit · Shift 1"
+          onClick={() => fitTo(unionBounds(pageObjects))}
+        >
+          <Icon name="fit" />
+        </button>
+      </div>
+
+      {/* ---- Bottom right: minimap and presence ---- */}
+      <div className="corner-right">
+        {otherPeople.length > 0 && !isLocal && (
+          <div className="presence-chip" aria-live="polite">
+            <span className="status-dot live" />
+            {otherPeople.length === 1
+              ? `${otherPeople[0]!.name} is here`
+              : `${otherPeople.length} others here`}
+          </div>
+        )}
+        {minimapOpen && (
+          <Minimap
+            objects={pageObjects}
+            view={view}
+            size={size}
+            onMove={(target) => moveView(target, false)}
+          />
+        )}
+      </div>
+
+      {/* ---- Selection inspector ---- */}
+      {selectedObjects.length > 0 && (
+        <aside className="inspector" aria-label="Selection">
+          <div className="inspector-head">
+            <div>
+              <p className="kicker">
+                {selectedObjects.length > 1 ? 'Selection' : 'Selected'}
+              </p>
+              <h2>
+                {selectedObject
+                  ? selectedObject.kind === 'sticky'
+                    ? 'Sticky note'
+                    : selectedObject.kind === 'path'
+                      ? 'Drawing'
+                      : selectedObject.kind[0]!.toUpperCase() +
+                        selectedObject.kind.slice(1)
+                  : `${selectedObjects.length} objects`}
+              </h2>
+            </div>
+            <button
+              className="icon-button"
+              aria-label="Clear selection"
+              onClick={() => setSelected([])}
+            >
+              <Icon name="close" size={16} />
+            </button>
+          </div>
+
+          {(!selectedObject || selectedObject.kind !== 'image') && (
+            <div className="inspector-section">
+              <span className="inspector-label">
+                {selectedObject?.kind === 'sticky' ? 'Note colour' : 'Colour'}
+              </span>
+              <div className="swatch-row">
+                {(selectedObject?.kind === 'sticky'
+                  ? STICKY_COLORS
+                  : COLORS
+                ).map((swatch) => (
+                  <button
+                    key={swatch}
+                    aria-label={`Colour ${swatch}`}
+                    aria-pressed={selectedObject?.color.slice(0, 7) === swatch}
+                    className="swatch"
+                    style={{ '--swatch': swatch } as React.CSSProperties}
+                    disabled={readonly}
+                    onClick={() =>
+                      selectedObject
+                        ? updateSelected({
                             color:
                               selectedObject.color.length === 9
                                 ? `${swatch}${selectedObject.color.slice(7)}`
                                 : swatch,
                           })
-                        }
-                      />
-                    ))}
+                        : updateSelected({ color: swatch })
+                    }
+                  />
+                ))}
+                {selectedObject && selectedObject.kind !== 'sticky' && (
+                  <label className="swatch custom" title="Custom colour">
                     <input
-                      className="custom-color"
                       type="color"
-                      aria-label="Custom color"
+                      aria-label="Custom colour"
                       value={selectedObject.color.slice(0, 7)}
                       disabled={readonly}
                       onChange={(event) =>
                         updateSelected({ color: event.target.value })
                       }
                     />
-                  </div>
-                </div>
-              )}
-              {['rect', 'ellipse', 'diamond'].includes(selectedObject.kind) && (
-                <div className="property-section">
-                  <span className="property-label">Fill</span>
-                  <div className="fill-options">
-                    <button
-                      className={!selectedObject.fillColor ? 'is-active' : ''}
-                      disabled={readonly}
-                      onClick={() =>
-                        updateSelected({
-                          fillColor: `${selectedObject.color.slice(0, 7)}1f`,
-                        })
-                      }
-                    >
-                      Tint
-                    </button>
-                    <button
-                      className={
-                        selectedObject.fillColor?.endsWith('00')
-                          ? 'is-active'
-                          : ''
-                      }
-                      disabled={readonly}
-                      onClick={() => updateSelected({ fillColor: '#ffffff00' })}
-                    >
-                      None
-                    </button>
-                    <button
-                      className={
-                        selectedObject.fillColor?.length === 7
-                          ? 'is-active'
-                          : ''
-                      }
-                      disabled={readonly}
-                      onClick={() =>
-                        updateSelected({
-                          fillColor: selectedObject.color.slice(0, 7),
-                        })
-                      }
-                    >
-                      Solid
-                    </button>
-                  </div>
-                </div>
-              )}
-              {(selectedObject.kind === 'text' ||
-                selectedObject.kind === 'sticky') && (
-                <label className="property-label">
-                  Text size <span>{defaultFontSize(selectedObject)}px</span>
-                  <input
-                    type="range"
-                    min="12"
-                    max="96"
-                    disabled={readonly}
-                    value={defaultFontSize(selectedObject)}
-                    onChange={(event) =>
-                      previewProperty(selectedObject, {
-                        fontSize: Number(event.target.value),
-                      })
-                    }
-                    onPointerUp={(event) =>
-                      commitProperty(selectedObject, {
-                        fontSize: Number(event.currentTarget.value),
-                      })
-                    }
-                    onKeyUp={(event) =>
-                      commitProperty(selectedObject, {
-                        fontSize: Number(event.currentTarget.value),
-                      })
-                    }
-                  />
-                </label>
-              )}
-              {!['text', 'image', 'sticky'].includes(selectedObject.kind) && (
-                <label className="property-label">
-                  Stroke <span>{selectedObject.strokeWidth}px</span>
-                  <input
-                    type="range"
-                    min="1"
-                    max="48"
-                    disabled={readonly}
-                    value={selectedObject.strokeWidth}
-                    onChange={(event) =>
-                      previewProperty(selectedObject, {
-                        strokeWidth: Number(event.target.value),
-                      })
-                    }
-                    onPointerUp={(event) =>
-                      commitProperty(selectedObject, {
-                        strokeWidth: Number(event.currentTarget.value),
-                      })
-                    }
-                    onKeyUp={(event) =>
-                      commitProperty(selectedObject, {
-                        strokeWidth: Number(event.currentTarget.value),
-                      })
-                    }
-                  />
-                </label>
-              )}
-              <label className="property-label">
-                Opacity{' '}
-                <span>{Math.round((selectedObject.opacity ?? 1) * 100)}%</span>
-                <input
-                  type="range"
-                  min="10"
-                  max="100"
-                  disabled={readonly}
-                  value={Math.round((selectedObject.opacity ?? 1) * 100)}
-                  onChange={(event) =>
-                    previewProperty(selectedObject, {
-                      opacity: Number(event.target.value) / 100,
-                    })
-                  }
-                  onPointerUp={(event) =>
-                    commitProperty(selectedObject, {
-                      opacity: Number(event.currentTarget.value) / 100,
-                    })
-                  }
-                  onKeyUp={(event) =>
-                    commitProperty(selectedObject, {
-                      opacity: Number(event.currentTarget.value) / 100,
-                    })
-                  }
-                />
-              </label>
-              <div className="panel-actions">
-                <button
-                  className="button subtle"
-                  disabled={readonly}
-                  onClick={() => pasteObjects(selectedObjects)}
-                >
-                  Duplicate
-                </button>
-                <button
-                  className="button danger"
-                  disabled={readonly}
-                  onClick={() => deleteObjects(selected)}
-                >
-                  Delete
-                </button>
-              </div>
-            </>
-          ) : selected.length > 1 ? (
-            <>
-              <div className="panel-heading">
-                <div>
-                  <p className="eyebrow">SELECTION</p>
-                  <h2>{selected.length} objects</h2>
-                </div>
-              </div>
-              <div className="property-section">
-                <span className="property-label">Color</span>
-                <div className="color-swatches">
-                  {COLORS.map((swatch) => (
-                    <button
-                      key={swatch}
-                      aria-label={`Color ${swatch}`}
-                      className="color-swatch"
-                      style={{ background: swatch }}
-                      disabled={readonly}
-                      onClick={() => updateSelected({ color: swatch })}
-                    />
-                  ))}
-                </div>
-              </div>
-              <div className="panel-actions">
-                <button
-                  className="button subtle"
-                  disabled={readonly}
-                  onClick={() => pasteObjects(selectedObjects)}
-                >
-                  Duplicate
-                </button>
-                <button
-                  className="button danger"
-                  disabled={readonly}
-                  onClick={() => deleteObjects(selected)}
-                >
-                  Delete
-                </button>
-              </div>
-            </>
-          ) : (
-            <>
-              <div className="panel-heading">
-                <div>
-                  <p className="eyebrow">
-                    {tool === 'sticky' ? 'NOTE' : 'PEN & SHAPES'}
-                  </p>
-                  <h2>Style</h2>
-                </div>
-              </div>
-              <div className="property-section">
-                <span className="property-label">Color</span>
-                <div className="color-swatches">
-                  {(tool === 'sticky' ? STICKY_COLORS : COLORS).map(
-                    (swatch) => (
-                      <button
-                        key={swatch}
-                        aria-label={`Color ${swatch}`}
-                        className={`color-swatch ${(tool === 'sticky' ? stickyColor : color) === swatch ? 'swatch-selected' : ''}`}
-                        style={{ background: swatch }}
-                        onClick={() =>
-                          tool === 'sticky'
-                            ? setStickyColor(swatch)
-                            : setColor(swatch)
-                        }
-                      />
-                    ),
-                  )}
-                  {tool !== 'sticky' && (
-                    <input
-                      className="custom-color"
-                      type="color"
-                      aria-label="Custom color"
-                      value={color.slice(0, 7)}
-                      onChange={(event) => setColor(event.target.value)}
-                    />
-                  )}
-                </div>
-              </div>
-              {tool !== 'sticky' && (
-                <div className="property-section">
-                  <span className="property-label">Stroke</span>
-                  <div className="stroke-options">
-                    {[2, 3, 6, 12].map((width) => (
-                      <button
-                        key={width}
-                        className={strokeWidth === width ? 'is-active' : ''}
-                        aria-label={`Stroke ${width}px`}
-                        onClick={() => setStrokeWidth(width)}
-                      >
-                        <span
-                          style={{
-                            height: Math.min(width, 10),
-                            background: color,
-                          }}
-                        />
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-              <div className="panel-tip">
-                <span>✦</span>
-                <p>
-                  Scroll to pan, pinch or Ctrl/⌘ + scroll to zoom, hold Space to
-                  drag the canvas. Double-click to write.
-                </p>
-              </div>
-              <div className="panel-divider" />
-              <div className="board-settings">
-                <p className="eyebrow">BOARD</p>
-                <div className="setting-row">
-                  <span>People here</span>
-                  <strong>{isLocal ? 1 : onlinePeople.length}</strong>
-                </div>
-                <div className="setting-row">
-                  <span>Canvas items</span>
-                  <strong>{objects.length}</strong>
-                </div>
-                {isLocal && (
-                  <p className="local-board-note">
-                    This board only lives in this tab. Export your work before
-                    you leave.
-                  </p>
-                )}
-                {board.role === 'owner' && !isLocal && (
-                  <>
-                    <button
-                      className="setting-button"
-                      onClick={() => void toggleLock()}
-                    >
-                      {board.locked
-                        ? '▶ Resume editing for everyone'
-                        : 'Ⅱ Pause editing for others'}
-                    </button>
-                    <button
-                      className="setting-button"
-                      onClick={() => void saveSnapshot()}
-                    >
-                      ◷ Save a version
-                    </button>
-                    <button
-                      className="setting-button"
-                      onClick={() => void openSnapshots()}
-                    >
-                      ↻ Version history
-                    </button>
-                    <button
-                      className="setting-button"
-                      onClick={() => setMembersOpen(true)}
-                    >
-                      ♙ Manage participants
-                    </button>
-                  </>
+                  </label>
                 )}
               </div>
-            </>
+            </div>
           )}
+
+          {selectedObject &&
+            ['rect', 'ellipse', 'diamond'].includes(selectedObject.kind) && (
+              <div className="inspector-section">
+                <span className="inspector-label">Fill</span>
+                <div className="segmented wide">
+                  <button
+                    aria-pressed={
+                      !selectedObject.fillColor ||
+                      (selectedObject.fillColor.length === 9 &&
+                        !selectedObject.fillColor.endsWith('00'))
+                    }
+                    disabled={readonly}
+                    onClick={() =>
+                      updateSelected({
+                        fillColor: `${selectedObject.color.slice(0, 7)}1f`,
+                      })
+                    }
+                  >
+                    Tint
+                  </button>
+                  <button
+                    aria-pressed={Boolean(
+                      selectedObject.fillColor?.endsWith('00'),
+                    )}
+                    disabled={readonly}
+                    onClick={() => updateSelected({ fillColor: '#ffffff00' })}
+                  >
+                    None
+                  </button>
+                  <button
+                    aria-pressed={selectedObject.fillColor?.length === 7}
+                    disabled={readonly}
+                    onClick={() =>
+                      updateSelected({
+                        fillColor: selectedObject.color.slice(0, 7),
+                      })
+                    }
+                  >
+                    Solid
+                  </button>
+                </div>
+              </div>
+            )}
+
+          {selectedObject &&
+            (selectedObject.kind === 'text' ||
+              selectedObject.kind === 'sticky') && (
+              <Slider
+                label="Text size"
+                unit="px"
+                min={8}
+                max={160}
+                value={defaultFontSize(selectedObject)}
+                disabled={readonly}
+                onPreview={(value) =>
+                  previewProperty(selectedObject, { fontSize: value })
+                }
+                onCommit={(value) =>
+                  commitProperty(selectedObject, { fontSize: value })
+                }
+              />
+            )}
+          {selectedObject &&
+            !['text', 'image', 'sticky'].includes(selectedObject.kind) && (
+              <Slider
+                label="Stroke"
+                unit="px"
+                min={1}
+                max={Math.max(48, Math.ceil(selectedObject.strokeWidth))}
+                value={selectedObject.strokeWidth}
+                disabled={readonly}
+                onPreview={(value) =>
+                  previewProperty(selectedObject, { strokeWidth: value })
+                }
+                onCommit={(value) =>
+                  commitProperty(selectedObject, { strokeWidth: value })
+                }
+              />
+            )}
+          {selectedObject && (
+            <Slider
+              label="Opacity"
+              unit="%"
+              min={10}
+              max={100}
+              value={Math.round((selectedObject.opacity ?? 1) * 100)}
+              disabled={readonly}
+              onPreview={(value) =>
+                previewProperty(selectedObject, { opacity: value / 100 })
+              }
+              onCommit={(value) =>
+                commitProperty(selectedObject, { opacity: value / 100 })
+              }
+            />
+          )}
+
+          {pages.length > 1 && !readonly && (
+            <label className="inspector-section">
+              <span className="inspector-label">Move to page</span>
+              <span className="select-field">
+                <select
+                  value={currentPage.id}
+                  onChange={(event) => moveSelectionTo(event.target.value)}
+                >
+                  {pages.map((page) => (
+                    <option key={page.id} value={page.id}>
+                      {page.name}
+                    </option>
+                  ))}
+                </select>
+                <Icon name="chevronDown" size={15} />
+              </span>
+            </label>
+          )}
+
+          <div className="inspector-actions">
+            <button
+              className="button ghost small"
+              disabled={readonly}
+              onClick={() => pasteObjects(selectedObjects)}
+            >
+              <Icon name="copy" size={15} /> Duplicate
+            </button>
+            <button
+              className="button danger small"
+              disabled={readonly}
+              onClick={() => deleteObjects(selected)}
+            >
+              <Icon name="trash" size={15} /> Delete
+            </button>
+          </div>
         </aside>
-      </section>
-
-      <footer className="editor-footer">
-        <div className="zoom-controls">
-          <button aria-label="Zoom out" onClick={() => zoomAt(1 / 1.2)}>
-            −
-          </button>
-          <button
-            className="zoom-value"
-            title="Reset to 100%"
-            onClick={() => setView((current) => ({ ...current, zoom: 1 }))}
-          >
-            {Math.round(view.zoom * 100)}%
-          </button>
-          <button aria-label="Zoom in" onClick={() => zoomAt(1.2)}>
-            +
-          </button>
-          <button
-            className="fit-button"
-            onClick={() => fitTo(unionBounds(objects))}
-          >
-            Fit
-          </button>
-        </div>
-        <div className="footer-right">
-          <span className="footer-tool-status">
-            {objects.length} {objects.length === 1 ? 'object' : 'objects'}
-          </span>
-          <button className="help-button" onClick={() => setHelpOpen(true)}>
-            Shortcuts
-          </button>
-          <button
-            className="properties-toggle"
-            aria-expanded={propertiesOpen}
-            onClick={() => setPropertiesOpen((open) => !open)}
-          >
-            Style
-          </button>
-        </div>
-      </footer>
-
-      <nav className="mobile-toolbar" aria-label="Tools">
-        {TOOLS.filter((item) =>
-          [
-            'select',
-            'hand',
-            'pen',
-            'eraser',
-            'rect',
-            'arrow',
-            'text',
-            'sticky',
-          ].includes(item.tool),
-        ).map((item) => (
-          <button
-            key={item.tool}
-            aria-label={item.label}
-            aria-pressed={tool === item.tool}
-            className={tool === item.tool ? 'mobile-tool-active' : ''}
-            disabled={
-              readonly && item.tool !== 'select' && item.tool !== 'hand'
-            }
-            onClick={() => chooseTool(item.tool)}
-          >
-            {item.icon}
-          </button>
-        ))}
-        <button
-          aria-label="Undo"
-          disabled={!canUndo || readonly}
-          onClick={undo}
-        >
-          ↶
-        </button>
-      </nav>
+      )}
 
       {chatOpen && !isLocal && (
         <ChatPanel
           messages={messages}
-          selfUserId={session.user.id}
+          selfUserId={me.id}
           onlineCount={onlinePeople.length}
           typing={typing.map((item) => item.name)}
           disabled={status !== 'live'}
@@ -2486,20 +2886,23 @@ export default function BoardPage() {
 
       {shareOpen && (
         <Modal onClose={() => setShareOpen(false)}>
-          <p className="eyebrow">BRING PEOPLE IN</p>
+          <p className="kicker">Bring people in</p>
           <h2>Share this board</h2>
           <p className="modal-copy">
-            Anyone with this link can join as an editor and use chat and audio.
-            You can switch people to view-only or pause editing at any time.
+            Anyone with this link joins as an editor, with chat and voice. You
+            can switch people to view-only or pause editing at any time.
           </p>
-          <div className="share-link-preview">
-            {board.inviteToken && !board.inviteRevoked
-              ? `${location.origin}/board/${board.id}?invite=${board.inviteToken}`
-              : 'The invite link is turned off.'}
+          <div className="share-link">
+            <Icon name="link" size={16} />
+            <span>
+              {board.inviteToken && !board.inviteRevoked
+                ? `${location.origin}/board/${board.id}?invite=${board.inviteToken}`
+                : 'The invite link is turned off.'}
+            </span>
           </div>
           <div className="modal-actions">
             <button
-              className="button subtle"
+              className="button ghost"
               onClick={() => void regenerateInvite()}
             >
               New link
@@ -2509,11 +2912,11 @@ export default function BoardPage() {
               onClick={() => void copyInvite()}
               disabled={!board.inviteToken || board.inviteRevoked}
             >
-              Copy invite link
+              <Icon name="copy" size={16} /> Copy invite link
             </button>
           </div>
           <button
-            className="revoke-link"
+            className="text-button danger"
             onClick={() => void revokeInvite()}
             disabled={!board.inviteToken || board.inviteRevoked}
           >
@@ -2524,7 +2927,7 @@ export default function BoardPage() {
 
       {membersOpen && (
         <Modal onClose={() => setMembersOpen(false)} className="members-modal">
-          <p className="eyebrow">PARTICIPANTS</p>
+          <p className="kicker">Participants</p>
           <h2>People on this board</h2>
           <div className="members-list">
             {board.members.map((member) => {
@@ -2535,41 +2938,48 @@ export default function BoardPage() {
                 <div className="member-row" key={member.userId}>
                   <span
                     className="avatar"
-                    style={{ background: colorFor(member.userId) }}
+                    style={{
+                      background: online?.color ?? colorFor(member.userId),
+                    }}
                   >
                     {member.name[0]?.toUpperCase()}
                   </span>
                   <div className="member-name">
                     <strong>
                       {member.name}
-                      {member.userId === session.user.id ? ' (you)' : ''}
+                      {member.userId === me.id ? ' (you)' : ''}
                     </strong>
                     <small className={online ? 'is-online' : ''}>
                       {online
                         ? online.inCall
-                          ? 'Online · in audio'
+                          ? 'Online · in voice'
                           : 'Online now'
                         : 'Offline'}
                     </small>
                   </div>
                   {member.role === 'owner' ? (
-                    <span className="role-badge">Owner</span>
+                    <span className="role-chip role-owner">Owner</span>
                   ) : board.role === 'owner' && !isLocal ? (
-                    <select
-                      aria-label={`Role for ${member.name}`}
-                      value={member.role}
-                      onChange={(event) =>
-                        void setMemberRole(
-                          member.userId,
-                          event.target.value as 'editor' | 'viewer',
-                        )
-                      }
-                    >
-                      <option value="editor">Can edit</option>
-                      <option value="viewer">Can view</option>
-                    </select>
+                    <span className="select-field">
+                      <select
+                        aria-label={`Role for ${member.name}`}
+                        value={member.role}
+                        onChange={(event) =>
+                          void setMemberRole(
+                            member.userId,
+                            event.target.value as 'editor' | 'viewer',
+                          )
+                        }
+                      >
+                        <option value="editor">Can edit</option>
+                        <option value="viewer">Can view</option>
+                      </select>
+                      <Icon name="chevronDown" size={15} />
+                    </span>
                   ) : (
-                    <span className="role-badge">{member.role}</span>
+                    <span className={`role-chip role-${member.role}`}>
+                      {member.role === 'editor' ? 'Editor' : 'Viewer'}
+                    </span>
                   )}
                 </div>
               );
@@ -2583,24 +2993,27 @@ export default function BoardPage() {
           onClose={() => setSnapshotsOpen(false)}
           className="snapshots-modal"
         >
-          <p className="eyebrow">BOARD HISTORY</p>
+          <p className="kicker">Board history</p>
           <h2>Saved versions</h2>
           {snapshots.length ? (
             <div className="snapshot-list">
               {[...snapshots].reverse().map((snapshot) => (
                 <div className="snapshot-row" key={snapshot.id}>
+                  <Icon name="clock" />
                   <div>
                     <strong>{snapshot.title}</strong>
                     <small>
                       {new Date(snapshot.createdAt).toLocaleString()}
                     </small>
                   </div>
-                  <button
-                    className="button subtle"
-                    onClick={() => void restoreSnapshot(snapshot.id)}
-                  >
-                    Restore
-                  </button>
+                  {board.role === 'owner' && (
+                    <button
+                      className="button ghost small"
+                      onClick={() => void restoreSnapshot(snapshot.id)}
+                    >
+                      Restore
+                    </button>
+                  )}
                 </div>
               ))}
             </div>
@@ -2611,18 +3024,18 @@ export default function BoardPage() {
           )}
           <div className="modal-actions">
             <button
-              className="button subtle"
+              className="button ghost"
               onClick={() => void saveSnapshot()}
             >
-              Save current version
+              <Icon name="save" size={16} /> Save current version
             </button>
           </div>
         </Modal>
       )}
 
       {helpOpen && (
-        <Modal onClose={() => setHelpOpen(false)}>
-          <p className="eyebrow">KEYBOARD</p>
+        <Modal onClose={() => setHelpOpen(false)} className="help-modal">
+          <p className="kicker">Keyboard</p>
           <h2>Shortcuts</h2>
           <dl className="shortcut-list">
             {TOOLS.filter((item) => item.key).map((item) => (
@@ -2636,11 +3049,15 @@ export default function BoardPage() {
             {[
               ['Pan the canvas', 'Space + drag · scroll'],
               ['Zoom', 'Ctrl/⌘ + scroll · pinch'],
-              ['Fit to content', 'Shift 1'],
+              ['Zoom in / out', 'Ctrl/⌘ + / −'],
+              ['Reset zoom', 'Ctrl/⌘ 0'],
+              ['Zoom to fit', 'Shift 1'],
+              ['Zoom to selection', 'Shift 2'],
+              ['Next / previous page', 'Page Down / Page Up'],
               ['Undo / redo', 'Ctrl/⌘ Z · Ctrl/⌘ Shift Z'],
               ['Copy / paste / duplicate', 'Ctrl/⌘ C · V · D'],
               ['Delete selection', 'Delete'],
-              ['Nudge selection', 'Arrow keys (Shift ×10)'],
+              ['Nudge selection', 'Arrows (Shift ×10)'],
               ['Mute in a call', 'M'],
               ['Finish text', 'Esc · Ctrl/⌘ Enter'],
             ].map(([label, keys]) => (
@@ -2658,29 +3075,47 @@ export default function BoardPage() {
   );
 }
 
-function Modal({
-  children,
-  onClose,
-  className = '',
+/** A range input that previews while dragging and records one undo step. */
+function Slider({
+  label,
+  unit,
+  min,
+  max,
+  value,
+  disabled,
+  onPreview,
+  onCommit,
 }: {
-  children: React.ReactNode;
-  onClose: () => void;
-  className?: string;
+  label: string;
+  unit: string;
+  min: number;
+  max: number;
+  value: number;
+  disabled: boolean;
+  onPreview: (value: number) => void;
+  onCommit: (value: number) => void;
 }) {
   return (
-    <div
-      className="modal-backdrop"
-      role="presentation"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose();
-      }}
-    >
-      <section className={`modal ${className}`} role="dialog" aria-modal="true">
-        <button className="modal-close" aria-label="Close" onClick={onClose}>
-          ×
-        </button>
-        {children}
-      </section>
-    </div>
+    <label className="inspector-section">
+      <span className="inspector-label">
+        {label}
+        <output>
+          {Math.round(value * 10) / 10}
+          {unit}
+        </output>
+      </span>
+      <input
+        className="range"
+        type="range"
+        min={min}
+        max={max}
+        step={unit === 'px' ? 0.5 : 1}
+        disabled={disabled}
+        value={value}
+        onChange={(event) => onPreview(Number(event.target.value))}
+        onPointerUp={(event) => onCommit(Number(event.currentTarget.value))}
+        onKeyUp={(event) => onCommit(Number(event.currentTarget.value))}
+      />
+    </label>
   );
 }

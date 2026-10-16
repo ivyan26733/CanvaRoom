@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { Icon } from '../../components/icons';
 import type { ChatMessage } from '../../lib/api';
 
 const TYPING_EVERY_MS = 2_500;
@@ -48,20 +49,19 @@ export function ChatPanel({
     <aside className="chat-panel" aria-label="Room chat">
       <div className="chat-header">
         <div>
-          <p className="eyebrow">ROOM CHAT</p>
-          <h2>Talk it through</h2>
+          <h2>Room chat</h2>
+          <p className="chat-presence">
+            <span className="status-dot live" />
+            {onlineCount} {onlineCount === 1 ? 'person' : 'people'} here
+          </p>
         </div>
         <button
           className="icon-button"
           onClick={onClose}
           aria-label="Close chat"
         >
-          ×
+          <Icon name="close" />
         </button>
-      </div>
-      <div className="chat-presence">
-        <span className="connection-dot live" />
-        {onlineCount} {onlineCount === 1 ? 'person' : 'people'} in this room
       </div>
       <div
         className="chat-messages"
@@ -105,7 +105,9 @@ export function ChatPanel({
           })
         ) : (
           <div className="chat-empty">
-            <span>☏</span>
+            <span className="chat-empty-icon">
+              <Icon name="chat" size={22} />
+            </span>
             <p>Good thinking happens out loud.</p>
             <small>Start the conversation with your group.</small>
           </div>
@@ -164,7 +166,7 @@ export function ChatPanel({
           aria-label="Send message"
           disabled={!draft.trim() || disabled}
         >
-          ↑
+          <Icon name="share" size={17} strokeWidth={2.2} />
         </button>
       </form>
       <div className="chat-footer-note">
