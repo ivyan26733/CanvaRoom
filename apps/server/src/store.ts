@@ -82,6 +82,10 @@ export interface Store {
   deleteSessionsFor(userId: string, keep?: string): Promise<void>;
   /** Counts an attempt in a fixed window and returns the count so far. */
   hit(key: string, windowSeconds: number): Promise<number>;
+  /** Stores a password-reset token, replacing any earlier one for the user. */
+  createResetToken(key: string, userId: string, ttl: number): Promise<void>;
+  /** Returns the user a reset token belongs to and uses it up. */
+  takeResetToken(key: string): Promise<string | undefined>;
 }
 
 const MAX_MESSAGES = 500;
@@ -102,6 +106,8 @@ const keys = {
   session: (key: string) => `sess:${key}`,
   userSessions: (userId: string) => `u:${userId}:sessions`,
   rate: (key: string) => `rl:${key}`,
+  reset: (key: string) => `reset:${key}`,
+  userReset: (userId: string) => `u:${userId}:reset`,
 };
 
 // One round trip, atomic per board: tombstoned objects are never recreated,
@@ -422,6 +428,24 @@ export class RedisStore implements Store {
       .exec();
   }
 
+  async createResetToken(key: string, userId: string, ttl: number) {
+    const previous = await this.redis.get(keys.userReset(userId));
+    const multi = this.redis.multi();
+    if (previous) multi.del(keys.reset(previous));
+    await multi
+      .set(keys.reset(key), userId, 'EX', ttl)
+      .set(keys.userReset(userId), key, 'EX', ttl)
+      .exec();
+  }
+
+  async takeResetToken(key: string) {
+    const userId = await this.redis.getdel(keys.reset(key));
+    if (!userId) return;
+    // Only the most recently requested link works.
+    const current = await this.redis.getdel(keys.userReset(userId));
+    return current === key ? userId : undefined;
+  }
+
   async hit(key: string, windowSeconds: number) {
     const [[, count] = []] =
       (await this.redis
@@ -448,6 +472,7 @@ class MemoryStore implements Store {
   private accounts = new Map<string, Account>();
   private sessions = new Map<string, SessionRecord & { expiresAt: number }>();
   private hits = new Map<string, { count: number; resetAt: number }>();
+  private resets = new Map<string, { userId: string; expiresAt: number }>();
   private saveTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(private readonly file?: string) {}
@@ -708,6 +733,18 @@ class MemoryStore implements Store {
     for (const [key, session] of this.sessions)
       if (session.userId === userId && key !== keep) this.sessions.delete(key);
     this.scheduleSave();
+  }
+
+  async createResetToken(key: string, userId: string, ttl: number) {
+    for (const [token, reset] of this.resets)
+      if (reset.userId === userId) this.resets.delete(token);
+    this.resets.set(key, { userId, expiresAt: Date.now() + ttl * 1000 });
+  }
+
+  async takeResetToken(key: string) {
+    const reset = this.resets.get(key);
+    this.resets.delete(key);
+    return reset && reset.expiresAt > Date.now() ? reset.userId : undefined;
   }
 
   async hit(key: string, windowSeconds: number) {

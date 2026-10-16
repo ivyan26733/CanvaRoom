@@ -15,6 +15,13 @@ const environmentSchema = z.object({
   TURN_URLS: z.string().optional(),
   TURN_USERNAME: z.string().optional(),
   TURN_CREDENTIAL: z.string().optional(),
+  // Email for password resets. Resend's sandbox sender only delivers to the
+  // Resend account owner until a domain is verified and MAIL_FROM uses it.
+  RESEND_API_KEY: z.string().optional(),
+  MAIL_FROM: z.string().optional(),
+  // Public address used in emailed links. Never taken from request headers.
+  APP_URL: z.url().optional(),
+  VERCEL_PROJECT_PRODUCTION_URL: z.string().optional(),
 });
 
 const parsed = environmentSchema.safeParse(process.env);
@@ -29,6 +36,14 @@ export const config = {
   serverHost: env.SERVER_HOST,
   serverPort: env.SERVER_PORT,
   redisUrl: env.REDIS_URL || env.KV_URL || undefined,
+  resendApiKey: env.RESEND_API_KEY || undefined,
+  mailFrom: env.MAIL_FROM || 'CanvaRoom <onboarding@resend.dev>',
+  appUrl: (
+    env.APP_URL ??
+    (env.VERCEL_PROJECT_PRODUCTION_URL
+      ? `https://${env.VERCEL_PROJECT_PRODUCTION_URL}`
+      : 'http://localhost:3000')
+  ).replace(/\/$/, ''),
   iceServers: [
     { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
     ...(env.TURN_URLS

@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { send, type User } from '../lib/api';
 import { useAuth } from '../lib/auth';
 
-type Mode = 'login' | 'signup' | 'guest';
+type Mode = 'login' | 'signup' | 'guest' | 'forgot';
 
 /** Sign in, create an account, or (on invite links) join as a guest. */
 export function AuthForm({
@@ -23,12 +23,25 @@ export function AuthForm({
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
+  const [sent, setSent] = useState('');
   const [busy, setBusy] = useState(false);
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     setBusy(true);
     setError('');
+    if (mode === 'forgot') {
+      try {
+        const result = await send<{ message: string }>('/auth/forgot', 'POST', {
+          email,
+        });
+        setSent(result.message);
+      } catch (caught) {
+        setError((caught as Error).message);
+      }
+      setBusy(false);
+      return;
+    }
     try {
       const { user } =
         mode === 'login'
@@ -56,6 +69,59 @@ export function AuthForm({
     { mode: 'signup', label: 'Create account' },
     ...(allowGuest ? [{ mode: 'guest' as const, label: 'Guest' }] : []),
   ];
+
+  if (mode === 'forgot')
+    return (
+      <form className="auth-form" onSubmit={submit} noValidate>
+        <div className="auth-heading">
+          <strong>Reset your password</strong>
+          <span>We’ll email you a link to choose a new one.</span>
+        </div>
+        {sent ? (
+          <p className="notice success" role="status">
+            {sent}
+          </p>
+        ) : (
+          <label className="auth-field">
+            <span>Email</span>
+            <input
+              type="email"
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              placeholder="you@example.com"
+              autoComplete="email"
+              maxLength={254}
+              required
+              autoFocus
+            />
+          </label>
+        )}
+        {error && (
+          <p className="notice error" role="alert">
+            {error}
+          </p>
+        )}
+        {!sent && (
+          <button
+            className="button primary auth-submit"
+            disabled={busy || !email.trim()}
+          >
+            {busy ? 'Sending…' : 'Send reset link'}
+          </button>
+        )}
+        <button
+          type="button"
+          className="text-button"
+          onClick={() => {
+            setMode('login');
+            setSent('');
+            setError('');
+          }}
+        >
+          Back to sign in
+        </button>
+      </form>
+    );
 
   return (
     <form className="auth-form" onSubmit={submit} noValidate>
@@ -140,6 +206,18 @@ export function AuthForm({
         </p>
       )}
 
+      {mode === 'login' && (
+        <button
+          type="button"
+          className="text-button forgot-link"
+          onClick={() => {
+            setMode('forgot');
+            setError('');
+          }}
+        >
+          Forgot password?
+        </button>
+      )}
       {error && (
         <p className="notice error" role="alert">
           {error}

@@ -1,5 +1,5 @@
 import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
-import { randomUUID, randomBytes } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { config } from './config.js';
 import {
@@ -15,6 +15,7 @@ import {
   verifyPassword,
 } from './auth.js';
 import { canEdit, editBlockedReason, publicBoard } from './boards.js';
+import { mailConfigured, sendPasswordReset } from './mail.js';
 import { attachRealtime, broadcast, broadcastBoard } from './realtime.js';
 import { loadStore, store } from './store.js';
 import { pageIdSchema, pageNameSchema } from './schemas.js';
@@ -174,6 +175,80 @@ app.post('/api/auth/guest', async (request, reply) => {
 app.post('/api/auth/logout', async (request, reply) => {
   await endSession(request, reply);
   return { ok: true };
+});
+
+// ---- Password reset ----
+
+const RESET_TTL_SECONDS = 30 * 60;
+const hashToken = (token: string) =>
+  createHash('sha256').update(token).digest('base64url');
+
+app.post('/api/auth/forgot', async (request, reply) => {
+  const body = z.object({ email: emailSchema }).safeParse(request.body);
+  if (!body.success) return apiError(reply, 400, firstIssue(body.error));
+  // Local development without email prints the link to the server log.
+  const printLink = !mailConfigured() && !process.env.VERCEL;
+  if (!mailConfigured() && !printLink)
+    return apiError(
+      reply,
+      503,
+      'Password reset email isn’t available yet. Please contact support.',
+    );
+  if (
+    !(await allow(reply, `forgot-ip:${clientIp(request)}`, 10, 3600)) ||
+    !(await allow(reply, `forgot:${body.data.email}`, 3, 3600))
+  )
+    return;
+  const account = await store.findAccountByEmail(body.data.email);
+  // The reply is the same whether or not the account exists.
+  if (account) {
+    const token = randomBytes(32).toString('base64url');
+    await store.createResetToken(
+      hashToken(token),
+      account.id,
+      RESET_TTL_SECONDS,
+    );
+    const link = `${config.appUrl}/reset-password?token=${token}`;
+    try {
+      if (printLink) request.log.warn({ link }, 'Password reset link (dev)');
+      else await sendPasswordReset(account.email, account.name, link);
+    } catch (error) {
+      request.log.error(error, 'Password reset email failed');
+      return apiError(
+        reply,
+        502,
+        'We couldn’t send the email right now. Please try again shortly.',
+      );
+    }
+  }
+  return {
+    ok: true,
+    message:
+      'If an account uses that email, a reset link is on its way. It works for 30 minutes.',
+  };
+});
+
+app.post('/api/auth/reset', async (request, reply) => {
+  const body = z
+    .object({ token: z.string().min(20).max(200), password: passwordSchema })
+    .safeParse(request.body);
+  if (!body.success) return apiError(reply, 400, firstIssue(body.error));
+  if (!(await allow(reply, `reset-ip:${clientIp(request)}`, 20, 900))) return;
+  const userId = await store.takeResetToken(hashToken(body.data.token));
+  const account = userId ? await store.getAccount(userId) : undefined;
+  if (!account)
+    return apiError(
+      reply,
+      400,
+      'This reset link has expired or was already used. Request a new one.',
+    );
+  await store.updateAccount(account.id, {
+    passwordHash: await hashPassword(body.data.password),
+  });
+  // Whoever knew the old password is signed out everywhere.
+  await store.deleteSessionsFor(account.id);
+  await startSession(request, reply, publicUser(account));
+  return { user: publicUser(account) };
 });
 
 /** Keeps a person's name and colour current on every board they belong to. */

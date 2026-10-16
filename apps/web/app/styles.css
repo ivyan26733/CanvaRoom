@@ -3405,3 +3405,26 @@ kbd {
     stroke-dashoffset: 0;
   }
 }
+
+/* ---- Password reset ---- */
+.forgot-link {
+  align-self: flex-end;
+  margin: -6px 0 0;
+}
+.auth-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.auth-heading strong {
+  font-size: 16px;
+}
+.auth-heading span {
+  color: var(--ink-2);
+  font-size: 14px;
+}
+.notice-link {
+  flex: none;
+  font-weight: 600;
+  text-decoration: underline;
+}
