@@ -1,3 +1,4 @@
+import { Analytics } from '@vercel/analytics/next';
 import type { Metadata, Viewport } from 'next';
 import { Bricolage_Grotesque, Geist, Geist_Mono } from 'next/font/google';
 import { AuthProvider } from './lib/auth';
@@ -74,6 +75,7 @@ export default function RootLayout({
       </head>
       <body>
         <AuthProvider>{children}</AuthProvider>
+        <Analytics />
       </body>
     </html>
   );
