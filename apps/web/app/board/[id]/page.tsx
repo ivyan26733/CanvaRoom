@@ -56,7 +56,9 @@ import { useDismiss, UserMenu } from '../../components/user-menu';
 import { useAuth } from '../../lib/auth';
 import { BoardShape } from './board-shape';
 import { CallControls } from './call-controls';
+import { CanvasGuide } from './canvas-guide';
 import { ChatPanel } from './chat-panel';
+import { InviteQr } from './invite-qr';
 import {
   LocalOverlay,
   RemoteActivity,
@@ -254,6 +256,8 @@ export default function BoardPage() {
   const [membersOpen, setMembersOpen] = useState(false);
   const [snapshotsOpen, setSnapshotsOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  // The empty-page guide fades for good once this person starts drawing.
+  const [guideDismissed, setGuideDismissed] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [zoomMenuOpen, setZoomMenuOpen] = useState(false);
   const [pagesOpen, setPagesOpen] = useState(false);
@@ -302,6 +306,10 @@ export default function BoardPage() {
   );
 
   const readonly = !board || board.role === 'viewer' || board.locked;
+  const inviteLink =
+    board?.inviteToken && !board.inviteRevoked && typeof window !== 'undefined'
+      ? `${location.origin}/board/${board.id}?invite=${encodeURIComponent(board.inviteToken)}`
+      : null;
   const pages: Page[] = board?.pages?.length ? board.pages : DEFAULT_PAGES;
   const currentPage = pages.find((page) => page.id === pageId) ?? pages[0]!;
   const pageObjects = useMemo(
@@ -1049,6 +1057,7 @@ export default function BoardPage() {
       if (readonly && oid && tool === 'select') setSelected([oid]);
       return pan();
     }
+    if (tool !== 'select') setGuideDismissed(true);
 
     switch (tool) {
       case 'select': {
@@ -1729,15 +1738,14 @@ export default function BoardPage() {
   }
 
   async function copyInvite() {
-    if (!board?.inviteToken || board.inviteRevoked) return;
-    const link = `${location.origin}/board/${board.id}?invite=${encodeURIComponent(board.inviteToken)}`;
+    if (!inviteLink) return;
     try {
-      await navigator.clipboard.writeText(link);
+      await navigator.clipboard.writeText(inviteLink);
       setNotice(
         'Invite link copied. Anyone with the link can join as an editor.',
       );
     } catch {
-      setNotice(link);
+      setNotice(inviteLink);
     }
   }
 
@@ -2128,22 +2136,24 @@ export default function BoardPage() {
           />
         )}
 
-        {pageObjects.length === 0 && !textEditor && (
-          <div className="canvas-empty-hint">
-            <p>
-              {readonly
-                ? 'Nothing on this page yet.'
-                : pages.length > 1
-                  ? `${currentPage.name} is empty — start anywhere.`
-                  : 'Pick a tool and start anywhere.'}
-            </p>
-            <small>
-              {isLocal
-                ? 'Scratch boards live only in this tab.'
-                : 'Everyone here sees each stroke as you draw it.'}
-            </small>
-          </div>
-        )}
+        {pageObjects.length === 0 &&
+          (readonly ? (
+            <div className="canvas-empty-hint">
+              <p>Nothing on this page yet.</p>
+              <small>
+                {isLocal
+                  ? 'Scratch boards live only in this tab.'
+                  : 'Everyone here sees each stroke as it is drawn.'}
+              </small>
+            </div>
+          ) : (
+            <CanvasGuide
+              tools={TOOLS}
+              hidden={guideDismissed || Boolean(textEditor)}
+              isLocal={isLocal}
+              canShare={board.role === 'owner' && !isLocal}
+            />
+          ))}
       </div>
 
       {/* ---- Top left: board identity ---- */}
@@ -2913,12 +2923,9 @@ export default function BoardPage() {
           </p>
           <div className="share-link">
             <Icon name="link" size={16} />
-            <span>
-              {board.inviteToken && !board.inviteRevoked
-                ? `${location.origin}/board/${board.id}?invite=${board.inviteToken}`
-                : 'The invite link is turned off.'}
-            </span>
+            <span>{inviteLink ?? 'The invite link is turned off.'}</span>
           </div>
+          {inviteLink && <InviteQr link={inviteLink} title={board.title} />}
           <div className="modal-actions">
             <button
               className="button ghost"
