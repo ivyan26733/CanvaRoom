@@ -334,6 +334,23 @@ export class PostgresStore implements Store {
     return this.listOf<Snapshot>('board_snapshots', boardId);
   }
 
+  async listSnapshots(boardId: string) {
+    const { rows } = await this.pool.query<{
+      id: string;
+      title: string;
+      created_at: string;
+    }>(
+      `SELECT data->>'id' AS id, data->>'title' AS title, data->>'createdAt' AS created_at
+         FROM board_snapshots WHERE board_id = $1 ORDER BY seq`,
+      [boardId],
+    );
+    return rows.map((row) => ({
+      id: row.id,
+      title: row.title,
+      createdAt: row.created_at,
+    }));
+  }
+
   setPresence(boardId: string, presence: Presence) {
     return this.live.setPresence(boardId, presence);
   }
@@ -431,6 +448,30 @@ export class PostgresStore implements Store {
       userId: row.user_id,
       ...(row.guest ? { guest: row.guest } : {}),
     } satisfies SessionRecord;
+  }
+
+  async getSessionAccount(key: string) {
+    const { rows } = await this.pool.query<
+      Partial<AccountRow> & {
+        session_user_id: string;
+        guest: SessionRecord['guest'] | null;
+      }
+    >(
+      `SELECT s.user_id AS session_user_id, s.guest, a.*
+         FROM sessions s
+         LEFT JOIN accounts a ON a.id = s.user_id AND s.guest IS NULL
+        WHERE s.key = $1 AND s.expires_at > now()`,
+      [key],
+    );
+    const row = rows[0];
+    if (!row) return;
+    return {
+      session: {
+        userId: row.session_user_id,
+        ...(row.guest ? { guest: row.guest } : {}),
+      } satisfies SessionRecord,
+      ...(row.id ? { account: toAccount(row as AccountRow) } : {}),
+    };
   }
 
   async deleteSession(key: string) {

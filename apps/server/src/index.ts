@@ -100,6 +100,29 @@ const getAccess = async (boardId: string, userId: string) => {
   return board && membership ? { board, role: membership.role } : undefined;
 };
 const inviteId = () => randomBytes(24).toString('base64url');
+/**
+ * The signed-in user and their access to the board in the URL. The board is
+ * read alongside the session rather than after it, saving a database round
+ * trip on read-only routes. Replies 401/404 itself when either is missing.
+ */
+const readAccess = async (
+  request: FastifyRequest,
+  reply: FastifyReply,
+  notFound: string,
+) => {
+  const { boardId } = request.params as { boardId: string };
+  const [user, board] = await Promise.all([
+    currentUser(request, reply),
+    store.getMeta(boardId),
+  ]);
+  if (!user) return;
+  const membership = board?.members[user.id];
+  if (!board || !membership) {
+    apiError(reply, 404, notFound);
+    return;
+  }
+  return { user, board, role: membership.role };
+};
 
 app.addHook('onRequest', async (request, reply) => {
   reply
@@ -393,12 +416,12 @@ app.post('/api/boards', async (request, reply) => {
 });
 
 app.get('/api/boards/:boardId', async (request, reply) => {
-  const user = await currentUser(request, reply);
-  if (!user) return;
-  const { boardId } = request.params as { boardId: string };
-  const access = await getAccess(boardId, user.id);
-  if (!access)
-    return apiError(reply, 404, 'Board not found or you do not have access.');
+  const access = await readAccess(
+    request,
+    reply,
+    'Board not found or you do not have access.',
+  );
+  if (!access) return;
   return publicBoard(access.board, access.role);
 });
 
@@ -505,11 +528,8 @@ app.post('/api/boards/:boardId/images', async (request, reply) => {
 });
 
 app.get('/api/boards/:boardId/images/:name', async (request, reply) => {
-  const user = await currentUser(request, reply);
-  if (!user) return;
   const { boardId, name } = request.params as { boardId: string; name: string };
-  if (!(await getAccess(boardId, user.id)))
-    return apiError(reply, 404, 'Image not found.');
+  if (!(await readAccess(request, reply, 'Image not found.'))) return;
   const image = await readImage(boardId, name);
   if (!image) return apiError(reply, 404, 'Image not found.');
   // Names are never reused, so the browser can keep its copy.
@@ -597,14 +617,19 @@ app.patch('/api/boards/:boardId/members/:memberId', async (request, reply) => {
 });
 
 app.get('/api/boards/:boardId/snapshots', async (request, reply) => {
-  const user = await currentUser(request, reply);
-  if (!user) return;
   const { boardId } = request.params as { boardId: string };
-  const access = await getAccess(boardId, user.id);
-  if (!access) return apiError(reply, 404, 'Board not found.');
-  return (await store.getSnapshots(boardId)).map(
-    ({ id, title, createdAt }) => ({ id, title, createdAt }),
-  );
+  const [access, snapshots] = await Promise.all([
+    readAccess(request, reply, 'Board not found.'),
+    store.listSnapshots
+      ? store.listSnapshots(boardId)
+      : store.getSnapshots(boardId),
+  ]);
+  if (!access) return;
+  return snapshots.map(({ id, title, createdAt }) => ({
+    id,
+    title,
+    createdAt,
+  }));
 });
 
 app.post('/api/boards/:boardId/snapshots', async (request, reply) => {
@@ -808,13 +833,15 @@ app.delete('/api/boards/:boardId/pages/:pageId', async (request, reply) => {
 
 /** A lightweight copy of a board's first page for dashboard thumbnails. */
 app.get('/api/boards/:boardId/preview', async (request, reply) => {
-  const user = await currentUser(request, reply);
-  if (!user) return;
   const { boardId } = request.params as { boardId: string };
-  const access = await getAccess(boardId, user.id);
-  if (!access) return apiError(reply, 404, 'Board not found.');
+  // Dashboards ask for one preview per board, so read everything at once.
+  const [access, stored] = await Promise.all([
+    readAccess(request, reply, 'Board not found.'),
+    store.getObjects(boardId),
+  ]);
+  if (!access) return;
   const { pages } = access.board;
-  const objects = (await store.getObjects(boardId))
+  const objects = stored
     .filter((object) => pageOf(object, pages) === pages[0]!.id)
     .slice(0, 400)
     .map((object) => {

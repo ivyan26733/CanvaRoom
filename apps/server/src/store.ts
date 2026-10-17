@@ -60,6 +60,10 @@ export interface Store {
   getMessages(boardId: string): Promise<ChatMessage[]>;
   addSnapshot(boardId: string, snapshot: Snapshot): Promise<void>;
   getSnapshots(boardId: string): Promise<Snapshot[]>;
+  /** The history list without each snapshot's objects, where supported. */
+  listSnapshots?(
+    boardId: string,
+  ): Promise<Pick<Snapshot, 'id' | 'title' | 'createdAt'>[]>;
   setPresence(boardId: string, presence: Presence): Promise<void>;
   removePresence(boardId: string, peerId: string): Promise<void>;
   listPresence(boardId: string): Promise<Presence[]>;
@@ -79,6 +83,13 @@ export interface Store {
     ttlSeconds: number,
   ): Promise<void>;
   getSession(key: string): Promise<SessionRecord | undefined>;
+  /**
+   * A session with its account in one round trip, where the backend can do
+   * that. Guests have no account.
+   */
+  getSessionAccount?(
+    key: string,
+  ): Promise<{ session: SessionRecord; account?: Account } | undefined>;
   deleteSession(key: string): Promise<void>;
   /** Ends every session of a user except `keep`. */
   deleteSessionsFor(userId: string, keep?: string): Promise<void>;

@@ -7,7 +7,7 @@ import {
 } from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
 import type { FastifyReply, FastifyRequest } from 'fastify';
-import type { Account, User } from './models.js';
+import type { Account, SessionRecord, User } from './models.js';
 import { store } from './store.js';
 
 const COOKIE = 'cb_session';
@@ -145,8 +145,13 @@ export async function userFromRequest(
 ): Promise<User | undefined> {
   const token = readCookie(request.headers.cookie);
   if (!token) return;
-  const session = await store.getSession(sessionKey(token));
-  if (!session) return;
+  const key = sessionKey(token);
+  const found: { session: SessionRecord; account?: Account } | undefined =
+    store.getSessionAccount
+      ? await store.getSessionAccount(key)
+      : await store.getSession(key).then((session) => session && { session });
+  if (!found) return;
+  const { session } = found;
   if (session.guest)
     return {
       id: session.userId,
@@ -154,7 +159,9 @@ export async function userFromRequest(
       color: session.guest.color,
       guest: true,
     };
-  const account = await store.getAccount(session.userId);
+  const account = store.getSessionAccount
+    ? found.account
+    : await store.getAccount(session.userId);
   return account ? publicUser(account) : undefined;
 }
 
