@@ -126,6 +126,8 @@ export type Presence = {
   color: string;
   inCall: boolean;
   muted: boolean;
+  /** The tab has been hidden for a while. */
+  away?: boolean;
   updatedAt: number;
   /** The server instance holding this tab's socket. */
   instance?: string;

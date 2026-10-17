@@ -54,6 +54,8 @@ export type Peer = {
   color: string;
   inCall: boolean;
   muted: boolean;
+  /** Their tab has been in the background for a while. */
+  away?: boolean;
 };
 export type Board = {
   id: string;

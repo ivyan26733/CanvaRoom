@@ -88,6 +88,7 @@ export const clientMessageSchema = z.discriminatedUnion('t', [
     color: colorSchema,
     inCall: z.boolean().optional(),
     muted: z.boolean().optional(),
+    away: z.boolean().optional(),
   }),
   z.object({ t: z.literal('op'), op: operationSchema }),
   // Everything a browser streams while someone works, batched once per frame:
@@ -137,6 +138,10 @@ export const clientMessageSchema = z.discriminatedUnion('t', [
     data: z.unknown(),
   }),
   z.object({ t: z.literal('ping') }),
+  // The tab has been in the background for a while (or is back).
+  z.object({ t: z.literal('away'), away: z.boolean() }),
+  // The tab is closing or leaving the board: drop its presence right away.
+  z.object({ t: z.literal('bye') }),
 ]);
 
 export type ClientMessage = z.infer<typeof clientMessageSchema>;

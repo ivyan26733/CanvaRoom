@@ -2484,6 +2484,11 @@ kbd {
 .status-dot.local {
   background: var(--blue);
 }
+/* Someone whose tab has been in the background for a while. */
+.avatar.is-away {
+  opacity: 0.45;
+  filter: grayscale(0.6);
+}
 @keyframes blink {
   50% {
     opacity: 0.35;

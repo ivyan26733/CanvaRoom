@@ -78,6 +78,10 @@ const HANDED_OVER = 4001;
 /** How long edits are kept to replay over a fresh board snapshot. */
 const RECENT_OPS_MS = 10_000;
 const RETRY_SAVE_MS = 2_000;
+/** A tab hidden this long shows as away; quick tab switches don't flicker. */
+const AWAY_AFTER_MS = 5_000;
+/** Back from the background with nothing heard this long: the socket may be dead. */
+const STALE_ON_RETURN_MS = 8_000;
 
 function realtimeUrl() {
   const override = process.env.NEXT_PUBLIC_REALTIME_URL;
@@ -112,6 +116,10 @@ export class RealtimeClient {
   private lastHeard = Date.now();
   private openedAt = 0;
   private call = { inCall: false, muted: false };
+  private away = false;
+  private awayTimer: ReturnType<typeof setTimeout> | undefined;
+  /** The page is hidden in the back/forward cache, so stay disconnected. */
+  private suspended = false;
   private live: {
     cursor?: LiveCursor | null;
     upsert?: BoardObject[] | undefined;
@@ -130,7 +138,10 @@ export class RealtimeClient {
     this.outbox = readOutbox(this.outboxKey);
     this.connect();
     window.addEventListener('online', this.reconnectNow);
+    window.addEventListener('pagehide', this.onPageHide);
+    window.addEventListener('pageshow', this.onPageShow);
     document.addEventListener('visibilitychange', this.onVisible);
+    if (document.visibilityState === 'hidden') this.onVisible();
   }
 
   /** Unsent edits belong to one person on one board. */
@@ -154,7 +165,7 @@ export class RealtimeClient {
    * duration limit, a resync) never drop anyone from the room or the call.
    */
   private connect(handover = false) {
-    if (this.closed) return;
+    if (this.closed || this.suspended) return;
     clearTimeout(this.retryTimer);
     if (handover && this.socket?.readyState !== WebSocket.OPEN)
       handover = false;
@@ -181,6 +192,7 @@ export class RealtimeClient {
           peerId: this.peerId,
           color: this.color,
           ...this.call,
+          ...(this.away ? { away: true } : {}),
         }),
       );
     };
@@ -248,7 +260,7 @@ export class RealtimeClient {
       this.socket = null;
       clearInterval(this.pingTimer);
       clearInterval(this.rotateTimer);
-      if (this.closed) return;
+      if (this.closed || this.suspended) return;
       this.setStatus('offline');
       this.retryTimer = setTimeout(() => this.connect(), this.retryDelay);
       this.retryDelay = Math.min(8000, Math.max(500, this.retryDelay * 2));
@@ -324,7 +336,58 @@ export class RealtimeClient {
   }
 
   private onVisible = () => {
-    if (document.visibilityState === 'visible') this.reconnectNow();
+    clearTimeout(this.awayTimer);
+    if (document.visibilityState === 'hidden') {
+      this.awayTimer = setTimeout(() => this.setAway(true), AWAY_AFTER_MS);
+      return;
+    }
+    this.setAway(false);
+    // A phone that slept may still report the old socket as open although
+    // the server dropped it long ago.
+    if (
+      this.socket?.readyState === WebSocket.OPEN &&
+      Date.now() - this.lastHeard > STALE_ON_RETURN_MS
+    ) {
+      this.rawSend({ t: 'ping' });
+      const before = this.lastHeard;
+      setTimeout(() => {
+        if (this.lastHeard === before && !this.closed) this.socket?.close();
+      }, 2_000);
+    }
+    this.reconnectNow();
+  };
+
+  private setAway(away: boolean) {
+    if (this.away === away) return;
+    this.away = away;
+    this.rawSend({ t: 'away', away });
+  }
+
+  /** Tells the room this tab is gone before the page unloads or freezes. */
+  private onPageHide = (event: PageTransitionEvent) => {
+    if (this.closed) return;
+    this.flushLive();
+    for (const socket of [this.socket, this.next])
+      if (socket?.readyState === WebSocket.OPEN) {
+        socket.send('{"t":"bye"}');
+        socket.close(1000, 'bye');
+      }
+    if (event.persisted) {
+      // Kept in the back/forward cache: reconnect if the page comes back.
+      this.suspended = true;
+      clearInterval(this.pingTimer);
+      clearInterval(this.rotateTimer);
+      clearTimeout(this.retryTimer);
+    }
+  };
+
+  private onPageShow = (event: PageTransitionEvent) => {
+    if (!event.persisted || !this.suspended) return;
+    this.suspended = false;
+    this.retryDelay = 0;
+    this.socket = null;
+    this.next = null;
+    this.connect();
   };
 
   private rawSend(message: unknown) {
@@ -442,8 +505,13 @@ export class RealtimeClient {
     clearTimeout(this.liveTimer);
     clearInterval(this.pingTimer);
     clearInterval(this.rotateTimer);
+    clearTimeout(this.awayTimer);
     window.removeEventListener('online', this.reconnectNow);
+    window.removeEventListener('pagehide', this.onPageHide);
+    window.removeEventListener('pageshow', this.onPageShow);
     document.removeEventListener('visibilitychange', this.onVisible);
+    for (const socket of [this.socket, this.next])
+      if (socket?.readyState === WebSocket.OPEN) socket.send('{"t":"bye"}');
     this.next?.close();
     this.next = null;
     this.socket?.close();

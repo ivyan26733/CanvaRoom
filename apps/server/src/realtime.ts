@@ -40,12 +40,17 @@ type Connection = {
   color: string;
   inCall: boolean;
   muted: boolean;
+  away: boolean;
   presenceWrittenAt: number;
+  /** When the browser was last heard from: any message, or a pong. */
+  heard: Heard;
   /** Saves run one after another so a connection's edits land in order. */
   writes: Promise<unknown>;
   /** Presence and chat saves, kept apart so they never wait on edits. */
   chores: Promise<unknown>;
 };
+
+type Heard = { at: number; pongAt: number };
 
 type Envelope =
   | { o: string; k: 'msg'; d: string; x?: string; to?: string }
@@ -56,6 +61,20 @@ const instanceId = randomUUID();
 const rooms = new Map<string, Set<Connection>>();
 const channel = (boardId: string) => `room:${boardId}`;
 const PRESENCE_REFRESH_MS = 15_000;
+/**
+ * Every few seconds each socket is pinged. Browsers answer pings from the
+ * network stack even in background tabs, so a socket that stops answering
+ * belongs to a closed laptop, a lost network, or a tab the OS suspended, and
+ * is dropped so everyone else sees that person go offline.
+ */
+const SWEEP_EVERY_MS = 3_000;
+const SILENT_AFTER_MS = 10_000;
+/** Without pongs (a proxy may answer them itself), app pings must arrive. */
+const SILENT_NO_PONG_MS = 75_000;
+/** A tab that handed its connection over has this long to show up again. */
+const HANDOVER_GRACE_MS = 5_000;
+/** How often rooms shared with other instances re-check for expired peers. */
+const REMOTE_PRESENCE_CHECK_MS = 10_000;
 const REMOTE_CHECK_MS = 3_000;
 /** Hearing from another instance keeps relaying on at least this long. */
 const REMOTE_HEARD_MS = 20_000;
@@ -86,6 +105,15 @@ function getSubscriber() {
       checkedAt: known?.checkedAt ?? Date.now(),
       heardAt: Date.now(),
     });
+    if (envelope.k === 'msg' && envelope.d.startsWith('{"t":"presence"'))
+      try {
+        notePresence(
+          boardId,
+          (JSON.parse(envelope.d) as { peers: Presence[] }).peers,
+        );
+      } catch {
+        // Delivered as is below.
+      }
     if (envelope.k === 'msg')
       deliverLocal(boardId, envelope.d, {
         ...(envelope.x ? { exceptPeer: envelope.x } : {}),
@@ -197,8 +225,29 @@ export function broadcastBoard(board: BoardMeta) {
     );
 }
 
+/** What each room's presence looked like when last listed on this instance. */
+const roomPresence = new Map<
+  string,
+  { signature: string; remote: boolean; checkedAt: number }
+>();
+
+function notePresence(boardId: string, peers: Presence[]) {
+  const signature = peers
+    .map((peer) => `${peer.peerId}:${peer.inCall}:${peer.muted}:${peer.away}`)
+    .sort()
+    .join('|');
+  const changed = roomPresence.get(boardId)?.signature !== signature;
+  roomPresence.set(boardId, {
+    signature,
+    remote: peers.some((peer) => peer.instance !== instanceId),
+    checkedAt: Date.now(),
+  });
+  return changed;
+}
+
 async function broadcastPresence(boardId: string) {
   const peers = await store.listPresence(boardId);
+  notePresence(boardId, peers);
   broadcast(boardId, { t: 'presence', peers });
 }
 
@@ -210,6 +259,7 @@ function presenceOf(connection: Connection): Presence {
     color: connection.color,
     inCall: connection.inCall,
     muted: connection.muted,
+    ...(connection.away ? { away: true } : {}),
     updatedAt: Date.now(),
     instance: instanceId,
   };
@@ -252,13 +302,85 @@ async function leaveRoom(connection: Connection, handedOver = false) {
   if (room.size === 0) {
     rooms.delete(connection.boardId);
     remoteRooms.delete(connection.boardId);
+    roomPresence.delete(connection.boardId);
     await subscriber
       ?.unsubscribe(channel(connection.boardId))
       .catch(() => undefined);
   }
-  if (handedOver) return;
+  if (handedOver) {
+    // The replacement normally joined before this close. If it never shows
+    // up (the tab closed mid-handover), drop the presence this socket left.
+    setTimeout(() => {
+      const local = [...(rooms.get(connection.boardId) ?? [])].some(
+        (other) => other.peerId === connection.peerId,
+      );
+      if (local) return;
+      void store
+        .listPresence(connection.boardId)
+        .then(async (peers) => {
+          const record = peers.find(
+            (peer) => peer.peerId === connection.peerId,
+          );
+          // A record from another instance means the tab moved there.
+          if (record?.instance !== instanceId) return;
+          await store.removePresence(connection.boardId, connection.peerId);
+          await broadcastPresence(connection.boardId);
+        })
+        .catch(() => undefined);
+    }, HANDOVER_GRACE_MS).unref?.();
+    return;
+  }
   await store.removePresence(connection.boardId, connection.peerId);
   await broadcastPresence(connection.boardId);
+}
+
+/**
+ * Drops sockets that stopped answering, keeps live presence fresh (so a tab
+ * whose timers the browser throttles in the background stays listed), and
+ * notices peers on other instances whose presence expired.
+ */
+function sweep() {
+  const now = Date.now();
+  for (const [boardId, room] of rooms) {
+    for (const connection of room) {
+      const { socket, heard } = connection;
+      if (socket.readyState !== WebSocket.OPEN) continue;
+      const lastHeard = Math.max(heard.at, heard.pongAt);
+      if (
+        (heard.pongAt && now - lastHeard > SILENT_AFTER_MS) ||
+        now - lastHeard > SILENT_NO_PONG_MS
+      ) {
+        // The close handler leaves the room and tells everyone.
+        socket.terminate();
+        continue;
+      }
+      socket.ping();
+      if (now - connection.presenceWrittenAt > PRESENCE_REFRESH_MS) {
+        connection.presenceWrittenAt = now;
+        chore(connection, () =>
+          store.setPresence(boardId, presenceOf(connection)),
+        );
+      }
+    }
+    const known = roomPresence.get(boardId);
+    if (known?.remote && now - known.checkedAt > REMOTE_PRESENCE_CHECK_MS) {
+      known.checkedAt = now;
+      void store
+        .listPresence(boardId)
+        .then((peers) => {
+          // Each instance tells its own sockets; the others do the same.
+          if (notePresence(boardId, peers))
+            deliverLocal(boardId, JSON.stringify({ t: 'presence', peers }));
+        })
+        .catch(() => undefined);
+    }
+  }
+}
+
+let sweeping: ReturnType<typeof setInterval> | undefined;
+function startSweeping() {
+  sweeping ??= setInterval(sweep, SWEEP_EVERY_MS);
+  sweeping.unref?.();
 }
 
 /** Queues background work for a connection, keeping its order. */
@@ -362,12 +484,20 @@ function handleMessage(connection: Connection, message: ClientMessage) {
       );
     case 'ping':
       send(connection, '{"t":"pong"}');
-      if (Date.now() - connection.presenceWrittenAt > PRESENCE_REFRESH_MS) {
-        connection.presenceWrittenAt = Date.now();
-        chore(connection, () =>
-          store.setPresence(boardId, presenceOf(connection)),
-        );
-      }
+      return;
+    case 'away':
+      if (connection.away === message.away) return;
+      connection.away = message.away;
+      connection.presenceWrittenAt = Date.now();
+      return chore(connection, async () => {
+        await store.setPresence(boardId, presenceOf(connection));
+        await broadcastPresence(boardId);
+      });
+    case 'bye':
+      // Leave now rather than when the close reaches us, which a proxy or a
+      // closing tab can delay.
+      void leaveRoom(connection).catch(() => undefined);
+      connection.socket.close(1000, 'bye');
       return;
     case 'hello':
       return;
@@ -378,6 +508,7 @@ async function authenticate(
   socket: WebSocket,
   user: User,
   hello: Extract<ClientMessage, { t: 'hello' }>,
+  heard: Heard,
 ): Promise<Connection | string> {
   const board = await store.getMeta(hello.boardId);
   const member = board?.members[user.id];
@@ -403,7 +534,9 @@ async function authenticate(
     color: user.color,
     inCall: hello.inCall ?? false,
     muted: hello.muted ?? false,
+    away: hello.away ?? false,
     presenceWrittenAt: Date.now(),
+    heard,
     writes: Promise.resolve(),
     chores: Promise.resolve(),
   };
@@ -418,9 +551,11 @@ function onConnection(socket: WebSocket, user: User) {
   // Messages that arrive while the hello is still being checked.
   const early: ClientMessage[] = [];
   const helloTimer = setTimeout(() => socket.close(4401, 'no hello'), 10_000);
+  const heard: Heard = { at: Date.now(), pongAt: 0 };
+  socket.on('pong', () => (heard.pongAt = Date.now()));
 
   async function join(hello: Extract<ClientMessage, { t: 'hello' }>) {
-    const result = await authenticate(socket, user, hello);
+    const result = await authenticate(socket, user, hello, heard);
     clearTimeout(helloTimer);
     if (typeof result === 'string') {
       socket.send(JSON.stringify({ t: 'error', message: result, fatal: true }));
@@ -428,6 +563,8 @@ function onConnection(socket: WebSocket, user: User) {
       return;
     }
     const joined = result;
+    // The tab may have closed while its hello was being checked.
+    if (socket.readyState !== WebSocket.OPEN) return;
     await joinRoom(joined);
     await store.setPresence(joined.boardId, presenceOf(joined));
     const [objects, messages, peers] = await Promise.all([
@@ -453,12 +590,15 @@ function onConnection(socket: WebSocket, user: User) {
       { exceptPeer: joined.peerId },
     );
     connection = joined;
+    // The first pong shows pings get through, which arms the quick check.
+    socket.ping();
     // Handle anything sent meanwhile in arrival order, so a stroke's points
     // never overtake it.
     for (const message of early.splice(0)) handleMessage(joined, message);
   }
 
   socket.on('message', (raw) => {
+    heard.at = Date.now();
     let parsed;
     try {
       parsed = clientMessageSchema.safeParse(JSON.parse(raw.toString()));
@@ -496,6 +636,7 @@ function onConnection(socket: WebSocket, user: User) {
 }
 
 export function attachRealtime(server: Server) {
+  startSweeping();
   const wss = new WebSocketServer({
     noServer: true,
     maxPayload: 2_000_000,

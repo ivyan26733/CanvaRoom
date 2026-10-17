@@ -335,9 +335,12 @@ export default function BoardPage() {
   const selectedObject =
     selectedObjects.length === 1 ? selectedObjects[0] : undefined;
   const onlinePeople = useMemo(() => {
+    // Someone with several tabs counts as here if any of them is in front.
     const byUser = new Map<string, Peer>();
-    for (const peer of peers)
-      if (!byUser.has(peer.userId)) byUser.set(peer.userId, peer);
+    for (const peer of peers) {
+      const known = byUser.get(peer.userId);
+      if (!known || (known.away && !peer.away)) byUser.set(peer.userId, peer);
+    }
     return [...byUser.values()];
   }, [peers]);
 
@@ -2141,6 +2144,7 @@ export default function BoardPage() {
       ? 'grab'
       : undefined;
   const otherPeople = onlinePeople.filter((peer) => peer.userId !== me.id);
+  const othersHere = otherPeople.filter((peer) => !peer.away);
   const drawingTool = !['select', 'hand', 'eraser'].includes(tool);
   const showStyle = drawingTool && !readonly && !selectedObjects.length;
   const zoomPercent = Math.round(view.zoom * 100);
@@ -2394,9 +2398,13 @@ export default function BoardPage() {
               {onlinePeople.slice(0, 4).map((peer) => (
                 <span
                   key={peer.userId}
-                  className="avatar"
+                  className={`avatar ${peer.away ? 'is-away' : ''}`}
                   style={{ background: peer.color }}
-                  title={peer.userId === me.id ? 'You' : peer.name}
+                  title={
+                    peer.userId === me.id
+                      ? 'You'
+                      : `${peer.name}${peer.away ? ' · away' : ''}`
+                  }
                 >
                   {peer.name[0]?.toUpperCase()}
                 </span>
@@ -2865,10 +2873,14 @@ export default function BoardPage() {
       <div className="corner-right">
         {otherPeople.length > 0 && !isLocal && (
           <div className="presence-chip" aria-live="polite">
-            <span className="status-dot live" />
-            {otherPeople.length === 1
-              ? `${otherPeople[0]!.name} is here`
-              : `${otherPeople.length} others here`}
+            <span className={`status-dot ${othersHere.length ? 'live' : ''}`} />
+            {othersHere.length === 0
+              ? otherPeople.length === 1
+                ? `${otherPeople[0]!.name} is away`
+                : `${otherPeople.length} others away`
+              : othersHere.length === 1
+                ? `${othersHere[0]!.name} is here`
+                : `${othersHere.length} others here`}
           </div>
         )}
         <Minimap
@@ -3153,7 +3165,7 @@ export default function BoardPage() {
           <h2>People on this board</h2>
           <div className="members-list">
             {board.members.map((member) => {
-              const online = peers.find(
+              const online = onlinePeople.find(
                 (peer) => peer.userId === member.userId,
               );
               return (
@@ -3171,11 +3183,11 @@ export default function BoardPage() {
                       {member.name}
                       {member.userId === me.id ? ' (you)' : ''}
                     </strong>
-                    <small className={online ? 'is-online' : ''}>
+                    <small
+                      className={online && !online.away ? 'is-online' : ''}
+                    >
                       {online
-                        ? online.inCall
-                          ? 'Online · in voice'
-                          : 'Online now'
+                        ? `${online.away ? 'Away' : online.inCall ? 'Online' : 'Online now'}${online.inCall ? ' · in voice' : ''}`
                         : 'Offline'}
                     </small>
                   </div>
