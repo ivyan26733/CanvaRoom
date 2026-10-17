@@ -210,7 +210,11 @@ export function SessionRecorderControl({
     <>
       <button
         className="icon-button rec-button"
-        onClick={() => setSetupOpen(true)}
+        onClick={() => {
+          setSetupOpen(true);
+          // Fetch the recorder while the person picks a resolution.
+          void import('../../lib/recorder').catch(() => undefined);
+        }}
         disabled={Boolean(unsupported) || status === 'starting'}
         aria-label="Record this session"
         title={unsupported ?? 'Record this session'}
