@@ -1,9 +1,18 @@
-import { useMemo } from 'react';
-import QRCode from 'qrcode';
+import { useEffect, useState } from 'react';
 import { Icon } from '../../components/icons';
 
+type QRCodeModule = typeof import('qrcode');
+
+// The encoder is only needed once someone opens Share, so it is not part of
+// the board's first download.
+let encoder: Promise<QRCodeModule> | undefined;
+const loadEncoder = () =>
+  (encoder ??= import('qrcode').then(
+    (module) => (module as { default?: QRCodeModule }).default ?? module,
+  ));
+
 /** Dark modules as one SVG path, so the code stays crisp at any size. */
-function qrPath(link: string) {
+function qrPath(QRCode: QRCodeModule, link: string) {
   const { modules } = QRCode.create(link, { errorCorrectionLevel: 'M' });
   let d = '';
   for (let row = 0; row < modules.size; row++)
@@ -13,6 +22,7 @@ function qrPath(link: string) {
 }
 
 async function downloadQr(link: string, title: string) {
+  const QRCode = await loadEncoder();
   const url = await QRCode.toDataURL(link, {
     errorCorrectionLevel: 'M',
     margin: 2,
@@ -32,7 +42,19 @@ async function downloadQr(link: string, title: string) {
 
 /** A scannable copy of the invite link, for joining from a phone. */
 export function InviteQr({ link, title }: { link: string; title: string }) {
-  const { d, size } = useMemo(() => qrPath(link), [link]);
+  const [code, setCode] = useState<{ link: string; d: string; size: number }>();
+  useEffect(() => {
+    let current = true;
+    void loadEncoder().then((QRCode) => {
+      if (current) setCode({ link, ...qrPath(QRCode, link) });
+    });
+    return () => {
+      current = false;
+    };
+  }, [link]);
+  // Until the encoder arrives (or while a new link encodes), show a blank
+  // tile of the usual size rather than a stale or shifting code.
+  const { d, size } = code?.link === link ? code : { d: '', size: 29 };
   const quiet = 2;
   return (
     <div className="invite-qr">

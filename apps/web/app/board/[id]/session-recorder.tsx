@@ -4,12 +4,12 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Icon } from '../../components/icons';
 import { Modal } from '../../components/modal';
+import type { SessionRecorder } from '../../lib/recorder';
 import {
   RESOLUTIONS,
   recordingUnsupported,
-  SessionRecorder,
   type ResolutionHeight,
-} from '../../lib/recorder';
+} from '../../lib/recording-options';
 
 const PREFERENCE_KEY = 'canvasroom.recording';
 
@@ -116,7 +116,17 @@ export function SessionRecorderControl({
     }
     setSetupOpen(false);
     setStatus('starting');
-    const recorder = new SessionRecorder(
+    // The recorder is only downloaded once someone actually records.
+    let SessionRecorderClass: typeof SessionRecorder;
+    try {
+      ({ SessionRecorder: SessionRecorderClass } =
+        await import('../../lib/recorder'));
+    } catch {
+      setStatus('idle');
+      onNotice('Recording could not start. Check your connection and retry.');
+      return;
+    }
+    const recorder = new SessionRecorderClass(
       stage,
       { ...preference, callAudio: hasCall && preference.callAudio },
       title,
