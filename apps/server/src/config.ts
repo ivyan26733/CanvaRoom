@@ -30,12 +30,18 @@ const environmentSchema = z.object({
   // never reach the browser; the key ID is public.
   RAZORPAY_KEY_ID: z.string().optional(),
   RAZORPAY_KEY_SECRET: z.string().optional(),
-  // The paid pass, in the currency's smallest unit (cents for USD): the price
-  // charged, the higher "was" price shown struck through, and its length.
-  BILLING_CURRENCY: z.string().length(3).toUpperCase().default('USD'),
-  BILLING_PRICE_MINOR: z.coerce.number().int().min(100).default(1199),
-  BILLING_LIST_PRICE_MINOR: z.coerce.number().int().min(0).default(1599),
-  BILLING_PASS_DAYS: z.coerce.number().int().min(1).max(3660).default(30),
+  // Premium, per month, in each currency's smallest unit (paise, cents): the
+  // price charged and an optional higher "was" price shown struck through.
+  // Visitors in India pay in rupees; everyone else in dollars.
+  BILLING_INR_PRICE_MINOR: z.coerce.number().int().min(100).default(49900),
+  BILLING_INR_LIST_PRICE_MINOR: z.coerce.number().int().min(0).default(0),
+  BILLING_USD_PRICE_MINOR: z.coerce.number().int().min(100).default(1199),
+  BILLING_USD_LIST_PRICE_MINOR: z.coerce.number().int().min(0).default(1599),
+  BILLING_PASS_DAYS: z.coerce.number().int().min(1).max(366).default(30),
+  // Resend's API, replaceable with a local stand-in in tests.
+  RESEND_API_URL: z.url().default('https://api.resend.com'),
+  // Where feedback from the site is emailed.
+  FEEDBACK_TO: z.email().default('ivyan26733@gmail.com'),
   VERCEL_PROJECT_PRODUCTION_URL: z.string().optional(),
 });
 
@@ -54,18 +60,27 @@ export const config = {
   databaseUrl: env.DATABASE_URL || undefined,
   blobEnabled: Boolean(env.BLOB_READ_WRITE_TOKEN),
   resendApiKey: env.RESEND_API_KEY || undefined,
+  resendApiUrl: env.RESEND_API_URL.replace(/\/$/, ''),
   razorpay:
     env.RAZORPAY_KEY_ID && env.RAZORPAY_KEY_SECRET
       ? { keyId: env.RAZORPAY_KEY_ID, keySecret: env.RAZORPAY_KEY_SECRET }
       : undefined,
-  pass: {
-    name: `${env.BILLING_PASS_DAYS}-day pass`,
-    amount: env.BILLING_PRICE_MINOR,
-    listAmount: env.BILLING_LIST_PRICE_MINOR,
-    currency: env.BILLING_CURRENCY,
-    days: env.BILLING_PASS_DAYS,
+  prices: {
+    INR: {
+      amount: env.BILLING_INR_PRICE_MINOR,
+      listAmount: env.BILLING_INR_LIST_PRICE_MINOR,
+    },
+    USD: {
+      amount: env.BILLING_USD_PRICE_MINOR,
+      listAmount: env.BILLING_USD_LIST_PRICE_MINOR,
+    },
   },
+  passDays: env.BILLING_PASS_DAYS,
+  feedbackTo: env.FEEDBACK_TO,
   mailFrom: env.MAIL_FROM || 'CanvaRoom <onboarding@resend.dev>',
+  // Resend's shared sender only delivers to the Resend account's own address,
+  // so mail to customers (password reset) waits for a verified domain.
+  mailDomainVerified: Boolean(env.MAIL_FROM),
   appUrl: (
     env.APP_URL ??
     (env.VERCEL_PROJECT_PRODUCTION_URL

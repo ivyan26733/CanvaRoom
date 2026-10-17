@@ -8,7 +8,7 @@ import {
 import type { IncomingMessage } from 'node:http';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import {
-  trialEnd,
+  planOf,
   type Account,
   type SessionRecord,
   type User,
@@ -79,10 +79,7 @@ export function publicUser(account: Account): User {
     color: account.color,
     email: account.email,
     guest: false,
-    plan: {
-      trialEndsAt: trialEnd(account),
-      ...(account.paidUntil ? { paidUntil: account.paidUntil } : {}),
-    },
+    plan: planOf(account),
   };
 }
 

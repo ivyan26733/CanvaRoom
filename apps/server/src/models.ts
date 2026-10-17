@@ -75,10 +75,12 @@ export type BoardMeta = {
   members: Record<string, Member>;
   pages: Page[];
   /**
-   * Until when the owner's trial or pass lets the board be edited. Read from
-   * the owner's account, never stored with the board.
+   * The owner's trial and pass, which decide what the board allows. Read
+   * from the owner's account, never stored with the board.
    */
-  ownerAccessUntil?: string;
+  ownerPlan?: Plan;
+  /** Whether this is the owner's oldest board: the one the free plan keeps. */
+  ownerFirstBoard?: boolean;
 };
 
 export type ChatMessage = {
@@ -121,15 +123,51 @@ export const trialEnd = (account: Pick<Account, 'createdAt' | 'trialEndsAt'>) =>
     new Date(account.createdAt).getTime() + TRIAL_MINUTES * 60_000,
   ).toISOString();
 
-/** The later of the trial end and the paid-until date. */
-export function accessUntil(plan: Plan) {
-  return plan.paidUntil && plan.paidUntil > plan.trialEndsAt
-    ? plan.paidUntil
-    : plan.trialEndsAt;
+/**
+ * Premium while a paid month runs, then the trial while it lasts, then free.
+ * The board owner's tier decides what a board allows.
+ */
+export type Tier = 'premium' | 'trial' | 'free';
+
+/** Boards an account may own on the trial, and on the free plan after it. */
+export const TRIAL_BOARDS = 2;
+export const FREE_BOARDS = 1;
+/** People besides the owner who may join a trial board. */
+export const TRIAL_GUESTS = 2;
+
+export function tierOf(plan: Plan | undefined, now = Date.now()): Tier {
+  if (!plan) return 'free';
+  if (plan.paidUntil && Date.parse(plan.paidUntil) > now) return 'premium';
+  if (Date.parse(plan.trialEndsAt) > now) return 'trial';
+  return 'free';
 }
 
-export const hasAccess = (until: string | undefined, now = Date.now()) =>
-  until !== undefined && new Date(until).getTime() > now;
+/** When the current tier runs out; undefined on the free plan. */
+export function tierEndsAt(plan: Plan | undefined, now = Date.now()) {
+  const tier = tierOf(plan, now);
+  if (tier === 'premium') return plan!.paidUntil;
+  if (tier === 'trial') return plan!.trialEndsAt;
+  return undefined;
+}
+
+/** An account's trial and pass. */
+export const planOf = (account: Account): Plan => ({
+  trialEndsAt: trialEnd(account),
+  ...(account.paidUntil ? { paidUntil: account.paidUntil } : {}),
+});
+
+/** A note sent through the site's feedback form. */
+export type Feedback = {
+  id: string;
+  userId?: string;
+  email: string;
+  name?: string;
+  category: string;
+  rating?: number;
+  message: string;
+  page?: string;
+  createdAt: string;
+};
 
 /** A Razorpay order this server created, and whether it has been paid. */
 export type Payment = {

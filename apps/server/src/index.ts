@@ -15,18 +15,26 @@ import {
   verifyPassword,
 } from './auth.js';
 import {
+  boardTier,
   canEdit,
   editBlockedReason,
-  paywalled,
+  openToOthers,
+  premiumUnlocked,
   publicBoard,
 } from './boards.js';
 import {
   billingConfigured,
   createOrder,
+  priceFor,
   RazorpayError,
   validPaymentSignature,
 } from './billing.js';
-import { mailConfigured, sendPasswordReset } from './mail.js';
+import {
+  mailConfigured,
+  sendFeedback,
+  sendPasswordReset,
+  teamMailConfigured,
+} from './mail.js';
 import { attachRealtime, broadcast, broadcastBoard } from './realtime.js';
 import { loadStore, storageKind, store } from './store.js';
 import {
@@ -40,10 +48,12 @@ import {
 import { pageIdSchema, pageNameSchema } from './schemas.js';
 import { TEMPLATES, templateObjects } from './templates.js';
 import {
-  accessUntil,
   DEFAULT_PAGES,
-  hasAccess,
+  FREE_BOARDS,
   pageOf,
+  tierOf,
+  TRIAL_BOARDS,
+  TRIAL_GUESTS,
   TRIAL_MINUTES,
 } from './models.js';
 import type {
@@ -71,19 +81,28 @@ const apiError = (
   message: string,
   code?: string,
 ) => reply.code(status).send({ error: message, ...(code ? { code } : {}) });
+/** The page opens the upgrade dialog on a 402 with this code. */
+const paymentRequired = (reply: FastifyReply, message: string) =>
+  apiError(reply, 402, message, 'payment_required');
 /**
- * Replies 402 when an account's trial has ended without a pass. The page
- * opens the upgrade dialog on this code.
+ * Checks the account may own one more board: two on the trial, one on the
+ * free plan, any number on Premium. Replies 402 and returns undefined when
+ * not; otherwise returns how many boards it owns now.
  */
-const requirePlan = (user: User, reply: FastifyReply) => {
-  if (user.plan && hasAccess(accessUntil(user.plan))) return true;
-  apiError(
+const boardSlot = async (user: User, reply: FastifyReply) => {
+  const tier = tierOf(user.plan);
+  const owned = (await store.listBoards(user.id)).filter(
+    (board) => board.role === 'owner',
+  ).length;
+  if (tier === 'premium') return owned;
+  const limit = tier === 'trial' ? TRIAL_BOARDS : FREE_BOARDS;
+  if (owned < limit) return owned;
+  paymentRequired(
     reply,
-    402,
-    'Your free trial has ended. Upgrade to create boards and invite people.',
-    'payment_required',
+    tier === 'trial'
+      ? `The free trial includes ${TRIAL_BOARDS} boards. Upgrade to Premium for unlimited boards.`
+      : 'Your free trial has ended, and the free plan keeps one board. Upgrade to Premium for unlimited boards.',
   );
-  return false;
 };
 const currentUser = async (request: FastifyRequest, reply: FastifyReply) => {
   const user = await userFromRequest(request.raw);
@@ -431,7 +450,8 @@ app.post('/api/boards', async (request, reply) => {
     );
   if (!body.success)
     return apiError(reply, 400, 'Board name must be 1–80 characters.');
-  if (!requirePlan(user, reply)) return;
+  const owned = await boardSlot(user, reply);
+  if (owned === undefined) return;
   const now = new Date().toISOString();
   const board: BoardMeta = {
     id: randomUUID(),
@@ -444,7 +464,8 @@ app.post('/api/boards', async (request, reply) => {
     inviteToken: inviteId(),
     inviteRevoked: false,
     pages: DEFAULT_PAGES,
-    ownerAccessUntil: accessUntil(user.plan!),
+    ...(user.plan ? { ownerPlan: user.plan } : {}),
+    ownerFirstBoard: owned === 0,
   };
   await store.createBoard(
     board,
@@ -519,7 +540,8 @@ app.post('/api/boards/:boardId/duplicate', async (request, reply) => {
     return apiError(reply, 403, 'Create a free account to duplicate boards.');
   if (source.role === 'viewer')
     return apiError(reply, 403, 'Viewers cannot duplicate this board.');
-  if (!requirePlan(user, reply)) return;
+  const owned = await boardSlot(user, reply);
+  if (owned === undefined) return;
   const now = new Date().toISOString();
   const duplicate: BoardMeta = {
     id: randomUUID(),
@@ -532,7 +554,8 @@ app.post('/api/boards/:boardId/duplicate', async (request, reply) => {
     inviteToken: inviteId(),
     inviteRevoked: false,
     pages: source.board.pages,
-    ownerAccessUntil: accessUntil(user.plan!),
+    ...(user.plan ? { ownerPlan: user.plan } : {}),
+    ownerFirstBoard: owned === 0,
   };
   const objects = await copyImages(
     boardId,
@@ -553,6 +576,11 @@ app.post('/api/boards/:boardId/images', async (request, reply) => {
   if (!access) return apiError(reply, 404, 'Board not found.');
   if (!canEdit(access.role, access.board))
     return apiError(reply, 403, editBlockedReason(access.role, access.board));
+  if (!premiumUnlocked(access.board, user))
+    return paymentRequired(
+      reply,
+      'Adding images is a Premium feature. Upgrade to add images to your boards.',
+    );
   const bytes = request.body;
   const type = Buffer.isBuffer(bytes) ? sniffImage(bytes) : undefined;
   if (!type) return apiError(reply, 415, 'Choose a PNG, JPEG, or WebP image.');
@@ -600,12 +628,24 @@ app.post('/api/boards/:boardId/join', async (request, reply) => {
     body.data.inviteToken !== board.inviteToken
   )
     return apiError(reply, 404, 'This invite is invalid or has been revoked.');
-  if (paywalled(board))
+  if (!openToOthers(board))
     return apiError(
       reply,
       403,
       'This board isn’t taking new people right now. Ask its owner to upgrade.',
       'owner_payment_required',
+    );
+  // The trial lets two people besides the owner in.
+  if (
+    boardTier(board) === 'trial' &&
+    Object.keys(board.members).filter((id) => id !== board.ownerId).length >=
+      TRIAL_GUESTS
+  )
+    return apiError(
+      reply,
+      403,
+      `This board is full on the free plan: it can have ${TRIAL_GUESTS} people besides its owner. Ask the owner to upgrade to Premium.`,
+      'board_full',
     );
   const member = { role: 'editor' as const, name: user.name };
   await store.setMember(boardId, user.id, member);
@@ -622,7 +662,11 @@ app.post('/api/boards/:boardId/invites/regenerate', async (request, reply) => {
   if (!access) return apiError(reply, 404, 'Board not found.');
   if (access.role !== 'owner')
     return apiError(reply, 403, 'Only the owner can manage invites.');
-  if (!requirePlan(user, reply)) return;
+  if (!openToOthers(access.board))
+    return paymentRequired(
+      reply,
+      'Your free trial has ended. Upgrade to Premium to invite people.',
+    );
   const inviteToken = inviteId();
   await store.updateMeta(boardId, { inviteToken, inviteRevoked: false });
   return { inviteToken };
@@ -714,7 +758,11 @@ app.post(
     const access = await getAccess(boardId, user.id);
     if (!access || access.role !== 'owner')
       return apiError(reply, 403, 'Only the owner can restore a snapshot.');
-    if (paywalled(access.board) && !requirePlan(user, reply)) return;
+    if (!canEdit('owner', { ...access.board, locked: false }))
+      return paymentRequired(
+        reply,
+        editBlockedReason('owner', { ...access.board, locked: false }),
+      );
     const snapshot = (await store.getSnapshots(boardId)).find(
       (item) => item.id === snapshotId,
     );
@@ -915,9 +963,14 @@ app.get('/api/boards/:boardId/preview', async (request, reply) => {
 
 const orderIdSchema = z.string().regex(/^order_[A-Za-z0-9]{6,40}$/);
 
-app.get('/api/billing/plan', async () => ({
+/** Vercel's edge sets the visitor's country; locally it is missing. */
+const countryOf = (request: FastifyRequest) =>
+  request.headers['x-vercel-ip-country'] as string | undefined;
+
+app.get('/api/billing/plan', async (request) => ({
   available: billingConfigured(),
-  pass: config.pass,
+  pass: priceFor(countryOf(request)),
+  limits: { trialBoards: TRIAL_BOARDS, trialGuests: TRIAL_GUESTS },
 }));
 
 app.post('/api/billing/create-order', async (request, reply) => {
@@ -926,12 +979,14 @@ app.post('/api/billing/create-order', async (request, reply) => {
   if (user.guest)
     return apiError(reply, 403, 'Create an account before upgrading.');
   if (!(await allow(reply, `order:${user.id}`, 20, 3600))) return;
-  if (config.pass.amount < 100)
-    return apiError(reply, 500, 'The pass price is set too low.');
+  const price = priceFor(countryOf(request));
+  if (price.amount < 100)
+    return apiError(reply, 500, 'The Premium price is set too low.');
   try {
     const order = await createOrder(
       `cr_${Date.now().toString(36)}_${user.id.slice(0, 12)}`,
       user.id,
+      price,
     );
     await store.createPayment({
       ...order,
@@ -944,7 +999,7 @@ app.post('/api/billing/create-order', async (request, reply) => {
       amount: order.amount,
       currency: order.currency,
       key_id: config.razorpay!.keyId,
-      name: config.pass.name,
+      name: price.name,
     };
   } catch (error) {
     request.log.error(error, 'Could not create a Razorpay order');
@@ -992,7 +1047,7 @@ app.post('/api/billing/verify-payment', async (request, reply) => {
   if (payment.status === 'paid' && payment.paymentId !== paymentId)
     return apiError(reply, 400, 'That order was already paid.');
   const paidUntil =
-    (await store.completePayment(orderId, paymentId, config.pass.days)) ??
+    (await store.completePayment(orderId, paymentId, config.passDays)) ??
     (await store.getAccount(user.id))?.paidUntil;
   // Boards the user owns become editable for everyone in them right away.
   for (const boardId of await store.boardIdsFor(user.id)) {
@@ -1000,6 +1055,69 @@ app.post('/api/billing/verify-payment', async (request, reply) => {
     if (board?.ownerId === user.id) broadcastBoard(board);
   }
   return { ok: true, paidUntil };
+});
+
+// ---- Feedback ----
+
+const FEEDBACK_CATEGORIES = [
+  'idea',
+  'bug',
+  'praise',
+  'question',
+  'other',
+] as const;
+
+app.post('/api/feedback', async (request, reply) => {
+  const user = await userFromRequest(request.raw);
+  const body = z
+    .object({
+      message: z
+        .string()
+        .trim()
+        .min(3, 'Write a few words of feedback.')
+        .max(4000, 'Keep feedback under 4,000 characters.'),
+      category: z.enum(FEEDBACK_CATEGORIES).default('other'),
+      rating: z.number().int().min(1).max(5).optional(),
+      email: emailSchema.optional(),
+      name: z.string().trim().max(80).optional(),
+      page: z.string().trim().max(200).optional(),
+    })
+    .safeParse(request.body);
+  if (!body.success) return apiError(reply, 400, firstIssue(body.error));
+  // Account holders reply from their own address; anyone else gives one.
+  const email = user?.email ?? body.data.email;
+  if (!email) return apiError(reply, 400, 'Enter your email so we can reply.');
+  if (
+    !(await allow(reply, `feedback-ip:${clientIp(request)}`, 10, 3600)) ||
+    !(await allow(reply, `feedback:${email}`, 5, 3600))
+  )
+    return;
+  const feedback = {
+    id: randomUUID(),
+    ...(user && !user.guest ? { userId: user.id } : {}),
+    email,
+    ...((user?.name ?? body.data.name)
+      ? { name: (user?.name ?? body.data.name)! }
+      : {}),
+    category: body.data.category,
+    ...(body.data.rating ? { rating: body.data.rating } : {}),
+    message: body.data.message,
+    ...(body.data.page ? { page: body.data.page } : {}),
+    createdAt: new Date().toISOString(),
+  };
+  await store.addFeedback(feedback);
+  if (teamMailConfigured())
+    try {
+      await sendFeedback({
+        ...feedback,
+        account: Boolean(user && !user.guest),
+      });
+      await store.markFeedbackMailed(feedback.id);
+    } catch (error) {
+      // Saved either way; the team can read it from the database.
+      request.log.error(error, 'Feedback email failed');
+    }
+  return reply.code(201).send({ ok: true });
 });
 
 // TURN credentials let anyone relay traffic through our server, so only

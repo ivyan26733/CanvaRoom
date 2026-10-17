@@ -4,11 +4,10 @@ import { Redis } from 'ioredis';
 import { config } from './config.js';
 import { createPool } from './db.js';
 import {
-  accessUntil,
   DEFAULT_PAGES,
   MAX_MESSAGES,
   MAX_SNAPSHOTS,
-  trialEnd,
+  planOf,
 } from './models.js';
 import { PostgresStore } from './pg-store.js';
 import type {
@@ -19,6 +18,7 @@ import type {
   Member,
   Operation,
   Page,
+  Feedback,
   Payment,
   Presence,
   SessionRecord,
@@ -106,6 +106,8 @@ export interface Store {
   createResetToken(key: string, userId: string, ttl: number): Promise<void>;
   /** Returns the user a reset token belongs to and uses it up. */
   takeResetToken(key: string): Promise<string | undefined>;
+  addFeedback(feedback: Feedback): Promise<void>;
+  markFeedbackMailed(id: string): Promise<void>;
   createPayment(payment: Payment): Promise<void>;
   getPayment(orderId: string): Promise<Payment | undefined>;
   /**
@@ -120,13 +122,17 @@ export interface Store {
   ): Promise<string | undefined>;
 }
 
-/** Until when an account may edit its boards: its trial or its pass. */
-export const accountAccessUntil = (account: Account | undefined) =>
-  account &&
-  accessUntil({
-    trialEndsAt: trialEnd(account),
-    ...(account.paidUntil ? { paidUntil: account.paidUntil } : {}),
-  });
+/** The oldest of an owner's boards, given each board's owner and creation. */
+const firstBoardOf = (
+  ownerId: string,
+  boards: (Pick<BoardMeta, 'id' | 'ownerId' | 'createdAt'> | undefined)[],
+) =>
+  boards
+    .filter((board) => board?.ownerId === ownerId)
+    .sort(
+      (a, b) =>
+        a!.createdAt.localeCompare(b!.createdAt) || a!.id.localeCompare(b!.id),
+    )[0]?.id;
 
 /** The later of `from` (or now, if sooner) and now, plus `days`. */
 const extendPass = (from: string | undefined, days: number) =>
@@ -160,6 +166,7 @@ const keys = {
   reset: (key: string) => `reset:${key}`,
   userReset: (userId: string) => `u:${userId}:reset`,
   payment: (orderId: string) => `pay:${orderId}`,
+  feedback: 'feedback',
 };
 
 // One round trip, atomic per board: tombstoned objects are never recreated,
@@ -195,7 +202,8 @@ function metaToHash(meta: Partial<BoardMeta>) {
     if (
       key === 'members' ||
       key === 'id' ||
-      key === 'ownerAccessUntil' ||
+      key === 'ownerPlan' ||
+      key === 'ownerFirstBoard' ||
       value === undefined
     )
       continue;
@@ -267,8 +275,25 @@ export class RedisStore implements Store {
     ]);
     const board = hashToMeta(boardId, meta, members);
     if (!board) return;
-    const until = accountAccessUntil(await this.getAccount(board.ownerId));
-    return until ? { ...board, ownerAccessUntil: until } : board;
+    const [owner, ownedIds] = await Promise.all([
+      this.getAccount(board.ownerId),
+      this.redis.smembers(keys.userBoards(board.ownerId)),
+    ]);
+    const owned = await Promise.all(
+      ownedIds.map(async (id) => {
+        const [ownerId, createdAt] = await this.redis.hmget(
+          keys.meta(id),
+          'ownerId',
+          'createdAt',
+        );
+        return ownerId && createdAt ? { id, ownerId, createdAt } : undefined;
+      }),
+    );
+    return {
+      ...board,
+      ...(owner ? { ownerPlan: planOf(owner) } : {}),
+      ownerFirstBoard: firstBoardOf(board.ownerId, owned) === board.id,
+    };
   }
 
   async updateMeta(boardId: string, fields: Partial<BoardMeta>) {
@@ -518,6 +543,14 @@ export class RedisStore implements Store {
     return Number(count ?? 0);
   }
 
+  async addFeedback(feedback: Feedback) {
+    await this.redis.lpush(keys.feedback, JSON.stringify(feedback));
+  }
+
+  async markFeedbackMailed() {
+    // Only Postgres records whether feedback was mailed.
+  }
+
   async createPayment(payment: Payment) {
     await this.redis.set(
       keys.payment(payment.orderId),
@@ -567,6 +600,7 @@ export class MemoryStore implements Store {
   private hits = new Map<string, { count: number; resetAt: number }>();
   private resets = new Map<string, { userId: string; expiresAt: number }>();
   private payments = new Map<string, Payment>();
+  private feedback: Feedback[] = [];
   private saveTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(private readonly file?: string) {}
@@ -658,9 +692,14 @@ export class MemoryStore implements Store {
     // Files saved before pages existed have none.
     const meta = structuredClone(board.meta);
     meta.pages ??= DEFAULT_PAGES;
-    const until = accountAccessUntil(this.accounts.get(meta.ownerId));
-    if (until) meta.ownerAccessUntil = until;
-    else delete meta.ownerAccessUntil;
+    const owner = this.accounts.get(meta.ownerId);
+    if (owner) meta.ownerPlan = planOf(owner);
+    else delete meta.ownerPlan;
+    meta.ownerFirstBoard =
+      firstBoardOf(
+        meta.ownerId,
+        [...this.boards.values()].map((item) => item.meta),
+      ) === boardId;
     return meta;
   }
 
@@ -853,6 +892,14 @@ export class MemoryStore implements Store {
         : { count: 1, resetAt: now + windowSeconds * 1000 };
     this.hits.set(key, next);
     return next.count;
+  }
+
+  async addFeedback(feedback: Feedback) {
+    this.feedback.push(feedback);
+  }
+
+  async markFeedbackMailed() {
+    // Kept in memory only; nothing to update.
   }
 
   async createPayment(payment: Payment) {

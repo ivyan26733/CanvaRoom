@@ -4,16 +4,25 @@ import type { Duplex } from 'node:stream';
 import type { Redis } from 'ioredis';
 import { WebSocket, WebSocketServer } from 'ws';
 import { sameOrigin, userFromRequest } from './auth.js';
-import { canEdit, editBlockedReason, publicBoard } from './boards.js';
+import {
+  boardTier,
+  canEdit,
+  editBlockedReason,
+  openToOthers,
+  premiumUnlocked,
+  publicBoard,
+} from './boards.js';
 import { config } from './config.js';
-import type {
-  BoardMeta,
-  BoardObject,
-  ChatMessage,
-  Operation,
-  Presence,
-  Role,
-  User,
+import {
+  TRIAL_GUESTS,
+  type BoardMeta,
+  type BoardObject,
+  type ChatMessage,
+  type Operation,
+  type Presence,
+  type Role,
+  type Tier,
+  type User,
 } from './models.js';
 import { clientMessageSchema, type ClientMessage } from './schemas.js';
 import { redis, store } from './store.js';
@@ -269,6 +278,8 @@ async function joinRoom(connection: Connection) {
   let room = rooms.get(connection.boardId);
   if (!room) {
     rooms.set(connection.boardId, (room = new Set()));
+    // So the sweep notices the tier change even if it ends before it runs.
+    roomTiers.set(connection.boardId, boardTier(connection.board));
     const sub = getSubscriber();
     if (sub && redis) {
       await sub.subscribe(channel(connection.boardId));
@@ -303,6 +314,7 @@ async function leaveRoom(connection: Connection, handedOver = false) {
     rooms.delete(connection.boardId);
     remoteRooms.delete(connection.boardId);
     roomPresence.delete(connection.boardId);
+    roomTiers.delete(connection.boardId);
     await subscriber
       ?.unsubscribe(channel(connection.boardId))
       .catch(() => undefined);
@@ -339,9 +351,54 @@ async function leaveRoom(connection: Connection, handedOver = false) {
  * whose timers the browser throttles in the background stays listed), and
  * notices peers on other instances whose presence expired.
  */
+/** Each room's tier when last swept, to notice the moment it changes. */
+const roomTiers = new Map<string, Tier>();
+
+/** Close code for people sent away because the owner's plan ran out. */
+const OWNER_PLAN_ENDED = 4402;
+
+/**
+ * Applies the owner's plan as it changes: when the trial or a paid month ends,
+ * everyone but the owner is disconnected, and the owner's pages learn what
+ * the free plan now allows.
+ */
+function enforceTier(boardId: string, room: Set<Connection>, now: number) {
+  const first = room.values().next().value;
+  if (!first) return;
+  const tier = boardTier(first.board, now);
+  const before = roomTiers.get(boardId);
+  roomTiers.set(boardId, tier);
+  if (tier === 'free')
+    for (const connection of room) {
+      if (connection.user.id === connection.board.ownerId) continue;
+      send(
+        connection,
+        JSON.stringify({
+          t: 'error',
+          message:
+            'The owner’s free trial has ended, so this board is closed to others for now.',
+          fatal: true,
+          code: 'owner_plan_ended',
+        }),
+      );
+      connection.socket.close(OWNER_PLAN_ENDED, 'owner plan ended');
+    }
+  if (before && before !== tier)
+    for (const connection of room)
+      if (connection.user.id === connection.board.ownerId)
+        send(
+          connection,
+          JSON.stringify({
+            t: 'board',
+            board: publicBoard(connection.board, connection.role),
+          }),
+        );
+}
+
 function sweep() {
   const now = Date.now();
   for (const [boardId, room] of rooms) {
+    enforceTier(boardId, room, now);
     for (const connection of room) {
       const { socket, heard } = connection;
       if (socket.readyState !== WebSocket.OPEN) continue;
@@ -403,6 +460,17 @@ function handleOperation(connection: Connection, op: Operation) {
     (op.object?.src ?? op.fields?.src ?? '').length > 800_000
   )
     return reply({ t: 'nack', id: op.id, message: 'That image is too large.' });
+  // New images are a Premium feature. Uploads are checked by the upload
+  // route; images embedded inline would skip it, so they are checked here.
+  if (
+    (op.object?.src ?? op.fields?.src ?? '').startsWith('data:') &&
+    !premiumUnlocked(connection.board, connection.user)
+  )
+    return reply({
+      t: 'nack',
+      id: op.id,
+      message: 'Adding images is a Premium feature.',
+    });
   // Peers see the change before the write finishes; the write is atomic and
   // idempotent, so a retried operation cannot apply twice. Saving happens off
   // the message path: waiting on the database here would hold back the live
@@ -516,7 +584,8 @@ async function authenticate(
   // Peer IDs are random per tab, and others in the room can see them. Only
   // the same person may take one over, so nobody can knock someone else out
   // of the room or receive the call signals meant for them.
-  const peerOwner = (await store.listPresence(board.id)).find(
+  const presence = await store.listPresence(board.id);
+  const peerOwner = presence.find(
     (peer) => peer.peerId === hello.peerId,
   )?.userId;
   const localOwner = [...(rooms.get(board.id) ?? [])].find(
@@ -524,6 +593,21 @@ async function authenticate(
   )?.user.id;
   if ((peerOwner ?? user.id) !== user.id || (localOwner ?? user.id) !== user.id)
     return 'This connection is already in use. Reload the page to rejoin.';
+  if (user.id !== board.ownerId) {
+    if (!openToOthers(board))
+      return 'This board’s owner is on the free plan, so it isn’t open to others right now.';
+    if (boardTier(board) === 'trial') {
+      // Two people besides the owner may be in a trial board at once.
+      const others = new Set(
+        [
+          ...presence.map((peer) => peer.userId),
+          ...[...(rooms.get(board.id) ?? [])].map((other) => other.user.id),
+        ].filter((id) => id !== board.ownerId && id !== user.id),
+      );
+      if (others.size >= TRIAL_GUESTS)
+        return 'This board is full on the free plan. Ask its owner to upgrade to Premium to bring in more people.';
+    }
+  }
   return {
     socket,
     peerId: hello.peerId,

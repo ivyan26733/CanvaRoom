@@ -98,3 +98,21 @@ CREATE TABLE IF NOT EXISTS payments (
   paid_at timestamptz
 );
 CREATE INDEX IF NOT EXISTS payments_user_id_idx ON payments (user_id);
+
+-- The free plan keeps an owner's oldest board, found through this index.
+CREATE INDEX IF NOT EXISTS boards_owner_created_idx ON boards (owner_id, created_at);
+
+-- Feedback sent from the site. Mailed to the team when email is set up.
+CREATE TABLE IF NOT EXISTS feedback (
+  id text PRIMARY KEY,
+  user_id text,
+  email text NOT NULL,
+  name text,
+  category text NOT NULL,
+  rating smallint CHECK (rating BETWEEN 1 AND 5),
+  message text NOT NULL,
+  page text,
+  created_at timestamptz NOT NULL,
+  mailed boolean NOT NULL DEFAULT false
+);
+CREATE INDEX IF NOT EXISTS feedback_created_idx ON feedback (created_at);

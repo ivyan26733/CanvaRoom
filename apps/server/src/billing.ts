@@ -5,6 +5,30 @@ const ORDERS_URL = 'https://api.razorpay.com/v1/orders';
 
 export const billingConfigured = () => Boolean(config.razorpay);
 
+export type Price = {
+  name: string;
+  currency: 'INR' | 'USD';
+  amount: number;
+  listAmount: number;
+  days: number;
+  interval: 'month';
+};
+
+/**
+ * Premium for one month. Visitors in India pay in rupees and everyone else in
+ * dollars, going by the country Vercel's edge sets on each request.
+ */
+export function priceFor(country: string | undefined): Price {
+  const currency = country?.toUpperCase() === 'IN' ? 'INR' : 'USD';
+  return {
+    name: 'CanvaRoom Premium · 1 month',
+    currency,
+    ...config.prices[currency],
+    days: config.passDays,
+    interval: 'month',
+  };
+}
+
 /** Razorpay refused the request; `status` is its HTTP status. */
 export class RazorpayError extends Error {
   constructor(
@@ -19,10 +43,14 @@ export class RazorpayError extends Error {
  * Creates an order for the pass. The amount always comes from server config,
  * never from the browser.
  */
-export async function createOrder(receipt: string, userId: string) {
+export async function createOrder(
+  receipt: string,
+  userId: string,
+  price: Price,
+) {
   const keys = config.razorpay;
   if (!keys) throw new RazorpayError('Payments are not configured.', 503);
-  const { amount, currency } = config.pass;
+  const { amount, currency } = price;
   const response = await fetch(ORDERS_URL, {
     method: 'POST',
     headers: {

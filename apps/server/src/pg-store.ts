@@ -14,6 +14,7 @@ import type {
   Member,
   Operation,
   Page,
+  Feedback,
   Payment,
   Presence,
   SessionRecord,
@@ -50,7 +51,9 @@ type BoardRow = {
   invite_revoked: boolean;
   pages: Page[] | null;
   members: Record<string, Member> | null;
-  owner_access_until: Date | null;
+  owner_trial_ends_at: Date | null;
+  owner_paid_until: Date | null;
+  owner_first_board: boolean | null;
 };
 
 type AccountRow = {
@@ -179,9 +182,12 @@ export class PostgresStore implements Store {
       `SELECT b.*,
               (SELECT jsonb_object_agg(m.user_id, jsonb_build_object('role', m.role, 'name', m.name))
                  FROM board_members m WHERE m.board_id = b.id) AS members,
-              (SELECT greatest(coalesce(a.trial_ends_at, a.created_at + make_interval(mins => $2)), a.paid_until)
-                 FROM accounts a WHERE a.id = b.owner_id) AS owner_access_until
-         FROM boards b WHERE b.id = $1`,
+              coalesce(a.trial_ends_at, a.created_at + make_interval(mins => $2)) AS owner_trial_ends_at,
+              a.paid_until AS owner_paid_until,
+              (SELECT f.id FROM boards f WHERE f.owner_id = b.owner_id
+                ORDER BY f.created_at, f.id LIMIT 1) = b.id AS owner_first_board
+         FROM boards b LEFT JOIN accounts a ON a.id = b.owner_id
+        WHERE b.id = $1`,
       [boardId, TRIAL_MINUTES],
     );
     const row = rows[0];
@@ -197,9 +203,17 @@ export class PostgresStore implements Store {
       inviteRevoked: row.invite_revoked,
       pages: row.pages?.length ? row.pages : DEFAULT_PAGES,
       members: row.members ?? {},
-      ...(row.owner_access_until
-        ? { ownerAccessUntil: iso(row.owner_access_until) }
+      ...(row.owner_trial_ends_at
+        ? {
+            ownerPlan: {
+              trialEndsAt: iso(row.owner_trial_ends_at),
+              ...(row.owner_paid_until
+                ? { paidUntil: iso(row.owner_paid_until) }
+                : {}),
+            },
+          }
         : {}),
+      ownerFirstBoard: row.owner_first_board ?? false,
     } satisfies BoardMeta;
   }
 
@@ -541,6 +555,30 @@ export class PostgresStore implements Store {
       [key],
     );
     return rows[0]?.live ? rows[0].user_id : undefined;
+  }
+
+  async addFeedback(feedback: Feedback) {
+    await this.pool.query(
+      `INSERT INTO feedback (id, user_id, email, name, category, rating, message, page, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [
+        feedback.id,
+        feedback.userId ?? null,
+        feedback.email,
+        feedback.name ?? null,
+        feedback.category,
+        feedback.rating ?? null,
+        feedback.message,
+        feedback.page ?? null,
+        feedback.createdAt,
+      ],
+    );
+  }
+
+  async markFeedbackMailed(id: string) {
+    await this.pool.query(`UPDATE feedback SET mailed = true WHERE id = $1`, [
+      id,
+    ]);
   }
 
   async createPayment(payment: Payment) {
