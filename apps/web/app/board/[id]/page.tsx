@@ -2536,7 +2536,7 @@ export default function BoardPage() {
                   <span>
                     {board.locked
                       ? 'Resume editing for all'
-                      : 'Pause editing for others'}
+                      : 'Pause editing for all'}
                   </span>
                 </button>
               )}
