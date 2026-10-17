@@ -162,8 +162,8 @@ export function Story() {
           <p className="st-eyebrow">Your turn</p>
           <h2>Your next class can start in thirty seconds.</h2>
           <p>
-            Free to use. Nothing to install. Invite with one link, draw together
-            live, and talk without leaving the board.
+            Free to start. Nothing to install. Invite with one link, draw
+            together live, and talk without leaving the board.
           </p>
         </div>
         <div className="st-finale-cta">

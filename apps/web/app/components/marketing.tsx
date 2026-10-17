@@ -1,6 +1,8 @@
 import Link from 'next/link';
 import { HOME_FAQ, SITE, USE_CASES, type Faq } from '../lib/site';
 import { Logo } from './icons';
+import { decimal, PRICES, type Currency } from '../lib/pricing';
+import { Pricing } from './pricing';
 import { Story } from './story';
 
 /** Structured data for search engines. */
@@ -28,16 +30,30 @@ export const appSchema = {
   offers: [
     {
       '@type': 'Offer',
-      name: '30-minute free trial',
+      name: 'Free plan, with a 30-minute trial',
       price: '0',
       priceCurrency: 'USD',
     },
-    {
+    ...(['INR', 'USD'] as const).map((currency) => ({
       '@type': 'Offer',
-      name: '30-day pass',
-      price: '11.99',
-      priceCurrency: 'USD',
-    },
+      name: `CanvaRoom Premium, monthly${currency === 'INR' ? ' (India)' : ''}`,
+      price: decimal(PRICES[currency].amount),
+      priceCurrency: currency,
+      ...(currency === 'INR'
+        ? { eligibleRegion: { '@type': 'Country', name: 'IN' } }
+        : {}),
+      priceSpecification: {
+        '@type': 'UnitPriceSpecification',
+        price: decimal(PRICES[currency].amount),
+        priceCurrency: currency,
+        unitCode: 'MON',
+        referenceQuantity: {
+          '@type': 'QuantitativeValue',
+          value: 1,
+          unitCode: 'MON',
+        },
+      },
+    })),
   ],
   featureList: [
     'Real-time collaborative drawing',
@@ -80,7 +96,9 @@ export function MarketingFooter() {
         <Link href="/" className="mk-brand">
           <Logo size={24} /> {SITE.name}
         </Link>
-        <p>The free online whiteboard with live ink, voice, and chat.</p>
+        <p>
+          The online whiteboard with live ink, voice, and chat. Free to start.
+        </p>
       </div>
       <nav aria-label="Use cases">
         <h2>Use CanvaRoom as a</h2>
@@ -102,7 +120,21 @@ export function MarketingFooter() {
             <Link href="/">Sign in</Link>
           </li>
           <li>
+            <a href="/#pricing">Pricing</a>
+          </li>
+        </ul>
+      </nav>
+      <nav aria-label="Company">
+        <h2>Company</h2>
+        <ul>
+          <li>
             <Link href="/about">About us</Link>
+          </li>
+          <li>
+            <Link href="/contact">Contact us</Link>
+          </li>
+          <li>
+            <Link href="/contact#feedback">Send feedback</Link>
           </li>
         </ul>
       </nav>
@@ -114,10 +146,11 @@ export function MarketingFooter() {
 }
 
 /** Crawlable detail below the sign-in screen on the home page. */
-export function HomeContent() {
+export function HomeContent({ currency }: { currency: Currency }) {
   return (
     <div className="mk mk-home">
       <Story />
+      <Pricing currency={currency} />
 
       <section className="mk-uses" aria-labelledby="uses-heading">
         <h2 id="uses-heading">One board, many rooms:</h2>

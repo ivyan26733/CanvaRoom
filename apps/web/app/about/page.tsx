@@ -398,8 +398,8 @@ export default function AboutPage() {
             <Link href="/?mode=signup" className="button primary">
               Start a free board
             </Link>
-            <Link href="/" className="button ghost">
-              Sign in
+            <Link href="/contact" className="button ghost">
+              Get in touch
             </Link>
           </div>
         </section>

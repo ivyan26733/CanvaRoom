@@ -1,0 +1,273 @@
+/* Home page plans: a ruled comparison, then Premium's perks beside its price. */
+
+.pr {
+  width: min(var(--mk-width, 1360px), calc(100% - 32px));
+  margin: clamp(72px, 10vw, 136px) auto 0;
+  scroll-margin-top: 24px;
+}
+
+.pr-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
+  gap: 18px clamp(32px, 6vw, 96px);
+  align-items: end;
+}
+
+.pr-head .st-eyebrow {
+  grid-column: 1 / -1;
+}
+
+.pr-head h2 {
+  margin: 0;
+  font: 750 clamp(34px, 5vw, 68px) / 0.98 var(--display);
+  letter-spacing: -0.045em;
+  text-wrap: balance;
+}
+
+.pr-head h2 span {
+  background: linear-gradient(
+    transparent 62%,
+    color-mix(in srgb, var(--accent) 30%, transparent) 62%
+  );
+}
+
+.pr-lede {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: clamp(16px, 1.4vw, 19px);
+  line-height: 1.6;
+}
+
+/* ---- Comparison: a ruled ledger, the Premium column in ink ---- */
+
+.pr-table {
+  margin-top: clamp(40px, 6vw, 72px);
+  border-top: 1px solid var(--line-2);
+}
+
+.pr-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) repeat(3, minmax(0, 1fr));
+  border-bottom: 1px solid var(--line-2);
+}
+
+.pr-label {
+  display: flex;
+  align-items: center;
+  padding: 18px 16px 18px 0;
+  font: 600 clamp(15px, 1.3vw, 17px) / 1.35 var(--display);
+}
+
+.pr-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px 12px;
+  color: var(--ink);
+  font-weight: 600;
+  text-align: center;
+}
+
+.pr-cell .icon {
+  color: var(--green);
+}
+
+.pr-no {
+  color: var(--ink-3);
+}
+
+.pr-cell.is-premium {
+  background: var(--ink);
+  color: var(--bg);
+}
+
+.pr-cell.is-premium .icon {
+  color: var(--accent);
+}
+
+.pr-row:last-child .pr-cell.is-premium {
+  border-radius: 0 0 20px 20px;
+}
+
+.pr-plans .pr-cell {
+  flex-direction: column;
+  gap: 4px;
+  padding: 22px 12px 18px;
+}
+
+.pr-plans .pr-cell.is-premium {
+  border-radius: 20px 20px 0 0;
+}
+
+.pr-plans strong {
+  font: 700 clamp(17px, 1.6vw, 22px) / 1.1 var(--display);
+  letter-spacing: -0.02em;
+}
+
+.pr-plans small {
+  color: var(--ink-2);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.pr-plans .is-premium small {
+  color: color-mix(in srgb, var(--bg) 72%, transparent);
+}
+
+.pr-plans .is-premium small span {
+  opacity: 0.8;
+}
+
+/* ---- Premium: the price on the left, the perks running down the right ---- */
+
+.pr-premium {
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+  gap: 32px clamp(32px, 6vw, 96px);
+  margin-top: clamp(56px, 8vw, 104px);
+}
+
+.pr-card {
+  align-self: start;
+  position: sticky;
+  top: 32px;
+  padding: clamp(28px, 4vw, 44px);
+  border-radius: 28px;
+  background: var(--accent-soft);
+  border: 1px solid color-mix(in srgb, var(--accent) 24%, transparent);
+}
+
+.pr-price {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+  margin: 16px 0 6px;
+}
+
+.pr-price s {
+  color: var(--ink-3);
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.pr-price strong {
+  font: 750 clamp(48px, 6vw, 76px) / 0.95 var(--display);
+  letter-spacing: -0.05em;
+}
+
+.pr-price span {
+  color: var(--ink-2);
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.pr-offer {
+  display: inline-block;
+  margin: 4px 0 0;
+  padding: 3px 10px;
+  border-radius: 999px;
+  color: #fff;
+  background: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.pr-fine {
+  margin: 16px 0 0;
+  color: var(--ink-2);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.pr-cta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 24px;
+}
+
+.pr-cta .button {
+  text-decoration: none;
+}
+
+.pr-perks {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--line-2);
+}
+
+.pr-perks li {
+  display: grid;
+  grid-template-columns: 44px 28px minmax(0, 1fr);
+  gap: 4px 14px;
+  align-items: start;
+  padding: 24px 0;
+  border-bottom: 1px solid var(--line-2);
+}
+
+.pr-perk-index {
+  color: var(--ink-3);
+  font: 600 13px/1.9 var(--mono);
+}
+
+.pr-perks .icon {
+  margin-top: 2px;
+  color: var(--accent);
+}
+
+.pr-perks h3 {
+  margin: 0 0 6px;
+  font: 700 clamp(19px, 1.8vw, 24px) / 1.2 var(--display);
+  letter-spacing: -0.02em;
+}
+
+.pr-perks p {
+  margin: 0;
+  max-width: 560px;
+  color: var(--ink-2);
+  line-height: 1.6;
+}
+
+@media (max-width: 860px) {
+  .pr-head,
+  .pr-premium {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .pr-card {
+    position: static;
+  }
+
+  /* Each feature on its own line, the three plans side by side below it. */
+  .pr-row {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .pr-label {
+    grid-column: 1 / -1;
+    padding: 16px 0 6px;
+  }
+
+  .pr-plans .pr-label {
+    display: none;
+  }
+
+  .pr-cell {
+    padding: 8px 6px 14px;
+    font-size: 14px;
+  }
+
+  .pr-plans .pr-cell {
+    padding: 16px 6px 12px;
+  }
+
+  .pr-perks li {
+    grid-template-columns: 28px minmax(0, 1fr);
+  }
+
+  .pr-perk-index {
+    display: none;
+  }
+}

@@ -9,9 +9,9 @@ const productionHost =
 export const SITE = {
   name: 'CanvaRoom',
   url: productionHost.replace(/\/$/, ''),
-  title: 'CanvaRoom — Free Online Collaborative Whiteboard with Voice & Chat',
+  title: 'CanvaRoom — Online Collaborative Whiteboard with Voice & Chat',
   description:
-    'A free online whiteboard for teams, classes, and study groups. Draw together in real time with no lag, talk over built-in voice, chat, add pages, and start from templates.',
+    'An online whiteboard for teams, classes, and study groups. Start free, draw together in real time with no lag, talk over built-in voice, chat, add pages, and start from templates.',
   keywords: [
     'online whiteboard',
     'collaborative whiteboard',
@@ -29,12 +29,27 @@ export const SITE = {
   ],
 };
 
+/** How to reach the team. */
+export const CONTACT = {
+  phone: '+91 70732 95354',
+  email: 'ivyan26733@gmail.com',
+};
+
 export type Faq = { q: string; a: string };
+
+/** How the plans read in copy. The prices match the server's defaults. */
+export const PLAN_COPY = {
+  premium:
+    '₹499 a month in India, or $11.99 a month elsewhere (launch offer, normally $15.99)',
+  trial:
+    'Every new account gets a 30-minute free trial: up to two boards, with two people besides you on each, live drawing, voice, chat, and templates',
+  free: 'After the trial, the free plan keeps your first board for you to use on your own',
+};
 
 export const HOME_FAQ: Faq[] = [
   {
     q: 'Is CanvaRoom free?',
-    a: 'Every new account gets a 30-minute free trial with everything included. After that, a 30-day pass is $11.99 (launch offer, normally $15.99) to keep creating boards and inviting people. Scratch boards stay free, and your boards always stay yours to open and export.',
+    a: `${PLAN_COPY.trial}. ${PLAN_COPY.free}. Premium is ${PLAN_COPY.premium}, and adds unlimited boards and people, export, images, and HD recording. Scratch boards stay free with no sign-up.`,
   },
   {
     q: 'Do the people I invite need an account?',
@@ -54,7 +69,7 @@ export const HOME_FAQ: Faq[] = [
   },
   {
     q: 'Can I export my board?',
-    a: 'Each page can be exported as a PNG image, an SVG, or a PDF.',
+    a: 'With Premium, each page can be exported as a PNG image, an SVG, or a PDF. Scratch boards can be exported on any plan.',
   },
 ];
 
@@ -77,13 +92,14 @@ export const USE_CASES: UseCase[] = [
   {
     slug: 'online-whiteboard',
     label: 'Online whiteboard',
-    title: 'Free Online Whiteboard — Draw, Write, and Share Instantly',
+    title:
+      'Online Whiteboard, Free to Start — Draw, Write, and Share Instantly',
     description:
-      'A free online whiteboard that works in your browser. Sketch, write, add sticky notes, shapes, and images, then share a link so others can draw with you live.',
-    kicker: 'Free online whiteboard',
+      'An online whiteboard that works in your browser, free to start. Sketch, write, add sticky notes, shapes, and images, then share a link so others can draw with you live.',
+    kicker: 'Online whiteboard · free to start',
     heading: 'A whiteboard that opens in your browser and fills up with ideas.',
     intro:
-      'CanvaRoom is a free online whiteboard with an infinite canvas. Open it in any modern browser, start drawing, and share a link when you want company. Nothing to install.',
+      'CanvaRoom is an online whiteboard with an infinite canvas, free to start. Open it in any modern browser, start drawing, and share a link when you want company. Nothing to install.',
     sections: [
       {
         title: 'Every tool you reach for',
@@ -114,7 +130,7 @@ export const USE_CASES: UseCase[] = [
       },
       {
         q: 'Is the online whiteboard free?',
-        a: 'Scratch boards are free with no sign-up. Accounts get a 30-minute free trial, then a 30-day pass is $11.99 to keep creating boards and inviting people.',
+        a: `Scratch boards are free with no sign-up. ${PLAN_COPY.trial}. ${PLAN_COPY.free}. Premium is ${PLAN_COPY.premium}.`,
       },
       {
         q: 'Can I add images?',
@@ -175,7 +191,7 @@ export const USE_CASES: UseCase[] = [
     label: 'Study board',
     title: 'Online Study Board for Group Study and Revision',
     description:
-      'An online study board for students. Revise together, map out topics, solve problems on a shared whiteboard, and talk over built-in voice — free.',
+      'An online study board for students. Revise together, map out topics, solve problems on a shared whiteboard, and talk over built-in voice. Start free.',
     kicker: 'Online study board',
     heading:
       'A shared study board for revising, explaining, and solving together.',
@@ -207,7 +223,7 @@ export const USE_CASES: UseCase[] = [
     faq: [
       {
         q: 'Is the study board free for students?',
-        a: 'You can try it free for 30 minutes after signing up. After that, a 30-day pass is $11.99 (launch offer, normally $15.99).',
+        a: `${PLAN_COPY.trial}. ${PLAN_COPY.free}. Premium is ${PLAN_COPY.premium}.`,
       },
       {
         q: 'Can my friends join without signing up?',
@@ -311,7 +327,7 @@ export const USE_CASES: UseCase[] = [
       },
       {
         q: 'Is it free?',
-        a: 'It starts with a 30-minute free trial. After that, a 30-day pass is $11.99 (launch offer, normally $15.99).',
+        a: `${PLAN_COPY.trial}. ${PLAN_COPY.free}. Premium is ${PLAN_COPY.premium}.`,
       },
     ],
   },

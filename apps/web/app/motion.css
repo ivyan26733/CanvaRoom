@@ -106,10 +106,12 @@
 .mk-uses a,
 .password-toggle,
 .toast button {
-  transition-property: background, border-color, color, box-shadow, transform,
-    translate, scale, opacity;
-  transition-duration: var(--dur-1), var(--dur-1), var(--dur-1), var(--dur-2),
-    var(--dur-1), var(--dur-2), var(--dur-1), var(--dur-1);
+  transition-property:
+    background, border-color, color, box-shadow, transform, translate, scale,
+    opacity;
+  transition-duration:
+    var(--dur-1), var(--dur-1), var(--dur-1), var(--dur-2), var(--dur-1),
+    var(--dur-2), var(--dur-1), var(--dur-1);
   transition-timing-function: var(--ease-out);
 }
 .button:active:not(:disabled) {
@@ -396,6 +398,8 @@
     .mk-uses li,
     .mk-qa-head,
     .mk-faq details,
+    .pr-head,
+    .pr-perks li,
     .mk-section > h2,
     .mk-card,
     .mk-steps li,
