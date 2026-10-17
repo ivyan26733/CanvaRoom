@@ -74,6 +74,11 @@ export type BoardMeta = {
   inviteRevoked: boolean;
   members: Record<string, Member>;
   pages: Page[];
+  /**
+   * Until when the owner's trial or pass lets the board be edited. Read from
+   * the owner's account, never stored with the board.
+   */
+  ownerAccessUntil?: string;
 };
 
 export type ChatMessage = {
@@ -99,6 +104,43 @@ export type User = {
   color: string;
   guest: boolean;
   email?: string;
+  /** Account holders only, and only ever sent to that person. */
+  plan?: Plan;
+};
+
+/** When an account's free trial ends and how long a paid pass runs. */
+export type Plan = { trialEndsAt: string; paidUntil?: string };
+
+/** Minutes of free use a new account gets. */
+export const TRIAL_MINUTES = 30;
+
+/** The trial end of an account, for rows saved before trials existed. */
+export const trialEnd = (account: Pick<Account, 'createdAt' | 'trialEndsAt'>) =>
+  account.trialEndsAt ??
+  new Date(
+    new Date(account.createdAt).getTime() + TRIAL_MINUTES * 60_000,
+  ).toISOString();
+
+/** The later of the trial end and the paid-until date. */
+export function accessUntil(plan: Plan) {
+  return plan.paidUntil && plan.paidUntil > plan.trialEndsAt
+    ? plan.paidUntil
+    : plan.trialEndsAt;
+}
+
+export const hasAccess = (until: string | undefined, now = Date.now()) =>
+  until !== undefined && new Date(until).getTime() > now;
+
+/** A Razorpay order this server created, and whether it has been paid. */
+export type Payment = {
+  orderId: string;
+  userId: string;
+  amount: number;
+  currency: string;
+  status: 'created' | 'paid';
+  paymentId?: string;
+  createdAt: string;
+  paidAt?: string;
 };
 
 export type Account = {
@@ -109,6 +151,9 @@ export type Account = {
   createdAt: string;
   /** `scrypt$N$r$p$salt$hash`, never sent to clients. */
   passwordHash: string;
+  /** Missing on accounts saved before trials existed; see `trialEnd`. */
+  trialEndsAt?: string;
+  paidUntil?: string;
 };
 
 /** Server-side session, stored under a hash of the cookie token. */

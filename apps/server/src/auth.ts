@@ -7,7 +7,12 @@ import {
 } from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
 import type { FastifyReply, FastifyRequest } from 'fastify';
-import type { Account, SessionRecord, User } from './models.js';
+import {
+  trialEnd,
+  type Account,
+  type SessionRecord,
+  type User,
+} from './models.js';
 import { store } from './store.js';
 
 const COOKIE = 'cb_session';
@@ -74,6 +79,10 @@ export function publicUser(account: Account): User {
     color: account.color,
     email: account.email,
     guest: false,
+    plan: {
+      trialEndsAt: trialEnd(account),
+      ...(account.paidUntil ? { paidUntil: account.paidUntil } : {}),
+    },
   };
 }
 

@@ -3,7 +3,13 @@ import { dirname, resolve } from 'node:path';
 import { Redis } from 'ioredis';
 import { config } from './config.js';
 import { createPool } from './db.js';
-import { DEFAULT_PAGES, MAX_MESSAGES, MAX_SNAPSHOTS } from './models.js';
+import {
+  accessUntil,
+  DEFAULT_PAGES,
+  MAX_MESSAGES,
+  MAX_SNAPSHOTS,
+  trialEnd,
+} from './models.js';
 import { PostgresStore } from './pg-store.js';
 import type {
   Account,
@@ -13,6 +19,7 @@ import type {
   Member,
   Operation,
   Page,
+  Payment,
   Presence,
   SessionRecord,
   Snapshot,
@@ -99,7 +106,34 @@ export interface Store {
   createResetToken(key: string, userId: string, ttl: number): Promise<void>;
   /** Returns the user a reset token belongs to and uses it up. */
   takeResetToken(key: string): Promise<string | undefined>;
+  createPayment(payment: Payment): Promise<void>;
+  getPayment(orderId: string): Promise<Payment | undefined>;
+  /**
+   * Marks an unpaid order paid and extends its user's pass by `days` from
+   * the later of now and their current pass end. Returns the new pass end, or
+   * undefined when the order was already paid.
+   */
+  completePayment(
+    orderId: string,
+    paymentId: string,
+    days: number,
+  ): Promise<string | undefined>;
 }
+
+/** Until when an account may edit its boards: its trial or its pass. */
+export const accountAccessUntil = (account: Account | undefined) =>
+  account &&
+  accessUntil({
+    trialEndsAt: trialEnd(account),
+    ...(account.paidUntil ? { paidUntil: account.paidUntil } : {}),
+  });
+
+/** The later of `from` (or now, if sooner) and now, plus `days`. */
+const extendPass = (from: string | undefined, days: number) =>
+  new Date(
+    Math.max(from ? new Date(from).getTime() : 0, Date.now()) +
+      days * 86_400_000,
+  ).toISOString();
 
 /** Short-lived state that never needs to reach the database. */
 export type LiveStore = Pick<
@@ -125,6 +159,7 @@ const keys = {
   rate: (key: string) => `rl:${key}`,
   reset: (key: string) => `reset:${key}`,
   userReset: (userId: string) => `u:${userId}:reset`,
+  payment: (orderId: string) => `pay:${orderId}`,
 };
 
 // One round trip, atomic per board: tombstoned objects are never recreated,
@@ -156,7 +191,14 @@ return 1
 function metaToHash(meta: Partial<BoardMeta>) {
   const hash: Record<string, string> = {};
   for (const [key, value] of Object.entries(meta)) {
-    if (key === 'members' || key === 'id' || value === undefined) continue;
+    // Owner access is read from the owner's account, never stored here.
+    if (
+      key === 'members' ||
+      key === 'id' ||
+      key === 'ownerAccessUntil' ||
+      value === undefined
+    )
+      continue;
     hash[key] =
       typeof value === 'boolean'
         ? value
@@ -223,7 +265,10 @@ export class RedisStore implements Store {
       this.redis.hgetall(keys.meta(boardId)),
       this.redis.hgetall(keys.members(boardId)),
     ]);
-    return hashToMeta(boardId, meta, members);
+    const board = hashToMeta(boardId, meta, members);
+    if (!board) return;
+    const until = accountAccessUntil(await this.getAccount(board.ownerId));
+    return until ? { ...board, ownerAccessUntil: until } : board;
   }
 
   async updateMeta(boardId: string, fields: Partial<BoardMeta>) {
@@ -472,6 +517,37 @@ export class RedisStore implements Store {
         .exec()) ?? [];
     return Number(count ?? 0);
   }
+
+  async createPayment(payment: Payment) {
+    await this.redis.set(
+      keys.payment(payment.orderId),
+      JSON.stringify(payment),
+    );
+  }
+
+  async getPayment(orderId: string) {
+    const value = await this.redis.get(keys.payment(orderId));
+    return value ? (JSON.parse(value) as Payment) : undefined;
+  }
+
+  async completePayment(orderId: string, paymentId: string, days: number) {
+    // Only used without Postgres (local development), so not atomic.
+    const payment = await this.getPayment(orderId);
+    const account = payment && (await this.getAccount(payment.userId));
+    if (!payment || payment.status === 'paid' || !account) return;
+    const paidUntil = extendPass(account.paidUntil, days);
+    await this.createPayment({
+      ...payment,
+      status: 'paid',
+      paymentId,
+      paidAt: new Date().toISOString(),
+    });
+    await this.redis.set(
+      keys.account(account.id),
+      JSON.stringify({ ...account, paidUntil }),
+    );
+    return paidUntil;
+  }
 }
 
 type MemoryBoard = {
@@ -490,6 +566,7 @@ export class MemoryStore implements Store {
   private sessions = new Map<string, SessionRecord & { expiresAt: number }>();
   private hits = new Map<string, { count: number; resetAt: number }>();
   private resets = new Map<string, { userId: string; expiresAt: number }>();
+  private payments = new Map<string, Payment>();
   private saveTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(private readonly file?: string) {}
@@ -581,6 +658,9 @@ export class MemoryStore implements Store {
     // Files saved before pages existed have none.
     const meta = structuredClone(board.meta);
     meta.pages ??= DEFAULT_PAGES;
+    const until = accountAccessUntil(this.accounts.get(meta.ownerId));
+    if (until) meta.ownerAccessUntil = until;
+    else delete meta.ownerAccessUntil;
     return meta;
   }
 
@@ -773,6 +853,30 @@ export class MemoryStore implements Store {
         : { count: 1, resetAt: now + windowSeconds * 1000 };
     this.hits.set(key, next);
     return next.count;
+  }
+
+  async createPayment(payment: Payment) {
+    this.payments.set(payment.orderId, payment);
+  }
+
+  async getPayment(orderId: string) {
+    return this.payments.get(orderId);
+  }
+
+  async completePayment(orderId: string, paymentId: string, days: number) {
+    const payment = this.payments.get(orderId);
+    const account = payment && this.accounts.get(payment.userId);
+    if (!payment || payment.status === 'paid' || !account) return;
+    const paidUntil = extendPass(account.paidUntil, days);
+    this.payments.set(orderId, {
+      ...payment,
+      status: 'paid',
+      paymentId,
+      paidAt: new Date().toISOString(),
+    });
+    this.accounts.set(account.id, { ...account, paidUntil });
+    this.scheduleSave();
+    return paidUntil;
   }
 }
 

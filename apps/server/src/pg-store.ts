@@ -1,5 +1,11 @@
 import type pg from 'pg';
-import { DEFAULT_PAGES, MAX_MESSAGES, MAX_SNAPSHOTS } from './models.js';
+import {
+  DEFAULT_PAGES,
+  MAX_MESSAGES,
+  MAX_SNAPSHOTS,
+  TRIAL_MINUTES,
+  trialEnd,
+} from './models.js';
 import type {
   Account,
   BoardMeta,
@@ -8,6 +14,7 @@ import type {
   Member,
   Operation,
   Page,
+  Payment,
   Presence,
   SessionRecord,
   Snapshot,
@@ -43,6 +50,7 @@ type BoardRow = {
   invite_revoked: boolean;
   pages: Page[] | null;
   members: Record<string, Member> | null;
+  owner_access_until: Date | null;
 };
 
 type AccountRow = {
@@ -52,6 +60,8 @@ type AccountRow = {
   color: string;
   password_hash: string;
   created_at: Date;
+  trial_ends_at: Date | null;
+  paid_until: Date | null;
 };
 
 const toAccount = (row: AccountRow): Account => ({
@@ -61,6 +71,30 @@ const toAccount = (row: AccountRow): Account => ({
   color: row.color,
   passwordHash: row.password_hash,
   createdAt: iso(row.created_at),
+  ...(row.trial_ends_at ? { trialEndsAt: iso(row.trial_ends_at) } : {}),
+  ...(row.paid_until ? { paidUntil: iso(row.paid_until) } : {}),
+});
+
+type PaymentRow = {
+  order_id: string;
+  user_id: string;
+  amount: number;
+  currency: string;
+  status: Payment['status'];
+  payment_id: string | null;
+  created_at: Date;
+  paid_at: Date | null;
+};
+
+const toPayment = (row: PaymentRow): Payment => ({
+  orderId: row.order_id,
+  userId: row.user_id,
+  amount: row.amount,
+  currency: row.currency,
+  status: row.status,
+  createdAt: iso(row.created_at),
+  ...(row.payment_id ? { paymentId: row.payment_id } : {}),
+  ...(row.paid_at ? { paidAt: iso(row.paid_at) } : {}),
 });
 
 /** Builds `SET a = $2, b = $3` from the fields that are present. */
@@ -144,9 +178,11 @@ export class PostgresStore implements Store {
     const { rows } = await this.pool.query<BoardRow>(
       `SELECT b.*,
               (SELECT jsonb_object_agg(m.user_id, jsonb_build_object('role', m.role, 'name', m.name))
-                 FROM board_members m WHERE m.board_id = b.id) AS members
+                 FROM board_members m WHERE m.board_id = b.id) AS members,
+              (SELECT greatest(coalesce(a.trial_ends_at, a.created_at + make_interval(mins => $2)), a.paid_until)
+                 FROM accounts a WHERE a.id = b.owner_id) AS owner_access_until
          FROM boards b WHERE b.id = $1`,
-      [boardId],
+      [boardId, TRIAL_MINUTES],
     );
     const row = rows[0];
     if (!row) return;
@@ -161,6 +197,9 @@ export class PostgresStore implements Store {
       inviteRevoked: row.invite_revoked,
       pages: row.pages?.length ? row.pages : DEFAULT_PAGES,
       members: row.members ?? {},
+      ...(row.owner_access_until
+        ? { ownerAccessUntil: iso(row.owner_access_until) }
+        : {}),
     } satisfies BoardMeta;
   }
 
@@ -369,8 +408,8 @@ export class PostgresStore implements Store {
 
   async createAccount(account: Account) {
     const { rowCount } = await this.pool.query(
-      `INSERT INTO accounts (id, email, name, color, password_hash, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT DO NOTHING`,
+      `INSERT INTO accounts (id, email, name, color, password_hash, created_at, trial_ends_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT DO NOTHING`,
       [
         account.id,
         account.email,
@@ -378,6 +417,7 @@ export class PostgresStore implements Store {
         account.color,
         account.passwordHash,
         account.createdAt,
+        trialEnd(account),
       ],
     );
     return rowCount === 1;
@@ -501,5 +541,46 @@ export class PostgresStore implements Store {
       [key],
     );
     return rows[0]?.live ? rows[0].user_id : undefined;
+  }
+
+  async createPayment(payment: Payment) {
+    await this.pool.query(
+      `INSERT INTO payments (order_id, user_id, amount, currency, status, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [
+        payment.orderId,
+        payment.userId,
+        payment.amount,
+        payment.currency,
+        payment.status,
+        payment.createdAt,
+      ],
+    );
+  }
+
+  async getPayment(orderId: string) {
+    const { rows } = await this.pool.query<PaymentRow>(
+      `SELECT * FROM payments WHERE order_id = $1`,
+      [orderId],
+    );
+    return rows[0] && toPayment(rows[0]);
+  }
+
+  async completePayment(orderId: string, paymentId: string, days: number) {
+    // Marking the order paid and extending the pass happen together, and only
+    // once: a second verification of the same order finds it already paid.
+    const { rows } = await this.pool.query<{ paid_until: Date }>(
+      `WITH paid AS (
+         UPDATE payments SET status = 'paid', payment_id = $2, paid_at = now()
+          WHERE order_id = $1 AND status = 'created'
+          RETURNING user_id
+       )
+       UPDATE accounts a
+          SET paid_until = greatest(a.paid_until, now()) + make_interval(days => $3)
+         FROM paid WHERE a.id = paid.user_id
+       RETURNING a.paid_until`,
+      [orderId, paymentId, days],
+    );
+    return rows[0] ? iso(rows[0].paid_until) : undefined;
   }
 }

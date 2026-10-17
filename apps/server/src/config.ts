@@ -26,6 +26,16 @@ const environmentSchema = z.object({
   MAIL_FROM: z.string().optional(),
   // Public address used in emailed links. Never taken from request headers.
   APP_URL: z.url().optional(),
+  // Razorpay Standard Checkout. The secret signs orders and payments and must
+  // never reach the browser; the key ID is public.
+  RAZORPAY_KEY_ID: z.string().optional(),
+  RAZORPAY_KEY_SECRET: z.string().optional(),
+  // The paid pass, in the currency's smallest unit (cents for USD): the price
+  // charged, the higher "was" price shown struck through, and its length.
+  BILLING_CURRENCY: z.string().length(3).toUpperCase().default('USD'),
+  BILLING_PRICE_MINOR: z.coerce.number().int().min(100).default(1199),
+  BILLING_LIST_PRICE_MINOR: z.coerce.number().int().min(0).default(1599),
+  BILLING_PASS_DAYS: z.coerce.number().int().min(1).max(3660).default(30),
   VERCEL_PROJECT_PRODUCTION_URL: z.string().optional(),
 });
 
@@ -44,6 +54,17 @@ export const config = {
   databaseUrl: env.DATABASE_URL || undefined,
   blobEnabled: Boolean(env.BLOB_READ_WRITE_TOKEN),
   resendApiKey: env.RESEND_API_KEY || undefined,
+  razorpay:
+    env.RAZORPAY_KEY_ID && env.RAZORPAY_KEY_SECRET
+      ? { keyId: env.RAZORPAY_KEY_ID, keySecret: env.RAZORPAY_KEY_SECRET }
+      : undefined,
+  pass: {
+    name: `${env.BILLING_PASS_DAYS}-day pass`,
+    amount: env.BILLING_PRICE_MINOR,
+    listAmount: env.BILLING_LIST_PRICE_MINOR,
+    currency: env.BILLING_CURRENCY,
+    days: env.BILLING_PASS_DAYS,
+  },
   mailFrom: env.MAIL_FROM || 'CanvaRoom <onboarding@resend.dev>',
   appUrl: (
     env.APP_URL ??

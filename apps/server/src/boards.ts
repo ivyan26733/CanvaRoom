@@ -1,12 +1,20 @@
-import type { BoardMeta, Role } from './models.js';
+import { hasAccess, type BoardMeta, type Role } from './models.js';
+
+/** The owner's trial has ended without a pass, so the board is view-only. */
+export const paywalled = (board: BoardMeta) =>
+  !hasAccess(board.ownerAccessUntil);
 
 export const canEdit = (role: Role, board: BoardMeta) =>
-  role !== 'viewer' && !board.locked;
+  role !== 'viewer' && !board.locked && !paywalled(board);
 
-export const editBlockedReason = (role: Role, board: BoardMeta) =>
-  board.locked && role !== 'viewer'
-    ? 'The board owner has paused editing.'
-    : 'You have view-only access.';
+export function editBlockedReason(role: Role, board: BoardMeta) {
+  if (role === 'viewer') return 'You have view-only access.';
+  if (paywalled(board))
+    return role === 'owner'
+      ? 'Your free trial has ended. Upgrade to keep editing this board.'
+      : 'This board is view-only until its owner upgrades.';
+  return 'The board owner has paused editing.';
+}
 
 /** The board settings a member may see. Only the owner sees the invite token. */
 export function publicBoard(board: BoardMeta, role: Role) {
@@ -25,5 +33,7 @@ export function publicBoard(board: BoardMeta, role: Role) {
     })),
     inviteToken: role === 'owner' ? board.inviteToken : undefined,
     inviteRevoked: role === 'owner' ? board.inviteRevoked : undefined,
+    // Lets the page switch to view-only the moment the owner's access ends.
+    accessUntil: board.ownerAccessUntil ?? null,
   };
 }

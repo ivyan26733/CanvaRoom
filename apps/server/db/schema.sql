@@ -78,3 +78,23 @@ CREATE TABLE IF NOT EXISTS board_snapshots (
   data jsonb NOT NULL
 );
 CREATE INDEX IF NOT EXISTS board_snapshots_board_idx ON board_snapshots (board_id, seq);
+
+-- Free trial and paid pass. Accounts that existed before trials get a fresh
+-- 30-minute trial from the first migration; new accounts set it on sign-up.
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS trial_ends_at timestamptz;
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS paid_until timestamptz;
+UPDATE accounts SET trial_ends_at = now() + interval '30 minutes'
+ WHERE trial_ends_at IS NULL;
+
+-- Razorpay orders created for a user, and whether each was paid.
+CREATE TABLE IF NOT EXISTS payments (
+  order_id text PRIMARY KEY,
+  user_id text NOT NULL,
+  amount integer NOT NULL CHECK (amount >= 100),
+  currency text NOT NULL,
+  status text NOT NULL CHECK (status IN ('created', 'paid')),
+  payment_id text UNIQUE,
+  created_at timestamptz NOT NULL,
+  paid_at timestamptz
+);
+CREATE INDEX IF NOT EXISTS payments_user_id_idx ON payments (user_id);

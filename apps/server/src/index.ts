@@ -14,7 +14,18 @@ import {
   userFromRequest,
   verifyPassword,
 } from './auth.js';
-import { canEdit, editBlockedReason, publicBoard } from './boards.js';
+import {
+  canEdit,
+  editBlockedReason,
+  paywalled,
+  publicBoard,
+} from './boards.js';
+import {
+  billingConfigured,
+  createOrder,
+  RazorpayError,
+  validPaymentSignature,
+} from './billing.js';
 import { mailConfigured, sendPasswordReset } from './mail.js';
 import { attachRealtime, broadcast, broadcastBoard } from './realtime.js';
 import { loadStore, storageKind, store } from './store.js';
@@ -28,7 +39,13 @@ import {
 } from './images.js';
 import { pageIdSchema, pageNameSchema } from './schemas.js';
 import { TEMPLATES, templateObjects } from './templates.js';
-import { DEFAULT_PAGES, pageOf } from './models.js';
+import {
+  accessUntil,
+  DEFAULT_PAGES,
+  hasAccess,
+  pageOf,
+  TRIAL_MINUTES,
+} from './models.js';
 import type {
   Account,
   BoardMeta,
@@ -48,8 +65,26 @@ app.addContentTypeParser(
   (_request, body, done) => done(null, body),
 );
 
-const apiError = (reply: FastifyReply, status: number, message: string) =>
-  reply.code(status).send({ error: message });
+const apiError = (
+  reply: FastifyReply,
+  status: number,
+  message: string,
+  code?: string,
+) => reply.code(status).send({ error: message, ...(code ? { code } : {}) });
+/**
+ * Replies 402 when an account's trial has ended without a pass. The page
+ * opens the upgrade dialog on this code.
+ */
+const requirePlan = (user: User, reply: FastifyReply) => {
+  if (user.plan && hasAccess(accessUntil(user.plan))) return true;
+  apiError(
+    reply,
+    402,
+    'Your free trial has ended. Upgrade to create boards and invite people.',
+    'payment_required',
+  );
+  return false;
+};
 const currentUser = async (request: FastifyRequest, reply: FastifyReply) => {
   const user = await userFromRequest(request.raw);
   if (!user) {
@@ -159,6 +194,7 @@ app.post('/api/auth/signup', async (request, reply) => {
     color: current?.color ?? colorFor(id),
     createdAt: new Date().toISOString(),
     passwordHash: await hashPassword(body.data.password),
+    trialEndsAt: new Date(Date.now() + TRIAL_MINUTES * 60_000).toISOString(),
   };
   if (!(await store.createAccount(account)))
     return apiError(
@@ -395,6 +431,7 @@ app.post('/api/boards', async (request, reply) => {
     );
   if (!body.success)
     return apiError(reply, 400, 'Board name must be 1–80 characters.');
+  if (!requirePlan(user, reply)) return;
   const now = new Date().toISOString();
   const board: BoardMeta = {
     id: randomUUID(),
@@ -407,6 +444,7 @@ app.post('/api/boards', async (request, reply) => {
     inviteToken: inviteId(),
     inviteRevoked: false,
     pages: DEFAULT_PAGES,
+    ownerAccessUntil: accessUntil(user.plan!),
   };
   await store.createBoard(
     board,
@@ -481,6 +519,7 @@ app.post('/api/boards/:boardId/duplicate', async (request, reply) => {
     return apiError(reply, 403, 'Create a free account to duplicate boards.');
   if (source.role === 'viewer')
     return apiError(reply, 403, 'Viewers cannot duplicate this board.');
+  if (!requirePlan(user, reply)) return;
   const now = new Date().toISOString();
   const duplicate: BoardMeta = {
     id: randomUUID(),
@@ -493,6 +532,7 @@ app.post('/api/boards/:boardId/duplicate', async (request, reply) => {
     inviteToken: inviteId(),
     inviteRevoked: false,
     pages: source.board.pages,
+    ownerAccessUntil: accessUntil(user.plan!),
   };
   const objects = await copyImages(
     boardId,
@@ -560,6 +600,13 @@ app.post('/api/boards/:boardId/join', async (request, reply) => {
     body.data.inviteToken !== board.inviteToken
   )
     return apiError(reply, 404, 'This invite is invalid or has been revoked.');
+  if (paywalled(board))
+    return apiError(
+      reply,
+      403,
+      'This board isn’t taking new people right now. Ask its owner to upgrade.',
+      'owner_payment_required',
+    );
   const member = { role: 'editor' as const, name: user.name };
   await store.setMember(boardId, user.id, member);
   const next = { ...board, members: { ...board.members, [user.id]: member } };
@@ -575,6 +622,7 @@ app.post('/api/boards/:boardId/invites/regenerate', async (request, reply) => {
   if (!access) return apiError(reply, 404, 'Board not found.');
   if (access.role !== 'owner')
     return apiError(reply, 403, 'Only the owner can manage invites.');
+  if (!requirePlan(user, reply)) return;
   const inviteToken = inviteId();
   await store.updateMeta(boardId, { inviteToken, inviteRevoked: false });
   return { inviteToken };
@@ -666,6 +714,7 @@ app.post(
     const access = await getAccess(boardId, user.id);
     if (!access || access.role !== 'owner')
       return apiError(reply, 403, 'Only the owner can restore a snapshot.');
+    if (paywalled(access.board) && !requirePlan(user, reply)) return;
     const snapshot = (await store.getSnapshots(boardId)).find(
       (item) => item.id === snapshotId,
     );
@@ -860,6 +909,97 @@ app.get('/api/boards/:boardId/preview', async (request, reply) => {
       return preview;
     });
   return { pages: pages.length, objects };
+});
+
+// ---- Billing ----
+
+const orderIdSchema = z.string().regex(/^order_[A-Za-z0-9]{6,40}$/);
+
+app.get('/api/billing/plan', async () => ({
+  available: billingConfigured(),
+  pass: config.pass,
+}));
+
+app.post('/api/billing/create-order', async (request, reply) => {
+  const user = await currentUser(request, reply);
+  if (!user) return;
+  if (user.guest)
+    return apiError(reply, 403, 'Create an account before upgrading.');
+  if (!(await allow(reply, `order:${user.id}`, 20, 3600))) return;
+  if (config.pass.amount < 100)
+    return apiError(reply, 500, 'The pass price is set too low.');
+  try {
+    const order = await createOrder(
+      `cr_${Date.now().toString(36)}_${user.id.slice(0, 12)}`,
+      user.id,
+    );
+    await store.createPayment({
+      ...order,
+      userId: user.id,
+      status: 'created',
+      createdAt: new Date().toISOString(),
+    });
+    return {
+      order_id: order.orderId,
+      amount: order.amount,
+      currency: order.currency,
+      key_id: config.razorpay!.keyId,
+      name: config.pass.name,
+    };
+  } catch (error) {
+    request.log.error(error, 'Could not create a Razorpay order');
+    if (error instanceof RazorpayError && error.status === 401)
+      return apiError(
+        reply,
+        401,
+        'Payments are misconfigured: Razorpay rejected our keys.',
+        'payment_provider_auth',
+      );
+    if (error instanceof RazorpayError && error.status === 503)
+      return apiError(reply, 503, 'Payments aren’t available yet.');
+    return apiError(
+      reply,
+      500,
+      'We couldn’t start the payment. Please try again in a moment.',
+    );
+  }
+});
+
+app.post('/api/billing/verify-payment', async (request, reply) => {
+  const user = await currentUser(request, reply);
+  if (!user) return;
+  const body = z
+    .object({
+      razorpay_order_id: orderIdSchema,
+      razorpay_payment_id: z.string().regex(/^pay_[A-Za-z0-9]{6,40}$/),
+      razorpay_signature: z.string().regex(/^[0-9a-f]{64}$/),
+    })
+    .safeParse(request.body);
+  if (!body.success)
+    return apiError(reply, 400, 'The payment details are incomplete.');
+  if (!(await allow(reply, `verify:${user.id}`, 30, 3600))) return;
+  const {
+    razorpay_order_id: orderId,
+    razorpay_payment_id: paymentId,
+    razorpay_signature: signature,
+  } = body.data;
+  const payment = await store.getPayment(orderId);
+  // Orders belong to whoever created them; someone else's is "not found".
+  if (!payment || payment.userId !== user.id)
+    return apiError(reply, 400, 'We don’t recognise that payment.');
+  if (!validPaymentSignature(orderId, paymentId, signature))
+    return apiError(reply, 400, 'The payment could not be verified.');
+  if (payment.status === 'paid' && payment.paymentId !== paymentId)
+    return apiError(reply, 400, 'That order was already paid.');
+  const paidUntil =
+    (await store.completePayment(orderId, paymentId, config.pass.days)) ??
+    (await store.getAccount(user.id))?.paidUntil;
+  // Boards the user owns become editable for everyone in them right away.
+  for (const boardId of await store.boardIdsFor(user.id)) {
+    const board = await store.getMeta(boardId);
+    if (board?.ownerId === user.id) broadcastBoard(board);
+  }
+  return { ok: true, paidUntil };
 });
 
 // TURN credentials let anyone relay traffic through our server, so only
