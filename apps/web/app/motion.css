@@ -1,0 +1,487 @@
+/* ==========================================================================
+   Motion — small, quick feedback layered on top of styles.css.
+   Animates only transform-family properties and opacity, and never the
+   canvas itself. Uses the individual `translate` and `scale` properties so
+   it composes with any `transform` an element already has.
+   ========================================================================== */
+
+:root {
+  --dur-1: 120ms;
+  --dur-2: 200ms;
+  --dur-3: 300ms;
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+  --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+  --stagger: 28ms;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  html {
+    scroll-behavior: smooth;
+  }
+}
+
+@keyframes m-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes m-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+@keyframes m-rise-in {
+  from {
+    opacity: 0;
+    translate: 0 8px;
+  }
+}
+@keyframes m-drop-in {
+  from {
+    opacity: 0;
+    translate: 0 -10px;
+  }
+}
+@keyframes m-lift-in {
+  from {
+    opacity: 0;
+    translate: 0 14px;
+  }
+}
+@keyframes m-pop-in {
+  from {
+    opacity: 0;
+    scale: 0.6;
+  }
+}
+@keyframes m-sink-out {
+  to {
+    opacity: 0;
+    translate: 0 8px;
+    scale: 0.98;
+  }
+}
+@keyframes m-pick {
+  40% {
+    scale: 0.86;
+  }
+}
+@keyframes m-shake {
+  20%,
+  60% {
+    translate: -4px 0;
+  }
+  40%,
+  80% {
+    translate: 4px 0;
+  }
+}
+@keyframes m-focus-ring {
+  from {
+    outline-offset: 5px;
+  }
+}
+@keyframes m-bar-in {
+  from {
+    scale: 1 0;
+  }
+}
+
+/* ---- Buttons and controls: lift on hover, give on press ---- */
+.button,
+.icon-button,
+.dock-tool,
+.swatch,
+.segmented button,
+.auth-tabs button,
+.zoom-presets button,
+.template-picker button,
+.template-tile,
+.call-button,
+.call-icon,
+.call-leave,
+.menu-row,
+.nav-item,
+.mk-uses a,
+.password-toggle,
+.toast button {
+  transition-property: background, border-color, color, box-shadow, transform,
+    translate, scale, opacity;
+  transition-duration: var(--dur-1), var(--dur-1), var(--dur-1), var(--dur-2),
+    var(--dur-1), var(--dur-2), var(--dur-1), var(--dur-1);
+  transition-timing-function: var(--ease-out);
+}
+.button:active:not(:disabled) {
+  transform: none;
+}
+@media (hover: hover) {
+  .button.primary:hover:not(:disabled),
+  .button.ghost:hover:not(:disabled) {
+    translate: 0 -1px;
+    box-shadow: var(--shadow-2);
+  }
+  .template-picker button:hover,
+  .template-tile:hover {
+    translate: 0 -2px;
+  }
+  .mk-uses a:hover {
+    translate: 0 -2px;
+  }
+}
+.button:active:not(:disabled),
+.template-picker button:active,
+.template-tile:active {
+  translate: 0 0;
+  scale: 0.97;
+  transition-duration: 60ms;
+}
+.icon-button:active:not(:disabled),
+.dock-tool:active:not(:disabled),
+.call-button:active:not(:disabled),
+.call-icon:active,
+.call-leave:active,
+.zoom-presets button:active,
+.segmented button:active,
+.auth-tabs button:active,
+.password-toggle:active,
+.toast button:active {
+  scale: 0.9;
+  transition-duration: 60ms;
+}
+.swatch:active:not(:disabled) {
+  scale: 0.88;
+}
+.menu-row:active:not(:disabled),
+.nav-item:active {
+  scale: 0.98;
+  transition-duration: 60ms;
+}
+
+/* A short squash when a tool or option becomes the selected one. */
+.dock-tool.is-active,
+.segmented button[aria-pressed='true'],
+.swatch[aria-pressed='true'],
+.zoom-presets button.is-active,
+.template-picker button.is-active {
+  animation: m-pick var(--dur-3) var(--ease-spring);
+}
+
+/* Focus rings settle into place instead of snapping. */
+:is(a, button, summary, [tabindex]):focus-visible {
+  animation: m-focus-ring var(--dur-2) var(--ease-out);
+}
+
+/* Toggle switch thumb overshoots a little. */
+.toggle-row input::after {
+  transition-timing-function: var(--ease-spring);
+  transition-duration: var(--dur-2);
+}
+
+/* Sidebar: the active marker grows in. */
+.nav-item.is-active::before {
+  animation: m-bar-in var(--dur-2) var(--ease-out);
+}
+
+/* ---- Sign in / Create account: a pill that slides between tabs ---- */
+@supports selector(:has(a)) {
+  .auth-tabs {
+    position: relative;
+    isolation: isolate;
+  }
+  .auth-tabs::before {
+    content: '';
+    position: absolute;
+    top: 4px;
+    bottom: 4px;
+    left: 4px;
+    z-index: -1;
+    width: calc((100% - 12px) / 2);
+    border-radius: 9px;
+    background: var(--surface);
+    box-shadow: var(--shadow-1);
+    transition: translate var(--dur-3) var(--ease-spring);
+  }
+  .auth-tabs:has(> :nth-child(3))::before {
+    width: calc((100% - 16px) / 3);
+  }
+  .auth-tabs:has(> :nth-child(2).is-active)::before {
+    translate: calc(100% + 4px) 0;
+  }
+  .auth-tabs:has(> :nth-child(3).is-active)::before {
+    translate: calc(200% + 8px) 0;
+  }
+  .auth-tabs:not(:has(> .is-active))::before {
+    opacity: 0;
+  }
+  .auth-tabs button.is-active {
+    background: transparent;
+    box-shadow: none;
+  }
+}
+/* Fields that appear when switching tabs ease in; errors nudge. */
+.auth-form > .auth-field,
+.auth-form > .auth-hint,
+.auth-form > .notice.success {
+  animation: m-rise-in var(--dur-2) var(--ease-out);
+}
+.notice.error {
+  animation: m-shake 360ms var(--ease-out);
+}
+
+/* ---- Modals: leave as gently as they arrive ---- */
+.modal-backdrop.is-closing {
+  animation: m-fade-out 160ms var(--ease-in) forwards;
+  pointer-events: none;
+}
+.modal-backdrop.is-closing .modal {
+  animation: m-sink-out 160ms var(--ease-in) forwards;
+}
+
+/* ---- Lists of options: stagger in ---- */
+.popover > *,
+.template-picker > *,
+.shortcut-list > *,
+.members-list > *,
+.snapshot-list > *,
+.board-grid > *,
+.templates-row > *,
+.pages-list > *,
+.zoom-presets > * {
+  animation: m-rise-in var(--dur-2) var(--ease-out) both;
+}
+.popover > *,
+.zoom-presets > * {
+  animation-name: m-fade-in;
+}
+:is(
+    .popover,
+    .template-picker,
+    .shortcut-list,
+    .members-list,
+    .snapshot-list,
+    .board-grid,
+    .templates-row,
+    .pages-list,
+    .zoom-presets
+  )
+  > :nth-child(2) {
+  animation-delay: calc(var(--stagger) * 1);
+}
+:is(
+    .popover,
+    .template-picker,
+    .shortcut-list,
+    .members-list,
+    .snapshot-list,
+    .board-grid,
+    .templates-row,
+    .pages-list,
+    .zoom-presets
+  )
+  > :nth-child(3) {
+  animation-delay: calc(var(--stagger) * 2);
+}
+:is(
+    .popover,
+    .template-picker,
+    .shortcut-list,
+    .members-list,
+    .snapshot-list,
+    .board-grid,
+    .templates-row,
+    .pages-list,
+    .zoom-presets
+  )
+  > :nth-child(4) {
+  animation-delay: calc(var(--stagger) * 3);
+}
+:is(
+    .popover,
+    .template-picker,
+    .shortcut-list,
+    .members-list,
+    .snapshot-list,
+    .board-grid,
+    .templates-row,
+    .pages-list,
+    .zoom-presets
+  )
+  > :nth-child(5) {
+  animation-delay: calc(var(--stagger) * 4);
+}
+:is(
+    .popover,
+    .template-picker,
+    .shortcut-list,
+    .members-list,
+    .snapshot-list,
+    .board-grid,
+    .templates-row,
+    .pages-list,
+    .zoom-presets
+  )
+  > :nth-child(6) {
+  animation-delay: calc(var(--stagger) * 5);
+}
+:is(
+    .popover,
+    .template-picker,
+    .shortcut-list,
+    .members-list,
+    .snapshot-list,
+    .board-grid,
+    .templates-row,
+    .pages-list,
+    .zoom-presets
+  )
+  > :nth-child(7) {
+  animation-delay: calc(var(--stagger) * 6);
+}
+:is(
+    .popover,
+    .template-picker,
+    .shortcut-list,
+    .members-list,
+    .snapshot-list,
+    .board-grid,
+    .templates-row,
+    .pages-list,
+    .zoom-presets
+  )
+  > :nth-child(n + 8) {
+  animation-delay: calc(var(--stagger) * 7);
+}
+
+/* ---- Board chrome: islands glide in from their edges ---- */
+.island-board,
+.island-people {
+  animation: m-drop-in var(--dur-3) var(--ease-out) both;
+}
+.island-people {
+  animation-delay: 60ms;
+}
+.dock,
+.island-zoom,
+.minimap {
+  animation: m-lift-in var(--dur-3) var(--ease-out) both;
+}
+.dock {
+  animation-delay: 80ms;
+}
+.island-zoom,
+.minimap {
+  animation-delay: 120ms;
+}
+.participant-stack .avatar,
+.call-person,
+.unread-badge {
+  animation: m-pop-in var(--dur-2) var(--ease-spring) both;
+}
+.chat-message {
+  animation: m-rise-in var(--dur-2) var(--ease-out);
+}
+
+/* ---- Scrolling the landing story, About page and use-case pages ----
+   Content is fully visible by default; only browsers with scroll-driven
+   animations fade it in as it enters, so crawlers and no-JS readers lose
+   nothing. */
+@supports (animation-timeline: view()) {
+  @media (prefers-reduced-motion: no-preference) {
+    .st-intro,
+    .st-act-label,
+    .st-copy,
+    .st-figure,
+    .st-finale,
+    .mk-uses li,
+    .mk-qa-head,
+    .mk-faq details,
+    .mk-section > h2,
+    .mk-card,
+    .mk-steps li,
+    .about-split-head,
+    .about-problems li,
+    .about-built-head,
+    .about-tile,
+    .about-founders-head,
+    .founder,
+    .about-mission,
+    .about-stats > * {
+      animation: m-scroll-reveal linear both;
+      animation-timeline: view();
+      animation-range: entry 0% entry 70%;
+    }
+    .st-chapter.right .st-copy,
+    .st-chapter.left .st-figure {
+      animation-name: m-scroll-reveal-right;
+    }
+    .st-chapter.left .st-copy,
+    .st-chapter.right .st-figure {
+      animation-name: m-scroll-reveal-left;
+    }
+    .st-node {
+      animation: m-scroll-pop linear both;
+      animation-timeline: view();
+      animation-range: entry 20% cover 30%;
+    }
+  }
+}
+@keyframes m-scroll-reveal {
+  from {
+    opacity: 0;
+    translate: 0 28px;
+  }
+}
+@keyframes m-scroll-reveal-left {
+  from {
+    opacity: 0;
+    translate: -28px 12px;
+  }
+}
+@keyframes m-scroll-reveal-right {
+  from {
+    opacity: 0;
+    translate: 28px 12px;
+  }
+}
+@keyframes m-scroll-pop {
+  from {
+    scale: 0.3;
+  }
+}
+
+/* ---- Route changes (React <ViewTransition> in app/template.tsx) ---- */
+/* The board editor is position: fixed, so the wrapper needs a full-screen
+   box of its own or its snapshot would be empty. */
+.route {
+  min-height: 100dvh;
+}
+::view-transition-old(.route-out) {
+  animation: m-fade-out 140ms var(--ease-in) both;
+}
+::view-transition-new(.route-in) {
+  animation: m-rise-in 260ms var(--ease-out) 60ms both;
+}
+/* Browsers without View Transitions still get a soft fade on arrival. */
+@supports not (view-transition-name: none) {
+  .route {
+    animation: m-fade-in var(--dur-3) var(--ease-out);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
+  }
+  .button:hover,
+  .template-picker button:hover,
+  .template-tile:hover,
+  .mk-uses a:hover {
+    translate: none !important;
+  }
+}

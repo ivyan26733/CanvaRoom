@@ -3,6 +3,7 @@ import { Bricolage_Grotesque, Geist, Geist_Mono } from 'next/font/google';
 import { AuthProvider } from './lib/auth';
 import { SITE } from './lib/site';
 import './styles.css';
+import './motion.css';
 
 const display = Bricolage_Grotesque({
   subsets: ['latin'],
