@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AppShell,
@@ -58,12 +58,15 @@ export function HomeClient({
 
 function Landing() {
   const router = useRouter();
-  const [mode, setMode] = useState<'login' | 'signup'>('login');
+  // Read from the router, not on mount, so links to `/?mode=signup` from this
+  // same page (such as the footer) still switch to the sign-up form.
+  const mode = useSearchParams().get('mode') === 'signup' ? 'signup' : 'login';
+  const auth = useRef<HTMLElement>(null);
 
   useEffect(() => {
-    if (new URLSearchParams(location.search).get('mode') === 'signup')
-      setMode('signup');
-  }, []);
+    if (mode === 'signup' && window.scrollY > 0)
+      auth.current?.scrollIntoView({ block: 'start' });
+  }, [mode]);
 
   return (
     <main className="landing">
@@ -97,7 +100,7 @@ function Landing() {
         </div>
       </section>
 
-      <section className="landing-auth" id="get-started">
+      <section className="landing-auth" id="get-started" ref={auth}>
         <div className="landing-auth-top">
           <span className="landing-mobile-brand">
             <Logo size={26} /> CanvaRoom
