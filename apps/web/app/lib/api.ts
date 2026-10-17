@@ -69,6 +69,11 @@ export type Board = {
   members: { userId: string; role: Role; name: string }[];
   inviteToken?: string;
   inviteRevoked?: boolean;
+  /**
+   * Until when the owner's trial or pass keeps the board editable; null when
+   * it has no owner account. Missing on scratch boards, which are always free.
+   */
+  accessUntil?: string | null;
 };
 /** The signed-in person: an account holder, or a guest who joined by invite. */
 export type User = {
@@ -77,6 +82,8 @@ export type User = {
   color: string;
   guest: boolean;
   email?: string;
+  /** Account holders only: when the free trial ends and the pass runs to. */
+  plan?: { trialEndsAt: string; paidUntil?: string };
 };
 export type Operation = {
   id: string;
@@ -111,10 +118,14 @@ export class ApiError extends Error {
   constructor(
     message: string,
     readonly status: number,
+    readonly code?: string,
   ) {
     super(message);
   }
 }
+
+/** Fired when the server says the trial is over; opens the upgrade dialog. */
+export const PAYWALL_EVENT = 'canvaroom:paywall';
 
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
@@ -128,12 +139,17 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (response.status === 204) return undefined as T;
   const payload = (await response.json().catch(() => ({}))) as T & {
     error?: string;
+    code?: string;
   };
-  if (!response.ok)
+  if (!response.ok) {
+    if (payload.code === 'payment_required')
+      window.dispatchEvent(new CustomEvent(PAYWALL_EVENT));
     throw new ApiError(
       payload.error ?? `Request failed (${response.status})`,
       response.status,
+      payload.code,
     );
+  }
   return payload;
 }
 

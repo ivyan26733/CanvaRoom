@@ -4138,3 +4138,120 @@ kbd {
   font-weight: 600;
   text-decoration: underline;
 }
+
+/* ---- Trial and upgrade ---- */
+.plan-chip {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: 6px;
+  padding: 5px 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  border-radius: 999px;
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.plan-chip.is-expired {
+  border-color: transparent;
+  color: #fff;
+  background: var(--accent);
+}
+.plan-chip.is-pro {
+  border-color: color-mix(in srgb, var(--green) 30%, transparent);
+  color: var(--green);
+  background: var(--green-soft);
+  cursor: default;
+}
+.banner-action {
+  margin-left: auto;
+  padding: 4px 10px;
+  border: 0;
+  border-radius: 8px;
+  color: #fff;
+  background: var(--accent);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.trial-callout {
+  margin-top: 12px;
+}
+.upgrade-modal .notice {
+  margin: 14px 0 0;
+}
+.modal .notice[role='status'] {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.upgrade-price {
+  margin: 18px 0 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+.upgrade-offer {
+  display: inline-block;
+  margin-bottom: 6px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  color: #fff;
+  background: var(--accent);
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+.upgrade-price p {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 0;
+}
+.upgrade-price s {
+  color: var(--ink-3);
+  font-size: 18px;
+}
+.upgrade-price strong {
+  color: var(--ink);
+  font-family: var(--display);
+  font-size: 34px;
+  line-height: 1.1;
+}
+.upgrade-price p span {
+  color: var(--ink-2);
+  font-size: 14px;
+}
+.upgrade-price small {
+  display: block;
+  margin-top: 6px;
+  color: var(--ink-2);
+  font-size: 12.5px;
+}
+.upgrade-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 14px;
+}
+.upgrade-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink-2);
+}
+.upgrade-list .icon {
+  flex: none;
+  color: var(--green);
+}

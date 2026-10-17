@@ -2,6 +2,7 @@ import { Analytics } from '@vercel/analytics/next';
 import type { Metadata, Viewport } from 'next';
 import { Bricolage_Grotesque, Geist, Geist_Mono } from 'next/font/google';
 import { AuthProvider } from './lib/auth';
+import { BillingProvider } from './lib/billing';
 import { SITE } from './lib/site';
 import './styles.css';
 import './motion.css';
@@ -74,7 +75,9 @@ export default function RootLayout({
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
       </head>
       <body>
-        <AuthProvider>{children}</AuthProvider>
+        <AuthProvider>
+          <BillingProvider>{children}</BillingProvider>
+        </AuthProvider>
         <Analytics />
       </body>
     </html>

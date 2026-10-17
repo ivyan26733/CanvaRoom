@@ -54,6 +54,7 @@ import { Modal } from '../../components/modal';
 import { ThemeToggle } from '../../components/theme-toggle';
 import { useDismiss, UserMenu } from '../../components/user-menu';
 import { useAuth } from '../../lib/auth';
+import { openUpgrade } from '../../lib/billing';
 import { BOARD_NAV } from '../../lib/navigation';
 import { BoardShape } from './board-shape';
 import { CallControls } from './call-controls';
@@ -318,7 +319,25 @@ export default function BoardPage() {
     [],
   );
 
-  const readonly = !board || board.role === 'viewer' || board.locked;
+  // The owner's trial ended without a pass: the board turns view-only for
+  // everyone, at the moment it ends rather than on the next reload.
+  const accessUntil = board?.accessUntil;
+  const [paywalled, setPaywalled] = useState(false);
+  useEffect(() => {
+    if (accessUntil === undefined) return setPaywalled(false);
+    const left =
+      accessUntil === null ? 0 : Date.parse(accessUntil) - Date.now();
+    setPaywalled(left <= 0);
+    if (left <= 0) return;
+    // setTimeout caps at about 24.8 days; a longer pass is rechecked later.
+    const timer = window.setTimeout(
+      () => setPaywalled(Date.parse(accessUntil!) <= Date.now()),
+      Math.min(left + 500, 2 ** 31 - 1),
+    );
+    return () => window.clearTimeout(timer);
+  }, [accessUntil]);
+  const readonly =
+    !board || board.role === 'viewer' || board.locked || paywalled;
   const inviteLink =
     board?.inviteToken && !board.inviteRevoked && typeof window !== 'undefined'
       ? `${location.origin}/board/${board.id}?invite=${encodeURIComponent(board.inviteToken)}`
@@ -1917,7 +1936,9 @@ export default function BoardPage() {
       });
       setNotice('A fresh invite link is ready. Previous links no longer work.');
     } catch (error) {
-      setNotice((error as Error).message);
+      // A 402 opens the upgrade dialog instead.
+      if ((error as ApiError).code !== 'payment_required')
+        setNotice((error as Error).message);
     }
   }
 
@@ -2592,9 +2613,18 @@ export default function BoardPage() {
         {readonly && (
           <div className="banner">
             <Icon name="lock" size={15} />
-            {board.locked && board.role !== 'viewer'
-              ? 'Editing is paused by the board owner.'
-              : 'You have view-only access.'}
+            {board.role === 'viewer'
+              ? 'You have view-only access.'
+              : paywalled && board.role === 'owner'
+                ? 'Your free trial has ended, so this board is view-only. You can still export it.'
+                : paywalled
+                  ? 'This board is view-only until its owner upgrades.'
+                  : 'Editing is paused by the board owner.'}
+            {paywalled && board.role === 'owner' && (
+              <button className="banner-action" onClick={openUpgrade}>
+                Upgrade
+              </button>
+            )}
           </div>
         )}
         {!isLocal && status === 'offline' && (
@@ -3128,6 +3158,20 @@ export default function BoardPage() {
         <Modal onClose={() => setShareOpen(false)}>
           <p className="kicker">Bring people in</p>
           <h2>Share this board</h2>
+          {paywalled && (
+            <div className="notice" role="status">
+              Your free trial has ended, so new people can’t join yet.
+              <button
+                className="button primary small"
+                onClick={() => {
+                  setShareOpen(false);
+                  openUpgrade();
+                }}
+              >
+                Upgrade
+              </button>
+            </div>
+          )}
           <p className="modal-copy">
             Anyone with this link joins as an editor, with chat and voice. You
             can switch people to view-only or pause editing at any time.

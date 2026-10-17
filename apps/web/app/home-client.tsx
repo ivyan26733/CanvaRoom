@@ -20,8 +20,9 @@ import {
 import { ThemeToggle } from './components/theme-toggle';
 import { Modal } from './components/modal';
 import { useDismiss } from './components/user-menu';
-import { api, send, type BoardListItem } from './lib/api';
+import { api, send, type ApiError, type BoardListItem } from './lib/api';
 import { useAuth } from './lib/auth';
+import { openUpgrade, planState, useNow } from './lib/billing';
 import { BOARD_NAV } from './lib/navigation';
 
 type Sort = 'recent' | 'name';
@@ -112,7 +113,7 @@ function Landing() {
           <h2>{mode === 'signup' ? 'Create your studio' : 'Welcome back'}</h2>
           <p className="auth-lede">
             {mode === 'signup'
-              ? 'Free forever for your boards, pages, and calls.'
+              ? 'Try everything free for 30 minutes. No card needed.'
               : 'Sign in to pick up where your team left off.'}
           </p>
           <AuthForm key={mode} initialMode={mode} />
@@ -252,6 +253,8 @@ function Dashboard() {
   const [joining, setJoining] = useState(false);
   const [upgrade, setUpgrade] = useState(false);
   const [notice, setNotice] = useState('');
+  // Re-renders as the trial runs out, so the upgrade prompt appears on time.
+  const now = useNow();
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
@@ -305,6 +308,7 @@ function Dashboard() {
 
   function startBoard(template: TemplateId = 'blank') {
     if (user?.guest) setUpgrade(true);
+    else if (planState(user)?.kind === 'expired') openUpgrade();
     else setCreating(template);
   }
 
@@ -326,7 +330,8 @@ function Dashboard() {
       );
       router.push(`/board/${copy.id}`, BOARD_NAV);
     } catch (error) {
-      setNotice((error as Error).message);
+      if ((error as ApiError).code !== 'payment_required')
+        setNotice((error as Error).message);
     }
   }
 
@@ -418,6 +423,19 @@ function Dashboard() {
                 onClick={() => setUpgrade(true)}
               >
                 Create account
+              </button>
+            </div>
+          )}
+          {planState(user, now)?.kind === 'expired' && (
+            <div className="guest-callout trial-callout">
+              <Icon name="sparkle" />
+              <p>
+                <strong>Your free trial has ended.</strong> Your boards are safe
+                and open view-only. Upgrade to create boards and invite people
+                again.
+              </p>
+              <button className="button primary small" onClick={openUpgrade}>
+                Upgrade
               </button>
             </div>
           )}
@@ -696,6 +714,8 @@ function CreateBoardModal({
       });
       onCreated(board.id);
     } catch (caught) {
+      // The upgrade dialog has opened over this one.
+      if ((caught as ApiError).code === 'payment_required') return onClose();
       setError((caught as Error).message);
       setBusy(false);
     }
