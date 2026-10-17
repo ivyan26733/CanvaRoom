@@ -54,6 +54,8 @@ export function SessionRecorderControl({
   callStreams,
   callMicrophone,
   onNotice,
+  locked = false,
+  onLocked,
 }: {
   stageRef: React.RefObject<SVGSVGElement | null>;
   title: string;
@@ -63,6 +65,9 @@ export function SessionRecorderControl({
   /** The microphone the call already has open, if this tab is in the call. */
   callMicrophone: () => MediaStream | null;
   onNotice: (message: string) => void;
+  /** Recording is a Premium feature; locked opens the upgrade instead. */
+  locked?: boolean;
+  onLocked?: () => void;
 }) {
   const [unsupported, setUnsupported] = useState<string | null>(null);
   const [setupOpen, setSetupOpen] = useState(false);
@@ -213,15 +218,21 @@ export function SessionRecorderControl({
   return (
     <>
       <button
-        className="icon-button rec-button"
+        className={`icon-button rec-button ${locked ? 'is-premium-locked' : ''}`}
         onClick={() => {
+          if (locked) return onLocked?.();
           setSetupOpen(true);
           // Fetch the recorder while the person picks a resolution.
           void import('../../lib/recorder').catch(() => undefined);
         }}
         disabled={Boolean(unsupported) || status === 'starting'}
-        aria-label="Record this session"
-        title={unsupported ?? 'Record this session'}
+        aria-label={
+          locked ? 'Record this session (Premium)' : 'Record this session'
+        }
+        title={
+          unsupported ??
+          (locked ? 'Recording is a Premium feature' : 'Record this session')
+        }
       >
         <Icon name="record" />
       </button>

@@ -70,11 +70,14 @@ export type Board = {
   inviteToken?: string;
   inviteRevoked?: boolean;
   /**
-   * Until when the owner's trial or pass keeps the board editable; null when
-   * it has no owner account. Missing on scratch boards, which are always free.
+   * What the owner's plan allows: its tier, when that tier ends (null on the
+   * free plan), and whether this is the owner's first board, which the free
+   * plan keeps editable. Missing on scratch boards, which have no plan.
    */
-  accessUntil?: string | null;
+  plan?: { tier: Tier; until: string | null; firstBoard: boolean };
 };
+/** Premium while a paid month runs, then the trial while it lasts, then free. */
+export type Tier = 'premium' | 'trial' | 'free';
 /** The signed-in person: an account holder, or a guest who joined by invite. */
 export type User = {
   id: string;
@@ -143,7 +146,9 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   };
   if (!response.ok) {
     if (payload.code === 'payment_required')
-      window.dispatchEvent(new CustomEvent(PAYWALL_EVENT));
+      window.dispatchEvent(
+        new CustomEvent(PAYWALL_EVENT, { detail: payload.error ?? '' }),
+      );
     throw new ApiError(
       payload.error ?? `Request failed (${response.status})`,
       response.status,

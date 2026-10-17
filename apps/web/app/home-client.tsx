@@ -22,7 +22,7 @@ import { Modal } from './components/modal';
 import { useDismiss } from './components/user-menu';
 import { api, send, type ApiError, type BoardListItem } from './lib/api';
 import { useAuth } from './lib/auth';
-import { openUpgrade, planState, useNow } from './lib/billing';
+import { openUpgrade, planState, TRIAL_BOARDS, useNow } from './lib/billing';
 import { BOARD_NAV } from './lib/navigation';
 
 type Sort = 'recent' | 'name';
@@ -79,7 +79,7 @@ function Landing() {
         </header>
         <LiveDemo />
         <div className="landing-copy">
-          <p className="kicker">Free online whiteboard · voice · chat</p>
+          <p className="kicker">Online whiteboard · voice · chat</p>
           <h1>
             Think out loud,
             <br />
@@ -113,7 +113,7 @@ function Landing() {
           <h2>{mode === 'signup' ? 'Create your studio' : 'Welcome back'}</h2>
           <p className="auth-lede">
             {mode === 'signup'
-              ? 'Try everything free for 30 minutes. No card needed.'
+              ? 'Free for 30 minutes, then a free plan. No card needed.'
               : 'Sign in to pick up where your team left off.'}
           </p>
           <AuthForm key={mode} initialMode={mode} />
@@ -261,6 +261,8 @@ function Dashboard() {
     const requested = params.get('view');
     if (requested === 'mine' || requested === 'shared') setView(requested);
     if (params.get('mode') === 'signup') setUpgrade(true);
+    // "Upgrade to Premium" on the pricing section links here.
+    if (params.get('upgrade')) openUpgrade();
     try {
       const saved = localStorage.getItem('canvasroom.layout');
       if (saved === 'list' || saved === 'grid') setLayout(saved);
@@ -307,9 +309,20 @@ function Dashboard() {
   }
 
   function startBoard(template: TemplateId = 'blank') {
-    if (user?.guest) setUpgrade(true);
-    else if (planState(user)?.kind === 'expired') openUpgrade();
-    else setCreating(template);
+    if (user?.guest) return setUpgrade(true);
+    // The trial includes two boards and the free plan one; the server checks
+    // too, this just saves filling in a name first.
+    const owned = boards?.filter((board) => board.role === 'owner').length;
+    const kind = planState(user)?.kind;
+    if (owned !== undefined && kind === 'trial' && owned >= TRIAL_BOARDS)
+      return openUpgrade(
+        `The free trial includes ${TRIAL_BOARDS} boards. Upgrade to Premium for unlimited boards.`,
+      );
+    if (owned !== undefined && kind === 'free' && owned >= 1)
+      return openUpgrade(
+        'Your free trial has ended, and the free plan keeps one board. Upgrade to Premium for unlimited boards.',
+      );
+    setCreating(template);
   }
 
   function changeLayout(next: 'grid' | 'list') {
@@ -426,13 +439,14 @@ function Dashboard() {
               </button>
             </div>
           )}
-          {planState(user, now)?.kind === 'expired' && (
+          {planState(user, now)?.kind === 'free' && (
             <div className="guest-callout trial-callout">
               <Icon name="sparkle" />
               <p>
-                <strong>Your free trial has ended.</strong> Your boards are safe
-                and open view-only. Upgrade to create boards and invite people
-                again.
+                <strong>Your free trial has ended.</strong> You’re on the free
+                plan: your first board stays yours to use on your own, and the
+                rest open view-only. Upgrade to Premium to collaborate, export,
+                and add more boards.
               </p>
               <button className="button primary small" onClick={openUpgrade}>
                 Upgrade

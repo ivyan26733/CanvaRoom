@@ -6,6 +6,7 @@ import type { BoardListItem } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { PlanChip } from '../lib/billing';
 import { BOARD_NAV } from '../lib/navigation';
+import { openFeedback } from './feedback';
 import { Icon, Logo, type IconName } from './icons';
 import { UserMenu } from './user-menu';
 
@@ -112,6 +113,10 @@ export function AppShell({
               <span>Profile &amp; settings</span>
             </Link>
           )}
+          <button className="nav-item" type="button" onClick={openFeedback}>
+            <Icon name="chat" />
+            <span>Send feedback</span>
+          </button>
         </nav>
 
         {recent && recent.length > 0 && (

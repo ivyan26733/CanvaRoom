@@ -13,6 +13,7 @@ type Pass = {
   listAmount: number;
   currency: string;
   days: number;
+  interval: 'month';
 };
 
 type Order = {
@@ -67,15 +68,18 @@ function loadCheckout() {
 }
 
 const money = (minor: number, currency: string) =>
-  new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(
-    minor / 100,
-  );
+  new Intl.NumberFormat(currency === 'INR' ? 'en-IN' : 'en-US', {
+    style: 'currency',
+    currency,
+    maximumFractionDigits: minor % 100 ? 2 : 0,
+  }).format(minor / 100);
 
 const INCLUDED = [
-  'Unlimited boards and templates',
-  'Invite links and QR codes for your class or team',
-  'Live drawing, voice and chat, with follow-the-writer',
-  'Session recording and PNG, SVG and PDF export',
+  'Unlimited boards, and as many people on each as you like',
+  'Export to PNG, SVG and PDF',
+  'Images on your boards',
+  'Session recording in HD, up to 4K',
+  'Follow-the-writer and voice for a whole class',
 ];
 
 type Phase =
@@ -84,7 +88,14 @@ type Phase =
   | { step: 'verifying' }
   | { step: 'done'; until: string };
 
-export default function UpgradeDialog({ onClose }: { onClose: () => void }) {
+export default function UpgradeDialog({
+  reason,
+  onClose,
+}: {
+  /** What the person just tried that needs Premium, if anything. */
+  reason: string;
+  onClose: () => void;
+}) {
   const { user, setUser } = useAuth();
   const [pass, setPass] = useState<Pass | null>(null);
   const [available, setAvailable] = useState(true);
@@ -177,13 +188,14 @@ export default function UpgradeDialog({ onClose }: { onClose: () => void }) {
   if (phase.step === 'done')
     return (
       <Modal onClose={onClose} className="upgrade-modal">
-        <p className="kicker">You’re on Pro</p>
+        <p className="kicker">You’re on Premium</p>
         <h2>Thank you!</h2>
         <p className="modal-copy">
           {phase.until
-            ? `Your pass runs until ${longDate(phase.until)}.`
-            : 'Your pass is active.'}{' '}
-          Your boards are editable again for everyone in them.
+            ? `Premium runs until ${longDate(phase.until)}.`
+            : 'Premium is active.'}{' '}
+          Every board, export, image and recording is unlocked, and people can
+          join your boards again.
         </p>
         <div className="modal-actions">
           <button className="button primary" onClick={onClose}>
@@ -197,21 +209,34 @@ export default function UpgradeDialog({ onClose }: { onClose: () => void }) {
   return (
     <Modal onClose={onClose} className="upgrade-modal">
       <p className="kicker">
-        {state?.kind === 'expired'
+        {state?.kind === 'free'
           ? 'Your free trial has ended'
-          : state?.kind === 'pro'
-            ? `Pro until ${longDate(state.until)}`
-            : 'Upgrade'}
+          : state?.kind === 'premium'
+            ? `Premium until ${longDate(state.until)}`
+            : 'CanvaRoom Premium'}
       </p>
-      <h2>Keep teaching on CanvaRoom</h2>
+      <h2>
+        {state?.kind === 'premium'
+          ? 'Renew Premium for another month'
+          : 'Teach without limits'}
+      </h2>
+      {reason && (
+        <p className="notice upgrade-reason" role="status">
+          {reason}
+        </p>
+      )}
       <p className="modal-copy">
         {user?.guest
-          ? 'Create an account first, then upgrade to make your own boards.'
-          : 'Create boards and bring people in. Your existing boards stay yours either way; without a pass they open view-only and can still be exported.'}
+          ? 'Create an account first, then upgrade to Premium for your own boards.'
+          : state?.kind === 'premium'
+            ? 'Paying again adds a month after your current one ends.'
+            : 'Your boards stay yours either way. The free plan keeps your first board for you to use on your own.'}
       </p>
       {pass && (
         <div className="upgrade-price">
-          <span className="upgrade-offer">Launch offer</span>
+          {pass.listAmount > pass.amount && (
+            <span className="upgrade-offer">Launch offer</span>
+          )}
           <p>
             {pass.listAmount > pass.amount && (
               <s aria-label={`Was ${money(pass.listAmount, pass.currency)}`}>
@@ -219,11 +244,14 @@ export default function UpgradeDialog({ onClose }: { onClose: () => void }) {
               </s>
             )}
             <strong>{money(pass.amount, pass.currency)}</strong>
-            <span>/ {pass.days} days</span>
+            <span>/ month</span>
           </p>
           <small>
-            We’re now offering it for {money(pass.amount, pass.currency)}{' '}
-            {pass.currency}. One-time payment, no auto-renewal.
+            {pass.listAmount > pass.amount
+              ? `We’re now offering it for ${money(pass.amount, pass.currency)} ${pass.currency} a month. `
+              : ''}
+            Billed monthly: each payment unlocks {pass.days} days, with no
+            automatic renewal.
           </small>
         </div>
       )}

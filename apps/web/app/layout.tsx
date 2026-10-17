@@ -1,6 +1,7 @@
 import { Analytics } from '@vercel/analytics/next';
 import type { Metadata, Viewport } from 'next';
 import { Bricolage_Grotesque, Geist, Geist_Mono } from 'next/font/google';
+import { FeedbackProvider } from './components/feedback';
 import { AuthProvider } from './lib/auth';
 import { BillingProvider } from './lib/billing';
 import { SITE } from './lib/site';
@@ -77,6 +78,7 @@ export default function RootLayout({
       <body>
         <AuthProvider>
           <BillingProvider>{children}</BillingProvider>
+          <FeedbackProvider />
         </AuthProvider>
         <Analytics />
       </body>

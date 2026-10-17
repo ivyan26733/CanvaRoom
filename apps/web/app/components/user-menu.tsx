@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import { useAuth } from '../lib/auth';
+import { openFeedback } from './feedback';
 import { Icon } from './icons';
 import { ThemeToggle } from './theme-toggle';
 
@@ -133,6 +134,17 @@ export function UserMenu({
             <Icon name="grid" />
             <span>All boards</span>
           </Link>
+          <button
+            className="menu-row"
+            role="menuitem"
+            onClick={() => {
+              setOpen(false);
+              openFeedback();
+            }}
+          >
+            <Icon name="chat" />
+            <span>Send feedback</span>
+          </button>
           <ThemeToggle withLabel />
           <div className="menu-divider" />
           <button

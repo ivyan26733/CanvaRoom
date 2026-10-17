@@ -54,7 +54,13 @@ import { Modal } from '../../components/modal';
 import { ThemeToggle } from '../../components/theme-toggle';
 import { useDismiss, UserMenu } from '../../components/user-menu';
 import { useAuth } from '../../lib/auth';
-import { openUpgrade } from '../../lib/billing';
+import {
+  boardTier,
+  openUpgrade,
+  premiumUnlocked,
+  PremiumTag,
+  TRIAL_GUESTS,
+} from '../../lib/billing';
 import { BOARD_NAV } from '../../lib/navigation';
 import { BoardShape } from './board-shape';
 import { CallControls } from './call-controls';
@@ -319,25 +325,28 @@ export default function BoardPage() {
     [],
   );
 
-  // The owner's trial ended without a pass: the board turns view-only for
-  // everyone, at the moment it ends rather than on the next reload.
-  const accessUntil = board?.accessUntil;
-  const [paywalled, setPaywalled] = useState(false);
+  // The owner's plan, applied the moment its trial or paid month runs out
+  // rather than on the next reload.
+  const planUntil = board?.plan?.until;
+  const [planTick, setPlanTick] = useState(0);
   useEffect(() => {
-    if (accessUntil === undefined) return setPaywalled(false);
-    const left =
-      accessUntil === null ? 0 : Date.parse(accessUntil) - Date.now();
-    setPaywalled(left <= 0);
+    if (!planUntil) return;
+    const left = Date.parse(planUntil) - Date.now();
     if (left <= 0) return;
-    // setTimeout caps at about 24.8 days; a longer pass is rechecked later.
+    // setTimeout caps at about 24.8 days; a longer month is rechecked later.
     const timer = window.setTimeout(
-      () => setPaywalled(Date.parse(accessUntil!) <= Date.now()),
+      () => setPlanTick((tick) => tick + 1),
       Math.min(left + 500, 2 ** 31 - 1),
     );
     return () => window.clearTimeout(timer);
-  }, [accessUntil]);
+  }, [planUntil, planTick]);
+  const tier = boardTier(board);
+  // On the free plan only the owner's first board stays editable.
+  const freeLocked =
+    tier === 'free' && !(board?.role === 'owner' && board.plan?.firstBoard);
+  const unlocked = premiumUnlocked(board, me);
   const readonly =
-    !board || board.role === 'viewer' || board.locked || paywalled;
+    !board || board.role === 'viewer' || board.locked || freeLocked;
   const inviteLink =
     board?.inviteToken && !board.inviteRevoked && typeof window !== 'undefined'
       ? `${location.origin}/board/${board.id}?invite=${encodeURIComponent(board.inviteToken)}`
@@ -2047,6 +2056,10 @@ export default function BoardPage() {
 
   async function addImage(file: File | undefined) {
     if (!file || readonly) return;
+    if (!unlocked)
+      return openUpgrade(
+        'Adding images is a Premium feature. Upgrade to add images to your boards.',
+      );
     try {
       const image = await prepareImage(file);
       // Boards kept only in this browser have nowhere to upload to.
@@ -2077,6 +2090,10 @@ export default function BoardPage() {
   async function doExport(format: 'png' | 'pdf' | 'svg') {
     setMenuOpen(false);
     if (!board || !objectLayerRef.current) return;
+    if (!unlocked)
+      return openUpgrade(
+        'Export to PNG, SVG and PDF is a Premium feature. Upgrade to download your boards.',
+      );
     try {
       await exportBoard(
         objectLayerRef.current,
@@ -2126,7 +2143,9 @@ export default function BoardPage() {
       </main>
     );
 
-  if (!board)
+  // A fatal error mid-session (removed, or the owner's plan ran out) replaces
+  // the board with its message.
+  if (!board || loadError)
     return (
       <main className="page-loading">
         {!loadError && <span className="loader" />}
@@ -2481,6 +2500,12 @@ export default function BoardPage() {
           callStreams={() => callRef.current?.remoteStreams() ?? []}
           callMicrophone={() => callRef.current?.microphoneStream() ?? null}
           onNotice={setNotice}
+          locked={!unlocked}
+          onLocked={() =>
+            openUpgrade(
+              'Session recording is a Premium feature. Upgrade to record your lessons in HD.',
+            )
+          }
         />
         <div className="menu-anchor" ref={menuRef}>
           <button
@@ -2495,6 +2520,7 @@ export default function BoardPage() {
             <div className="popover board-menu" role="menu">
               <p className="menu-label">
                 Export {pages.length > 1 ? 'this page' : ''}
+                {!unlocked && <PremiumTag />}
               </p>
               <button
                 className="menu-row"
@@ -2615,12 +2641,12 @@ export default function BoardPage() {
             <Icon name="lock" size={15} />
             {board.role === 'viewer'
               ? 'You have view-only access.'
-              : paywalled && board.role === 'owner'
-                ? 'Your free trial has ended, so this board is view-only. You can still export it.'
-                : paywalled
-                  ? 'This board is view-only until its owner upgrades.'
+              : freeLocked && board.role === 'owner'
+                ? 'Your free trial has ended. The free plan keeps your first board editable; this one is view-only.'
+                : freeLocked
+                  ? 'This board is closed until its owner upgrades.'
                   : 'Editing is paused by the board owner.'}
-            {paywalled && board.role === 'owner' && (
+            {freeLocked && board.role === 'owner' && (
               <button className="banner-action" onClick={openUpgrade}>
                 Upgrade
               </button>
@@ -2754,10 +2780,16 @@ export default function BoardPage() {
           ))}
           <span className="dock-sep" />
           <button
-            className="dock-tool"
-            onClick={() => imagePicker.current?.click()}
-            aria-label="Add an image"
-            data-tip="Image"
+            className={`dock-tool ${unlocked ? '' : 'is-premium-locked'}`}
+            onClick={() =>
+              unlocked
+                ? imagePicker.current?.click()
+                : openUpgrade(
+                    'Adding images is a Premium feature. Upgrade to add images to your boards.',
+                  )
+            }
+            aria-label={unlocked ? 'Add an image' : 'Add an image (Premium)'}
+            data-tip={unlocked ? 'Image' : 'Image · Premium'}
             disabled={readonly}
           >
             <Icon name="image" size={20} />
@@ -3158,9 +3190,16 @@ export default function BoardPage() {
         <Modal onClose={() => setShareOpen(false)}>
           <p className="kicker">Bring people in</p>
           <h2>Share this board</h2>
-          {paywalled && (
+          {tier === 'trial' && (
+            <p className="notice" role="status">
+              On the free trial, {TRIAL_GUESTS} people besides you can join this
+              board. Premium has no limit.
+            </p>
+          )}
+          {tier === 'free' && (
             <div className="notice" role="status">
-              Your free trial has ended, so new people can’t join yet.
+              Your free trial has ended, so nobody else can join your boards
+              until you upgrade.
               <button
                 className="button primary small"
                 onClick={() => {

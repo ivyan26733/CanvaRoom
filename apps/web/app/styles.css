@@ -1238,7 +1238,7 @@ kbd {
 }
 .mk-footer {
   display: grid;
-  grid-template-columns: 1.4fr 1fr 1fr;
+  grid-template-columns: 1.4fr 1fr 1fr 1fr;
   gap: 32px;
   margin-top: clamp(64px, 9vw, 120px);
   padding: 40px 0 48px;
@@ -4254,4 +4254,164 @@ kbd {
 .upgrade-list .icon {
   flex: none;
   color: var(--green);
+}
+button.plan-chip.is-pro {
+  cursor: pointer;
+}
+.upgrade-modal .upgrade-reason {
+  display: block;
+  margin: 10px 0 0;
+}
+.premium-tag {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  vertical-align: 1px;
+}
+/* Premium features on the free plans: still clickable, to explain the upgrade. */
+.is-premium-locked {
+  position: relative;
+}
+.is-premium-locked::after {
+  content: '';
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 7px;
+  height: 7px;
+  border: 1.5px solid var(--surface);
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+/* ---- Feedback ---- */
+.feedback-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.feedback-form fieldset {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.feedback-form legend {
+  margin-bottom: 8px;
+  color: var(--ink-2);
+  font-size: 13px;
+  font-weight: 600;
+}
+.feedback-kinds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.feedback-kind {
+  position: relative;
+  padding: 6px 12px;
+  border: 1px solid var(--line-2);
+  border-radius: 999px;
+  color: var(--ink-2);
+  background: var(--surface);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    color 0.15s,
+    background 0.15s;
+}
+.feedback-kind input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+.feedback-kind:has(input:focus-visible) {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+.feedback-kind.is-active {
+  border-color: var(--ink);
+  color: var(--surface);
+  background: var(--ink);
+}
+.feedback-form textarea {
+  width: 100%;
+  min-height: 120px;
+  padding: 12px 14px;
+  border: 1px solid var(--line-2);
+  border-radius: 10px;
+  color: var(--ink);
+  background: var(--surface);
+  font: inherit;
+  line-height: 1.5;
+  resize: vertical;
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
+}
+.feedback-form textarea:focus {
+  outline: none;
+  border-color: var(--ink);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--ink) 8%, transparent);
+}
+.feedback-count {
+  align-self: flex-end;
+  color: var(--ink-3);
+  font-size: 12px;
+}
+.feedback-rating > div {
+  display: flex;
+  gap: 2px;
+}
+.feedback-star {
+  width: 34px;
+  height: 34px;
+  border: 0;
+  border-radius: 8px;
+  color: var(--line-2);
+  background: transparent;
+  font-size: 24px;
+  line-height: 1;
+  cursor: pointer;
+}
+.feedback-star.is-on {
+  color: var(--amber);
+}
+.feedback-star:hover {
+  background: var(--bg-2);
+}
+.feedback-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+.feedback-sent {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 6px 12px;
+  padding: 16px;
+  border-radius: var(--radius);
+  background: var(--green-soft);
+}
+.feedback-sent > .icon {
+  color: var(--green);
+}
+.feedback-sent p {
+  margin: 4px 0 0;
+  color: var(--ink-2);
+  font-size: 14px;
+}
+.feedback-sent .button {
+  grid-column: 2;
+  justify-self: start;
+}
+.modal.feedback-modal {
+  width: min(520px, 100%);
 }
