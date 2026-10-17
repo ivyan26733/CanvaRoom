@@ -22,6 +22,7 @@ import { Modal } from './components/modal';
 import { useDismiss } from './components/user-menu';
 import { api, send, type BoardListItem } from './lib/api';
 import { useAuth } from './lib/auth';
+import { BOARD_NAV } from './lib/navigation';
 
 type Sort = 'recent' | 'name';
 
@@ -120,7 +121,9 @@ function Landing() {
           </div>
           <button
             className="button ghost wide"
-            onClick={() => router.push(`/board/local-${crypto.randomUUID()}`)}
+            onClick={() =>
+              router.push(`/board/local-${crypto.randomUUID()}`, BOARD_NAV)
+            }
           >
             <Icon name="pen" size={17} />
             Open a scratch board — no account
@@ -321,7 +324,7 @@ function Dashboard() {
         'POST',
         {},
       );
-      router.push(`/board/${copy.id}`);
+      router.push(`/board/${copy.id}`, BOARD_NAV);
     } catch (error) {
       setNotice((error as Error).message);
     }
@@ -544,7 +547,7 @@ function Dashboard() {
         <CreateBoardModal
           initialTemplate={creating}
           onClose={() => setCreating(null)}
-          onCreated={(id) => router.push(`/board/${id}`)}
+          onCreated={(id) => router.push(`/board/${id}`, BOARD_NAV)}
         />
       )}
       {joining && <JoinModal onClose={() => setJoining(false)} />}
@@ -589,7 +592,11 @@ function BoardCard({
   useDismiss(menu, setMenu, ref);
   return (
     <article className="board-card">
-      <Link href={`/board/${board.id}`} className="board-card-link">
+      <Link
+        href={`/board/${board.id}`}
+        className="board-card-link"
+        transitionTypes={BOARD_NAV.transitionTypes}
+      >
         <BoardPreview boardId={board.id} updatedAt={board.updatedAt} />
         <div className="board-card-copy">
           <span
@@ -771,7 +778,7 @@ function JoinModal({ onClose }: { onClose: () => void }) {
       await send(`/boards/${match[1]}/join`, 'POST', {
         inviteToken: decodeURIComponent(match[2]!),
       });
-      router.push(`/board/${match[1]}`);
+      router.push(`/board/${match[1]}`, BOARD_NAV);
     } catch (caught) {
       setError((caught as Error).message);
       setBusy(false);

@@ -54,6 +54,7 @@ import { Modal } from '../../components/modal';
 import { ThemeToggle } from '../../components/theme-toggle';
 import { useDismiss, UserMenu } from '../../components/user-menu';
 import { useAuth } from '../../lib/auth';
+import { BOARD_NAV } from '../../lib/navigation';
 import { BoardShape } from './board-shape';
 import { CallControls } from './call-controls';
 import { CanvasGuide } from './canvas-guide';
@@ -570,7 +571,7 @@ export default function BoardPage() {
         setCanRedo(false);
         return;
       case 'deleted':
-        router.push('/');
+        router.push('/', BOARD_NAV);
         return;
       case 'error':
         if (message.fatal) setLoadError(message.message);
@@ -2105,7 +2106,11 @@ export default function BoardPage() {
         {!loadError && <span className="loader" />}
         <p>{loadError || 'Opening your board…'}</p>
         {loadError && (
-          <Link className="button ghost" href="/">
+          <Link
+            className="button ghost"
+            href="/"
+            transitionTypes={BOARD_NAV.transitionTypes}
+          >
             Back to boards
           </Link>
         )}
@@ -2318,6 +2323,7 @@ export default function BoardPage() {
       <header className="island island-board">
         <Link
           href="/"
+          transitionTypes={BOARD_NAV.transitionTypes}
           className="island-logo"
           onClick={leave}
           title="All boards"
@@ -2558,6 +2564,7 @@ export default function BoardPage() {
                 className="menu-row"
                 role="menuitem"
                 href="/"
+                transitionTypes={BOARD_NAV.transitionTypes}
                 onClick={leave}
               >
                 <Icon name="home" />

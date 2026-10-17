@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useState } from 'react';
 import type { BoardListItem } from '../lib/api';
 import { useAuth } from '../lib/auth';
+import { BOARD_NAV } from '../lib/navigation';
 import { Icon, Logo, type IconName } from './icons';
 import { UserMenu } from './user-menu';
 
@@ -119,6 +120,7 @@ export function AppShell({
               <Link
                 key={board.id}
                 href={`/board/${board.id}`}
+                transitionTypes={BOARD_NAV.transitionTypes}
                 className="recent-item"
               >
                 <span
