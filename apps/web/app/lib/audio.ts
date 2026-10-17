@@ -149,6 +149,13 @@ export class AudioCall {
     this.client.setCall(true, muted);
   }
 
+  /** What everyone else in the call is saying, for session recordings. */
+  remoteStreams() {
+    return [...this.links.values()]
+      .map((link) => link.audio.srcObject)
+      .filter((stream): stream is MediaStream => stream instanceof MediaStream);
+  }
+
   /** Connects to everyone else in the call and drops anyone who left it. */
   syncPeers(peers: Peer[]) {
     if (!this.state.joined) return;

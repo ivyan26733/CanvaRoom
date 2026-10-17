@@ -67,6 +67,7 @@ import {
 } from './live-layers';
 import { Minimap } from './minimap';
 import { PagesPanel } from './pages-panel';
+import { SessionRecorderControl } from './session-recorder';
 
 type Tool =
   | 'select'
@@ -2279,6 +2280,13 @@ export default function BoardPage() {
             <span>Share</span>
           </button>
         )}
+        <SessionRecorderControl
+          stageRef={stageRef}
+          title={board.title}
+          hasCall={!isLocal}
+          callStreams={() => callRef.current?.remoteStreams() ?? []}
+          onNotice={setNotice}
+        />
         <div className="menu-anchor" ref={menuRef}>
           <button
             className={`icon-button ${menuOpen ? 'is-active' : ''}`}

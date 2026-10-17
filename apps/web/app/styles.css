@@ -2494,6 +2494,139 @@ kbd {
   right: 12px;
   gap: 4px;
 }
+/* ---- Session recording ---- */
+.rec-button .icon circle:last-child {
+  color: var(--danger);
+}
+.rec-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 36px;
+  padding: 0 3px 0 10px;
+  border-radius: 999px;
+  background: var(--danger-soft);
+  color: var(--ink);
+  animation: m-pop-in var(--dur-2, 200ms) var(--ease-spring, var(--ease));
+}
+.rec-pill .icon-button {
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+}
+.rec-pill .rec-stop {
+  color: var(--danger);
+}
+.rec-dot {
+  width: 9px;
+  height: 9px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--danger);
+  animation: rec-pulse 1.4s ease-in-out infinite;
+}
+.rec-pill.is-paused .rec-dot {
+  background: var(--ink-3);
+  animation: none;
+}
+.rec-time {
+  min-width: 42px;
+  font: 600 12.5px var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+@keyframes rec-pulse {
+  50% {
+    opacity: 0.3;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rec-dot {
+    animation: none;
+  }
+}
+.record-modal {
+  width: min(560px, 100%);
+}
+.record-options {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.record-options legend {
+  margin-bottom: 10px;
+  color: var(--ink);
+  font-weight: 600;
+  font-size: 14px;
+}
+.record-resolutions {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+.record-resolution {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px 12px 10px;
+  border-radius: 12px;
+  box-shadow: inset 0 0 0 1px var(--line-2);
+  cursor: pointer;
+  transition:
+    box-shadow var(--dur-1, 120ms),
+    background var(--dur-1, 120ms);
+}
+.record-resolution:hover {
+  background: var(--bg-2);
+}
+.record-resolution.is-selected {
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+.record-resolution input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+.record-resolution:has(input:focus-visible) {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+.record-resolution strong {
+  font: 700 18px/1.2 var(--display);
+  letter-spacing: -0.01em;
+}
+.record-resolution span {
+  color: var(--ink-2);
+  font-size: 12.5px;
+}
+.record-resolution small {
+  margin-top: 4px;
+  color: var(--ink-3);
+  font: 500 10.5px var(--mono);
+}
+.record-toggles {
+  display: grid;
+  gap: 2px;
+  margin: 16px -10px 0;
+}
+.record-hint {
+  margin-top: 10px;
+  color: var(--ink-3);
+  font-size: 12.5px;
+}
+@media (max-width: 520px) {
+  .record-resolutions {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+/* Recording a lesson needs a desktop-sized screen. */
+@media (max-width: 760px), (pointer: coarse) and (max-width: 1024px) {
+  .rec-button {
+    display: none;
+  }
+}
+
 .participant-stack {
   display: flex;
   align-items: center;
