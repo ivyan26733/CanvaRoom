@@ -41,6 +41,10 @@ type Connection = {
   inCall: boolean;
   muted: boolean;
   presenceWrittenAt: number;
+  /** Saves run one after another so a connection's edits land in order. */
+  writes: Promise<unknown>;
+  /** Presence and chat saves, kept apart so they never wait on edits. */
+  chores: Promise<unknown>;
 };
 
 type Envelope =
@@ -235,7 +239,11 @@ async function joinRoom(connection: Connection) {
   room.add(connection);
 }
 
-async function leaveRoom(connection: Connection) {
+/**
+ * `handedOver` means the tab already opened a replacement connection, maybe
+ * on another instance, so its presence must stay.
+ */
+async function leaveRoom(connection: Connection, handedOver = false) {
   const room = rooms.get(connection.boardId);
   if (!room?.delete(connection)) return;
   if (room.size === 0) {
@@ -245,11 +253,19 @@ async function leaveRoom(connection: Connection) {
       ?.unsubscribe(channel(connection.boardId))
       .catch(() => undefined);
   }
+  if (handedOver) return;
   await store.removePresence(connection.boardId, connection.peerId);
   await broadcastPresence(connection.boardId);
 }
 
-async function handleOperation(connection: Connection, op: Operation) {
+/** Queues background work for a connection, keeping its order. */
+function chore(connection: Connection, work: () => Promise<unknown>) {
+  connection.chores = connection.chores
+    .then(work)
+    .catch((error) => console.error('Realtime save failed', error));
+}
+
+function handleOperation(connection: Connection, op: Operation) {
   const reply = (message: unknown) => send(connection, JSON.stringify(message));
   if (!canEdit(connection.role, connection.board))
     return reply({
@@ -263,27 +279,33 @@ async function handleOperation(connection: Connection, op: Operation) {
   )
     return reply({ t: 'nack', id: op.id, message: 'That image is too large.' });
   // Peers see the change before the write finishes; the write is atomic and
-  // idempotent, so a retried operation cannot apply twice.
+  // idempotent, so a retried operation cannot apply twice. Saving happens off
+  // the message path: waiting on the database here would hold back the live
+  // strokes queued behind this edit, which is what made fast writing and
+  // erasing arrive in bursts.
   broadcast(
     connection.boardId,
     { t: 'op', op, by: connection.peerId },
     { exceptPeer: connection.peerId },
   );
-  try {
-    await store.applyOperation(connection.boardId, op);
-    reply({ t: 'ack', id: op.id });
-  } catch (error) {
-    console.error('Failed to save operation', error);
-    reply({
-      t: 'nack',
-      id: op.id,
-      message: 'Could not save that change.',
-      retry: true,
-    });
-  }
+  connection.writes = connection.writes.then(async () => {
+    try {
+      await store.applyOperation(connection.boardId, op);
+      reply({ t: 'ack', id: op.id });
+    } catch (error) {
+      console.error('Failed to save operation', error);
+      reply({
+        t: 'nack',
+        id: op.id,
+        message: 'Could not save that change.',
+        retry: true,
+      });
+    }
+  });
 }
 
-async function handleMessage(connection: Connection, message: ClientMessage) {
+/** Handles one message without waiting on storage, so nothing queues behind it. */
+function handleMessage(connection: Connection, message: ClientMessage) {
   const { boardId, peerId } = connection;
   switch (message.t) {
     case 'op':
@@ -319,15 +341,16 @@ async function handleMessage(connection: Connection, message: ClientMessage) {
         message: chat,
         clientId: message.clientId,
       });
-      await store.addMessage(boardId, chat);
-      return;
+      return chore(connection, () => store.addMessage(boardId, chat));
     }
     case 'call':
       connection.inCall = message.inCall;
       connection.muted = message.muted;
-      await store.setPresence(boardId, presenceOf(connection));
       connection.presenceWrittenAt = Date.now();
-      return broadcastPresence(boardId);
+      return chore(connection, async () => {
+        await store.setPresence(boardId, presenceOf(connection));
+        await broadcastPresence(boardId);
+      });
     case 'signal':
       return broadcast(
         boardId,
@@ -338,7 +361,9 @@ async function handleMessage(connection: Connection, message: ClientMessage) {
       send(connection, '{"t":"pong"}');
       if (Date.now() - connection.presenceWrittenAt > PRESENCE_REFRESH_MS) {
         connection.presenceWrittenAt = Date.now();
-        await store.setPresence(boardId, presenceOf(connection));
+        chore(connection, () =>
+          store.setPresence(boardId, presenceOf(connection)),
+        );
       }
       return;
     case 'hello':
@@ -365,13 +390,59 @@ async function authenticate(
     inCall: hello.inCall ?? false,
     muted: hello.muted ?? false,
     presenceWrittenAt: Date.now(),
+    writes: Promise.resolve(),
+    chores: Promise.resolve(),
   };
 }
 
+/** A tab closes its old connection with this code once a new one is live. */
+const HANDED_OVER = 4001;
+
 function onConnection(socket: WebSocket, user: User) {
   let connection: Connection | undefined;
-  let pending: Promise<void> = Promise.resolve();
+  let joining: Promise<void> | undefined;
+  // Messages that arrive while the hello is still being checked.
+  const early: ClientMessage[] = [];
   const helloTimer = setTimeout(() => socket.close(4401, 'no hello'), 10_000);
+
+  async function join(hello: Extract<ClientMessage, { t: 'hello' }>) {
+    const result = await authenticate(socket, user, hello);
+    clearTimeout(helloTimer);
+    if (typeof result === 'string') {
+      socket.send(JSON.stringify({ t: 'error', message: result, fatal: true }));
+      socket.close(4403, 'forbidden');
+      return;
+    }
+    const joined = result;
+    await joinRoom(joined);
+    await store.setPresence(joined.boardId, presenceOf(joined));
+    const [objects, messages, peers] = await Promise.all([
+      store.getObjects(joined.boardId),
+      store.getMessages(joined.boardId),
+      store.listPresence(joined.boardId),
+    ]);
+    send(
+      joined,
+      JSON.stringify({
+        t: 'welcome',
+        board: publicBoard(joined.board, joined.role),
+        objects: objects satisfies BoardObject[],
+        messages,
+        peers,
+        self: { peerId: joined.peerId, userId: joined.user.id },
+        iceServers: config.iceServers,
+      }),
+    );
+    broadcast(
+      joined.boardId,
+      { t: 'presence', peers },
+      { exceptPeer: joined.peerId },
+    );
+    connection = joined;
+    // Handle anything sent meanwhile in arrival order, so a stroke's points
+    // never overtake it.
+    for (const message of early.splice(0)) handleMessage(joined, message);
+  }
 
   socket.on('message', (raw) => {
     let parsed;
@@ -389,58 +460,23 @@ function onConnection(socket: WebSocket, user: User) {
       return;
     }
     const message = parsed.data;
-    // Handle messages in arrival order so a stroke's points never overtake it.
-    pending = pending
-      .then(async () => {
-        if (message.t === 'hello') {
-          if (connection) return;
-          const result = await authenticate(socket, user, message);
-          clearTimeout(helloTimer);
-          if (typeof result === 'string') {
-            socket.send(
-              JSON.stringify({ t: 'error', message: result, fatal: true }),
-            );
-            socket.close(4403, 'forbidden');
-            return;
-          }
-          connection = result;
-          await joinRoom(connection);
-          await store.setPresence(connection.boardId, presenceOf(connection));
-          const [objects, messages, peers] = await Promise.all([
-            store.getObjects(connection.boardId),
-            store.getMessages(connection.boardId),
-            store.listPresence(connection.boardId),
-          ]);
-          send(
-            connection,
-            JSON.stringify({
-              t: 'welcome',
-              board: publicBoard(connection.board, connection.role),
-              objects: objects satisfies BoardObject[],
-              messages,
-              peers,
-              self: { peerId: connection.peerId, userId: connection.user.id },
-              iceServers: config.iceServers,
-            }),
-          );
-          broadcast(
-            connection.boardId,
-            { t: 'presence', peers },
-            { exceptPeer: connection.peerId },
-          );
-          return;
-        }
-        if (connection) await handleMessage(connection, message);
-      })
-      .catch((error) => console.error('Realtime message failed', error));
+    if (message.t === 'hello') {
+      joining ??= join(message).catch((error) =>
+        console.error('Realtime join failed', error),
+      );
+      return;
+    }
+    if (connection) handleMessage(connection, message);
+    else if (joining) early.push(message);
   });
 
-  socket.on('close', () => {
+  socket.on('close', (code) => {
     clearTimeout(helloTimer);
-    if (connection) {
-      const closing = connection;
-      pending = pending.then(() => leaveRoom(closing)).catch(() => undefined);
-    }
+    void (joining ?? Promise.resolve())
+      .then(() => {
+        if (connection) return leaveRoom(connection, code === HANDED_OVER);
+      })
+      .catch(() => undefined);
   });
   socket.on('error', () => undefined);
 }

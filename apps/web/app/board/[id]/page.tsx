@@ -58,6 +58,7 @@ import { BoardShape } from './board-shape';
 import { CallControls } from './call-controls';
 import { CanvasGuide } from './canvas-guide';
 import { ChatPanel } from './chat-panel';
+import { FollowChip, useFollow } from './follow';
 import { InviteQr } from './invite-qr';
 import {
   LocalOverlay,
@@ -107,7 +108,7 @@ type Gesture =
       moved: BoardObject;
     }
   | { kind: 'marquee'; start: Point; base: string[] }
-  | { kind: 'erase'; erased: Set<string> };
+  | { kind: 'erase'; erased: Set<string>; changes: Change[]; last: Point };
 type TextEditor = { object: BoardObject; isNew: boolean };
 
 const TOOLS: { tool: Tool; icon: IconName; label: string; key?: string }[] = [
@@ -176,6 +177,10 @@ const clampZoom = (zoom: number) =>
 const clamp = (value: number, min: number, max: number) =>
   Math.min(max, Math.max(min, value));
 const easeOut = (t: number) => 1 - (1 - t) ** 3;
+/** Records the current time in a ref, from event handlers. */
+const stamp = (ref: { current: number }) => {
+  ref.current = Date.now();
+};
 const newPageId = () => `pg${Math.random().toString(36).slice(2, 10)}`;
 
 function colorFor(userId: string) {
@@ -286,6 +291,10 @@ export default function BoardPage() {
   const fittedOnce = useRef(false);
   const pageViews = useRef(new Map<string, View>());
   const viewAnimation = useRef<number | undefined>(undefined);
+  /** When this person last drew, erased, or typed, so following waits. */
+  const lastLocalWrite = useRef(0);
+  /** True while following moves the view, so it does not count as manual. */
+  const followDriving = useRef(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const zoomMenuRef = useRef<HTMLDivElement>(null);
   useDismiss(menuOpen, setMenuOpen, menuRef);
@@ -411,15 +420,41 @@ export default function BoardPage() {
   }, [meId, boardId, isLocal]);
 
   // ---- Realtime connection ----
+  // Remote edits are applied once per frame, so a burst (a fast eraser
+  // swipe, a pasted group) re-renders the board once instead of per edit.
+  const remoteOperations = useRef<Operation[]>([]);
+  const remoteFlush = useRef<number | undefined>(undefined);
+  const flushRemoteOperations = useCallback(() => {
+    remoteFlush.current = undefined;
+    const operations = remoteOperations.current;
+    remoteOperations.current = [];
+    if (operations.length)
+      setObjects((current) => applyOperations(current, operations));
+  }, []);
+  function queueRemoteOperation(op: Operation) {
+    remoteOperations.current.push(op);
+    if (remoteFlush.current !== undefined) return;
+    // Hidden tabs get no animation frames.
+    remoteFlush.current = document.hidden
+      ? window.setTimeout(flushRemoteOperations, 30)
+      : requestAnimationFrame(flushRemoteOperations);
+  }
+
   const onServerMessage = useEffectEvent((message: ServerMessage) => {
     const client = clientRef.current;
     switch (message.t) {
       case 'welcome': {
+        flushRemoteOperations();
         setSelfPeerId(message.self.peerId);
         setBoard(message.board);
-        remote.clear();
+        // Drafts of objects the snapshot already has are finished; the rest
+        // are still being drawn and keep updating.
+        remote.forget(message.objects.map((item) => item.id));
         setObjects(
-          applyOperations(message.objects, client?.pendingOperations ?? []),
+          applyOperations(
+            applyOperations(message.objects, client?.recentOperations ?? []),
+            client?.pendingOperations ?? [],
+          ),
         );
         setMessages((current) => [
           ...message.messages,
@@ -451,7 +486,7 @@ export default function BoardPage() {
       case 'op': {
         const { op } = message;
         remote.settle(op.objectId);
-        setObjects((current) => applyOperations(current, [op]));
+        queueRemoteOperation(op);
         if (op.type === 'delete') {
           setSelected((current) =>
             current.includes(op.objectId)
@@ -525,6 +560,7 @@ export default function BoardPage() {
         setBoard(message.board);
         return;
       case 'reset':
+        remoteOperations.current = [];
         remote.clear();
         setObjects(message.objects);
         setSelected([]);
@@ -608,7 +644,7 @@ export default function BoardPage() {
 
   /** Moves the camera, easing into place unless `animate` is false. */
   const moveView = useCallback(
-    (target: View, animate = true) => {
+    (target: View, animate = true, duration = 220) => {
       if (viewAnimation.current !== undefined)
         cancelAnimationFrame(viewAnimation.current);
       viewAnimation.current = undefined;
@@ -622,7 +658,7 @@ export default function BoardPage() {
       }
       const start = performance.now();
       const step = (now: number) => {
-        const t = easeOut(Math.min(1, (now - start) / 220));
+        const t = easeOut(Math.min(1, (now - start) / duration));
         // Zoom eases geometrically so the motion feels even at every scale.
         const zoom = from.zoom * (target.zoom / from.zoom) ** t;
         // Keep the screen centre on a straight path between the two views.
@@ -678,6 +714,36 @@ export default function BoardPage() {
     [size, moveView],
   );
 
+  // ---- Following whoever is writing ----
+  const follow = useFollow({
+    remote,
+    enabled: !isLocal && boardReady,
+    pageId: currentPage.id,
+    pages,
+    viewRef,
+    size,
+    moveView: (target, duration) => {
+      followDriving.current = true;
+      moveView(target, true, duration);
+      followDriving.current = false;
+    },
+    goToPage: (target) => {
+      followDriving.current = true;
+      switchPage(target);
+      followDriving.current = false;
+    },
+    isBusy: () =>
+      gesture.current !== null ||
+      editorRef.current !== null ||
+      pointers.current.size > 0,
+    lastLocalWrite,
+  });
+  const { noteManualView } = follow;
+  /** Panning, zooming, or changing page by hand pauses following. */
+  function markManualView() {
+    if (!followDriving.current) noteManualView();
+  }
+
   // Frame the content the first time the board appears.
   useEffect(() => {
     if (fittedOnce.current || size.width <= 1 || !boardReady) return;
@@ -688,6 +754,7 @@ export default function BoardPage() {
 
   /** Zooms around the screen centre, keeping what is in the middle in place. */
   function zoomTo(zoom: number) {
+    markManualView();
     const current = viewRef.current;
     const next = clampZoom(zoom);
     const cx = current.x + size.width / current.zoom / 2;
@@ -708,6 +775,7 @@ export default function BoardPage() {
     if (!stage) return;
     const onWheel = (event: WheelEvent) => {
       event.preventDefault();
+      noteManualView();
       if (viewAnimation.current !== undefined) {
         cancelAnimationFrame(viewAnimation.current);
         viewAnimation.current = undefined;
@@ -741,7 +809,18 @@ export default function BoardPage() {
     };
     stage.addEventListener('wheel', onWheel, { passive: false });
     return () => stage.removeEventListener('wheel', onWheel);
-  }, [boardReady]);
+  }, [boardReady, noteManualView]);
+
+  /** The part of the canvas on screen, for people following this writer. */
+  function visibleArea(): [number, number, number, number] {
+    const current = viewRef.current;
+    return [
+      round(current.x),
+      round(current.y),
+      round(size.width / current.zoom),
+      round(size.height / current.zoom),
+    ];
+  }
 
   function toWorld(clientX: number, clientY: number): Point {
     const rect = stageRef.current!.getBoundingClientRect();
@@ -775,7 +854,7 @@ export default function BoardPage() {
       changes.push({ objectId: draft.objectId, before, after });
       operations.push({ ...draft, id: id() });
     }
-    if (!operations.length) return;
+    if (!operations.length) return changes;
     const next = applyOperations(current, operations);
     objectsRef.current = next;
     setObjects(next);
@@ -791,6 +870,7 @@ export default function BoardPage() {
       client.flushLive();
       for (const operation of operations) client.sendOperation(operation);
     }
+    return changes;
   }
 
   function restore(entry: Change[], side: 'before' | 'after') {
@@ -980,6 +1060,7 @@ export default function BoardPage() {
     gesture.current = null;
     setPanning(false);
     setOverlay({});
+    if (current?.kind === 'erase') finishErase(current);
     if (current && (current.kind === 'draw' || current.kind === 'shape'))
       clientRef.current?.liveRemove([current.object.id]);
     if (current && (current.kind === 'move' || current.kind === 'resize'))
@@ -999,13 +1080,52 @@ export default function BoardPage() {
     return null;
   }
 
-  function eraseAt(clientX: number, clientY: number) {
+  /**
+   * Erases along the pointer's path since the last sample, so a fast swipe
+   * misses nothing. Each object is deleted the moment it is touched, so
+   * everyone watching sees the eraser work live; undo still restores the
+   * whole swipe in one step.
+   */
+  function eraseTo(clientX: number, clientY: number) {
     const current = gesture.current;
     if (current?.kind !== 'erase') return;
-    const oid = objectIdAt(clientX, clientY);
-    if (!oid || current.erased.has(oid)) return;
-    current.erased.add(oid);
-    setOverlay({ hide: [...current.erased] });
+    const { last } = current;
+    const steps = Math.max(
+      1,
+      Math.ceil(Math.hypot(clientX - last.x, clientY - last.y) / 6),
+    );
+    const hits: string[] = [];
+    for (let step = 1; step <= steps; step++) {
+      const oid = objectIdAt(
+        last.x + ((clientX - last.x) * step) / steps,
+        last.y + ((clientY - last.y) * step) / steps,
+      );
+      if (!oid || current.erased.has(oid)) continue;
+      current.erased.add(oid);
+      hits.push(oid);
+    }
+    current.last = { x: clientX, y: clientY };
+    if (!hits.length) return;
+    current.changes.push(
+      ...perform(
+        hits.map((objectId) => ({ type: 'delete', objectId })),
+        { record: false },
+      ),
+    );
+    setSelected((selection) =>
+      selection.some((item) => current.erased.has(item))
+        ? selection.filter((item) => !current.erased.has(item))
+        : selection,
+    );
+  }
+
+  function finishErase(current: Extract<Gesture, { kind: 'erase' }>) {
+    if (!current.changes.length) return;
+    history.current.push(current.changes);
+    if (history.current.length > 200) history.current.shift();
+    redoStack.current = [];
+    setCanUndo(true);
+    setCanRedo(false);
   }
 
   function onPointerDown(event: React.PointerEvent<SVGSVGElement>) {
@@ -1029,6 +1149,7 @@ export default function BoardPage() {
 
     if (event.pointerType === 'touch' && pointers.current.size === 2) {
       cancelGesture();
+      markManualView();
       const [a, b] = [...pointers.current.values()] as [Point, Point];
       gesture.current = {
         kind: 'pinch',
@@ -1047,6 +1168,7 @@ export default function BoardPage() {
     stage.setPointerCapture(event.pointerId);
 
     const pan = () => {
+      markManualView();
       gesture.current = {
         kind: 'pan',
         start: { x: event.clientX, y: event.clientY },
@@ -1058,7 +1180,10 @@ export default function BoardPage() {
       if (readonly && oid && tool === 'select') setSelected([oid]);
       return pan();
     }
-    if (tool !== 'select') setGuideDismissed(true);
+    if (tool !== 'select') {
+      setGuideDismissed(true);
+      stamp(lastLocalWrite);
+    }
 
     switch (tool) {
       case 'select': {
@@ -1099,8 +1224,13 @@ export default function BoardPage() {
         return;
       }
       case 'eraser':
-        gesture.current = { kind: 'erase', erased: new Set() };
-        eraseAt(event.clientX, event.clientY);
+        gesture.current = {
+          kind: 'erase',
+          erased: new Set(),
+          changes: [],
+          last: { x: event.clientX, y: event.clientY },
+        };
+        eraseTo(event.clientX, event.clientY);
         return;
       case 'pen':
       case 'highlighter': {
@@ -1165,10 +1295,16 @@ export default function BoardPage() {
       });
     const current = gesture.current;
     const point = toWorld(event.clientX, event.clientY);
+    const writing =
+      current?.kind === 'draw' ||
+      current?.kind === 'shape' ||
+      current?.kind === 'erase';
+    if (writing) stamp(lastLocalWrite);
     clientRef.current?.liveCursor({
       x: round(point.x),
       y: round(point.y),
       page: currentPage.id,
+      ...(writing ? { active: true, view: visibleArea() } : {}),
     });
     if (!current) return;
 
@@ -1298,9 +1434,16 @@ export default function BoardPage() {
         setSelected([...new Set([...current.base, ...hits])]);
         return;
       }
-      case 'erase':
-        if (event.buttons) eraseAt(event.clientX, event.clientY);
+      case 'erase': {
+        if (!event.buttons) return;
+        const samples =
+          typeof event.nativeEvent.getCoalescedEvents === 'function'
+            ? event.nativeEvent.getCoalescedEvents()
+            : [];
+        for (const sample of samples.length ? samples : [event.nativeEvent])
+          eraseTo(sample.clientX, sample.clientY);
         return;
+      }
     }
   }
 
@@ -1380,7 +1523,7 @@ export default function BoardPage() {
         ]);
         break;
       case 'erase':
-        deleteObjects([...current.erased]);
+        finishErase(current);
         break;
     }
     setOverlay({});
@@ -1402,6 +1545,7 @@ export default function BoardPage() {
   // ---- Pages ----
   function switchPage(target: string) {
     if (target === currentPage.id) return;
+    markManualView();
     finishText();
     cancelGesture();
     setSelected([]);
@@ -1663,8 +1807,10 @@ export default function BoardPage() {
       event.preventDefault();
       zoomTo(1);
     } else if (event.shiftKey && (key === '1' || key === '!')) {
+      markManualView();
       fitTo(unionBounds(pageObjectsRef.current));
     } else if (event.shiftKey && (key === '2' || key === '@')) {
+      markManualView();
       fitTo(
         unionBounds(
           selectedObjects.length ? selectedObjects : pageObjectsRef.current,
@@ -2122,7 +2268,16 @@ export default function BoardPage() {
             onChange={(event) => {
               const object = { ...editorObject, text: event.target.value };
               setTextEditor({ ...textEditor!, object });
+              stamp(lastLocalWrite);
+              const bounds = objectBounds(object);
               clientRef.current?.liveUpsert([object]);
+              clientRef.current?.liveCursor({
+                x: round(bounds.x + bounds.width),
+                y: round(bounds.y + bounds.height),
+                page: currentPage.id,
+                active: true,
+                view: visibleArea(),
+              });
             }}
             onBlur={finishText}
             onKeyDown={(event) => {
@@ -2150,7 +2305,9 @@ export default function BoardPage() {
           ) : (
             <CanvasGuide
               tools={TOOLS}
-              hidden={guideDismissed || Boolean(textEditor)}
+              hidden={
+                guideDismissed || Boolean(textEditor) || Boolean(follow.focus)
+              }
               isLocal={isLocal}
               canShare={board.role === 'owner' && !isLocal}
             />
@@ -2427,6 +2584,18 @@ export default function BoardPage() {
             Connection lost — reconnecting. Your edits are kept and will sync.
           </div>
         )}
+        {!isLocal && (
+          <FollowChip
+            focus={follow.focus}
+            mode={follow.mode}
+            peers={peers}
+            pages={pages}
+            pageId={currentPage.id}
+            onResume={follow.resume}
+            onStop={follow.stop}
+            onGo={switchPage}
+          />
+        )}
         {notice && (
           <div className="toast" role="status">
             <span>{notice}</span>
@@ -2619,6 +2788,7 @@ export default function BoardPage() {
                 role="menuitem"
                 onClick={() => {
                   setZoomMenuOpen(false);
+                  markManualView();
                   fitTo(unionBounds(pageObjects));
                 }}
               >
@@ -2632,6 +2802,7 @@ export default function BoardPage() {
                 disabled={!selectedObjects.length}
                 onClick={() => {
                   setZoomMenuOpen(false);
+                  markManualView();
                   fitTo(unionBounds(selectedObjects));
                 }}
               >
@@ -2674,7 +2845,10 @@ export default function BoardPage() {
           className="icon-button"
           aria-label="Zoom to fit"
           title="Zoom to fit · Shift 1"
-          onClick={() => fitTo(unionBounds(pageObjects))}
+          onClick={() => {
+            markManualView();
+            fitTo(unionBounds(pageObjects));
+          }}
         >
           <Icon name="fit" />
         </button>
@@ -2690,14 +2864,21 @@ export default function BoardPage() {
               : `${otherPeople.length} others here`}
           </div>
         )}
-        {minimapOpen && (
-          <Minimap
-            objects={pageObjects}
-            view={view}
-            size={size}
-            onMove={(target) => moveView(target, false)}
-          />
-        )}
+        <Minimap
+          open={minimapOpen}
+          objects={pageObjects}
+          view={view}
+          size={size}
+          activity={isLocal ? null : remote}
+          peers={peers}
+          page={currentPage.id}
+          pages={pages}
+          onMove={(target, animate) => {
+            markManualView();
+            moveView(target, animate);
+          }}
+          onGoToPage={switchPage}
+        />
       </div>
 
       {/* ---- Selection inspector ---- */}

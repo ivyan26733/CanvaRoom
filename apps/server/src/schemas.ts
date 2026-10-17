@@ -100,6 +100,16 @@ export const clientMessageSchema = z.discriminatedUnion('t', [
         x: z.number().finite(),
         y: z.number().finite(),
         page: z.string().min(1).max(40).optional(),
+        // Set while drawing, erasing, or typing, so others can follow along.
+        active: z.boolean().optional(),
+        view: z
+          .tuple([
+            z.number().finite(),
+            z.number().finite(),
+            z.number().finite(),
+            z.number().finite(),
+          ])
+          .optional(),
       })
       .nullable()
       .optional(),

@@ -3133,6 +3133,138 @@ kbd {
   fill: var(--accent-soft);
   stroke: var(--accent);
 }
+/* People writing right now, on the minimap and under it. */
+.minimap-writer {
+  cursor: pointer;
+}
+.minimap-writer-pulse {
+  fill: currentColor;
+  opacity: 0.35;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: writer-pulse 1.4s var(--ease-out, ease-out) infinite;
+}
+@keyframes writer-pulse {
+  from {
+    opacity: 0.45;
+    transform: scale(0.5);
+  }
+  to {
+    opacity: 0;
+    transform: scale(1.6);
+  }
+}
+.minimap-writers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-width: 188px;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.minimap-writers button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 188px;
+  padding: 3px 9px 3px 7px;
+  border-radius: 999px;
+  color: var(--ink-2);
+  background: var(--bg-2);
+  font-size: 12px;
+  font-weight: 500;
+  animation: m-rise-in var(--dur-2, 200ms) var(--ease-out, ease-out);
+}
+.minimap-writers button:hover {
+  color: var(--ink);
+}
+.minimap-writer-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  animation: writer-dot 1.4s ease-in-out infinite;
+}
+@keyframes writer-dot {
+  50% {
+    opacity: 0.45;
+  }
+}
+.minimap-writer-name,
+.minimap-writer-page {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.minimap-writer-page {
+  color: var(--ink-3);
+}
+.minimap-writer-page::before {
+  content: '· ';
+}
+
+/* ---- Following whoever is writing ---- */
+.follow-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  padding: 5px 6px 5px 12px;
+  border-radius: 999px;
+  color: var(--ink-2);
+  background: var(--surface);
+  box-shadow: var(--shadow-2);
+  font-size: 13px;
+  pointer-events: auto;
+  animation: m-rise-in var(--dur-2, 200ms) var(--ease-out, ease-out);
+}
+.follow-chip > span:not(.follow-dot) {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.follow-chip strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+.follow-dot {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--peer);
+  animation: writer-dot 1.4s ease-in-out infinite;
+}
+.follow-chip.is-paused .follow-dot,
+.follow-chip.is-off .follow-dot {
+  animation: none;
+  opacity: 0.6;
+}
+.follow-action {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 999px;
+  color: var(--ink-2);
+  background: var(--bg-2);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+.follow-action:hover {
+  color: var(--ink);
+}
+.follow-action.primary {
+  color: #fff;
+  background: var(--peer);
+}
+.follow-action.primary:hover {
+  color: #fff;
+  filter: brightness(1.08);
+}
 
 /* ---- Pages panel ---- */
 .pages-panel {
@@ -3885,6 +4017,23 @@ kbd {
   .corner-right {
     display: none;
   }
+  /* On small screens the minimap only appears as a locator while someone writes. */
+  .corner-right:has(.minimap.has-writers) {
+    right: 10px;
+    bottom: 128px;
+    display: flex;
+  }
+  .corner-right .presence-chip {
+    display: none;
+  }
+  .minimap svg {
+    width: 132px;
+    height: auto;
+  }
+  .minimap-writers,
+  .minimap-writers button {
+    max-width: 132px;
+  }
   .inspector {
     top: auto;
     right: 10px;
@@ -3926,6 +4075,11 @@ kbd {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .minimap-writer-pulse,
+  .minimap-writer-dot,
+  .follow-dot {
+    animation: none;
+  }
   *,
   *::before,
   *::after {

@@ -11,6 +11,22 @@ import type { LiveMessage } from '../../lib/realtime';
 import { BoardShape } from './board-shape';
 
 const DRAFT_TIMEOUT_MS = 15_000;
+/** How long after their last stroke someone still counts as writing. */
+export const WRITING_GRACE_MS = 2_500;
+
+/** Where someone is writing right now. */
+export type Writing = {
+  peerId: string;
+  /** When this burst of writing began; the earliest writer keeps the focus. */
+  since: number;
+  at: number;
+  page?: string;
+  /** The newest point of their pen, shape, or text, in canvas units. */
+  x: number;
+  y: number;
+  /** What they can see while writing: x, y, width, height. */
+  view?: [number, number, number, number];
+};
 
 /**
  * What other people are doing right now — their cursors and anything they
@@ -28,20 +44,28 @@ export class RemoteActivity {
     string,
     { x: number; y: number; page?: string; at: number }
   >();
+  /** People drawing, erasing, or typing, by peer. */
+  writing = new Map<string, Writing>();
   private version = 0;
   /** When the layer last changed, for fading idle cursors without impure renders. */
   renderedAt = 0;
   private listeners = new Set<() => void>();
   private frame: number | undefined;
   private sweep = setInterval(() => this.expire(), 5_000);
+  /** Redraws once writing goes quiet, so locator dots disappear on time. */
+  private quiet: ReturnType<typeof setTimeout> | undefined;
 
   apply(message: LiveMessage) {
     const now = Date.now();
-    if (message.cursor)
-      this.cursors.set(message.peerId, { ...message.cursor, at: now });
-    else if (message.cursor === null) this.cursors.delete(message.peerId);
+    const { peerId } = message;
+    // Writers send an active cursor at their pen tip (or text) every frame.
+    const tip = message.cursor?.active ? message.cursor : undefined;
+    if (message.cursor) {
+      const { x, y, page } = message.cursor;
+      this.cursors.set(peerId, { x, y, ...(page ? { page } : {}), at: now });
+    } else if (message.cursor === null) this.cursors.delete(peerId);
     for (const object of message.upsert ?? [])
-      this.drafts.set(object.id, { peerId: message.peerId, object, at: now });
+      this.drafts.set(object.id, { peerId, object, at: now });
     for (const { id, points } of message.append ?? []) {
       const draft = this.drafts.get(id);
       if (!draft) continue;
@@ -52,7 +76,32 @@ export class RemoteActivity {
       draft.at = now;
     }
     for (const id of message.remove ?? []) this.drafts.delete(id);
+    if (tip) {
+      const previous = this.writing.get(peerId);
+      const view = tip.view ?? previous?.view;
+      this.writing.set(peerId, {
+        peerId,
+        since:
+          previous && now - previous.at < WRITING_GRACE_MS
+            ? previous.since
+            : now,
+        at: now,
+        x: tip.x,
+        y: tip.y,
+        ...(tip.page ? { page: tip.page } : {}),
+        ...(view ? { view } : {}),
+      });
+      clearTimeout(this.quiet);
+      this.quiet = setTimeout(() => this.changed(), WRITING_GRACE_MS + 50);
+    }
     this.changed();
+  }
+
+  /** People who wrote within the grace period, earliest first. */
+  activeWriters(now = Date.now()) {
+    return [...this.writing.values()]
+      .filter((item) => now - item.at < WRITING_GRACE_MS)
+      .sort((a, b) => a.since - b.since);
   }
 
   /** A committed operation supersedes any live draft of the same object. */
@@ -62,14 +111,23 @@ export class RemoteActivity {
 
   dropPeer(peerId: string) {
     this.cursors.delete(peerId);
+    this.writing.delete(peerId);
     for (const [id, draft] of this.drafts)
       if (draft.peerId === peerId) this.drafts.delete(id);
     this.changed();
   }
 
+  /** Drops drafts of the given objects, which are committed now. */
+  forget(ids: Iterable<string>) {
+    let changed = false;
+    for (const id of ids) changed = this.drafts.delete(id) || changed;
+    if (changed) this.changed();
+  }
+
   clear() {
     this.drafts.clear();
     this.cursors.clear();
+    this.writing.clear();
     this.changed();
   }
 
@@ -78,6 +136,8 @@ export class RemoteActivity {
     let changed = false;
     for (const [id, draft] of this.drafts)
       if (draft.at < cutoff) changed = this.drafts.delete(id) || changed;
+    for (const [peerId, item] of this.writing)
+      if (item.at < cutoff) this.writing.delete(peerId);
     if (changed) this.changed();
   }
 
@@ -100,6 +160,7 @@ export class RemoteActivity {
 
   dispose() {
     clearInterval(this.sweep);
+    clearTimeout(this.quiet);
     if (this.frame !== undefined) cancelAnimationFrame(this.frame);
     this.listeners.clear();
   }

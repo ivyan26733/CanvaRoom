@@ -8,7 +8,15 @@ import {
   type Peer,
 } from './api';
 
-export type LiveCursor = { x: number; y: number; page?: string };
+export type LiveCursor = {
+  x: number;
+  y: number;
+  page?: string;
+  /** Set while this person is drawing, erasing, or typing. */
+  active?: boolean;
+  /** The part of the canvas they see while active: x, y, width, height. */
+  view?: [number, number, number, number];
+};
 
 export type LiveMessage = {
   t: 'live';
@@ -62,8 +70,14 @@ const LIVE_FLUSH_MS = 16;
  * on Hobby). Reconnecting a little earlier, at a moment when nobody is
  * mid-stroke, keeps that cut from interrupting anything.
  */
-const ROTATE_AFTER_MS = 265_000;
-const ROTATE_DEADLINE_MS = 292_000;
+const ROTATE_AFTER_MS =
+  Number(process.env.NEXT_PUBLIC_REALTIME_ROTATE_MS) || 265_000;
+const ROTATE_DEADLINE_MS = ROTATE_AFTER_MS + 27_000;
+/** Closing code that tells the server a replacement connection took over. */
+const HANDED_OVER = 4001;
+/** How long edits are kept to replay over a fresh board snapshot. */
+const RECENT_OPS_MS = 10_000;
+const RETRY_SAVE_MS = 2_000;
 
 function realtimeUrl() {
   const override = process.env.NEXT_PUBLIC_REALTIME_URL;
@@ -86,7 +100,10 @@ export class RealtimeClient {
   readonly peerId = crypto.randomUUID();
   status: ConnectionStatus = 'connecting';
   private socket: WebSocket | null = null;
+  /** A replacement connection opened before the current one is closed. */
+  private next: WebSocket | null = null;
   private outbox: Operation[];
+  private recentOps: { at: number; op: Operation }[] = [];
   private closed = false;
   private retryDelay = 0;
   private retryTimer: ReturnType<typeof setTimeout> | undefined;
@@ -131,14 +148,32 @@ export class RealtimeClient {
     this.handlers.onStatus(status);
   }
 
-  private connect() {
+  /**
+   * Opens a connection. With `handover`, the current one keeps carrying
+   * everything until the new one is live, so planned reconnects (Vercel's
+   * duration limit, a resync) never drop anyone from the room or the call.
+   */
+  private connect(handover = false) {
     if (this.closed) return;
     clearTimeout(this.retryTimer);
-    this.setStatus(this.status === 'live' ? 'connecting' : this.status);
+    if (handover && this.socket?.readyState !== WebSocket.OPEN)
+      handover = false;
+    if (!handover)
+      this.setStatus(this.status === 'live' ? 'connecting' : this.status);
     const socket = new WebSocket(realtimeUrl());
-    this.socket = socket;
+    if (handover) {
+      this.next?.close();
+      this.next = socket;
+    } else {
+      this.next?.close();
+      this.next = null;
+      const prior = this.socket;
+      this.socket = socket;
+      prior?.close();
+    }
+    let welcomed = false;
     socket.onopen = () => {
-      this.lastHeard = Date.now();
+      if (!handover) this.lastHeard = Date.now();
       socket.send(
         JSON.stringify({
           t: 'hello',
@@ -150,7 +185,6 @@ export class RealtimeClient {
       );
     };
     socket.onmessage = (event) => {
-      this.lastHeard = Date.now();
       let message: ServerMessage;
       try {
         message = JSON.parse(event.data as string) as ServerMessage;
@@ -158,6 +192,14 @@ export class RealtimeClient {
         return;
       }
       if (message.t === 'welcome') {
+        welcomed = true;
+        if (this.next === socket) {
+          const old = this.socket;
+          this.next = null;
+          this.socket = socket;
+          old?.close(HANDED_OVER, 'handed over');
+        }
+        this.lastHeard = Date.now();
         this.retryDelay = 0;
         this.openedAt = Date.now();
         this.setStatus('live');
@@ -168,8 +210,21 @@ export class RealtimeClient {
         this.startPing();
         return;
       }
+      if (this.socket !== socket) {
+        // Before its welcome, a replacement only matters once the old
+        // connection is gone; until then both carry the same messages.
+        if (this.next !== socket || welcomed) return;
+        if (this.socket?.readyState === WebSocket.OPEN) return;
+      }
+      this.lastHeard = Date.now();
+      if (message.t === 'op') this.remember(message.op);
       if (message.t === 'ack' || message.t === 'nack') {
-        if (message.t === 'nack' && message.retry) return;
+        if (message.t === 'nack' && message.retry) {
+          this.retrySoon(message.id);
+          return;
+        }
+        const own = this.outbox.find((op) => op.id === message.id);
+        if (own && message.t === 'ack') this.remember(own);
         this.outbox = this.outbox.filter((op) => op.id !== message.id);
         writeOutbox(this.outboxKey, this.outbox);
         this.handlers.onPending(this.outbox.length);
@@ -178,18 +233,55 @@ export class RealtimeClient {
       this.handlers.onMessage(message);
     };
     socket.onclose = () => {
-      if (this.socket !== socket) return;
+      if (this.next === socket) {
+        // The replacement failed; the current connection carries on, and the
+        // next rotation tries again.
+        this.next = null;
+        if (this.socket?.readyState === WebSocket.OPEN) return;
+        this.socket = null;
+      } else if (this.socket !== socket) return;
+      else if (this.next) {
+        // The server dropped the old connection as the new one joined.
+        this.socket = null;
+        return;
+      }
       this.socket = null;
       clearInterval(this.pingTimer);
       clearInterval(this.rotateTimer);
       if (this.closed) return;
       this.setStatus('offline');
-      // Vercel ends long connections at the function's max duration; the
-      // first retry is immediate so that is invisible to people drawing.
       this.retryTimer = setTimeout(() => this.connect(), this.retryDelay);
       this.retryDelay = Math.min(8000, Math.max(500, this.retryDelay * 2));
     };
     socket.onerror = () => socket.close();
+  }
+
+  private remember(op: Operation) {
+    const now = Date.now();
+    this.recentOps = this.recentOps.filter(
+      (item) => now - item.at < RECENT_OPS_MS,
+    );
+    this.recentOps.push({ at: now, op });
+  }
+
+  /**
+   * Edits from the last few seconds, by anyone. A board snapshot can be read
+   * just before an edit that was already delivered (or confirmed) is saved,
+   * so these are replayed on top of it.
+   */
+  get recentOperations() {
+    const now = Date.now();
+    return this.recentOps
+      .filter((item) => now - item.at < RECENT_OPS_MS)
+      .map((item) => item.op);
+  }
+
+  /** Resends an edit the server could not save, without waiting to reconnect. */
+  private retrySoon(id: string) {
+    setTimeout(() => {
+      const op = this.outbox.find((item) => item.id === id);
+      if (op) this.rawSend({ t: 'op', op });
+    }, RETRY_SAVE_MS);
   }
 
   private startPing() {
@@ -206,24 +298,29 @@ export class RealtimeClient {
       const age = Date.now() - this.openedAt;
       if (age < ROTATE_AFTER_MS) return;
       if (age < ROTATE_DEADLINE_MS && this.handlers.isBusy?.()) return;
-      clearInterval(this.rotateTimer);
+      if (this.next) return;
       this.flushLive();
       this.retryDelay = 0;
-      this.socket?.close();
+      this.openedAt = Date.now();
+      this.connect(true);
     }, 1_000);
   }
 
   private reconnectNow = () => {
     if (this.closed) return;
     if (this.socket?.readyState === WebSocket.OPEN) return;
+    if (this.socket?.readyState === WebSocket.CONNECTING) return;
     this.retryDelay = 0;
-    this.socket?.close();
+    const stale = this.socket;
+    this.socket = null;
+    stale?.close();
     this.connect();
   };
 
-  /** Reconnects to fetch a fresh copy of the board from the server. */
+  /** Fetches a fresh copy of the board without leaving the room. */
   resync() {
-    this.socket?.close();
+    if (this.next) return;
+    this.connect(true);
   }
 
   private onVisible = () => {
@@ -347,6 +444,8 @@ export class RealtimeClient {
     clearInterval(this.rotateTimer);
     window.removeEventListener('online', this.reconnectNow);
     document.removeEventListener('visibilitychange', this.onVisible);
+    this.next?.close();
+    this.next = null;
     this.socket?.close();
     this.socket = null;
   }
