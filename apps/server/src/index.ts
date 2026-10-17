@@ -102,7 +102,10 @@ const getAccess = async (boardId: string, userId: string) => {
 const inviteId = () => randomBytes(24).toString('base64url');
 
 app.addHook('onRequest', async (request, reply) => {
-  reply.header('Cache-Control', 'no-store');
+  reply
+    .header('Cache-Control', 'no-store')
+    .header('X-Content-Type-Options', 'nosniff')
+    .header('Referrer-Policy', 'strict-origin-when-cross-origin');
   // The session is a cookie, so refuse writes started by other websites.
   if (
     !['GET', 'HEAD', 'OPTIONS'].includes(request.method) &&
@@ -510,11 +513,14 @@ app.get('/api/boards/:boardId/images/:name', async (request, reply) => {
   const image = await readImage(boardId, name);
   if (!image) return apiError(reply, 404, 'Image not found.');
   // Names are never reused, so the browser can keep its copy.
-  return reply
-    .header('Cache-Control', 'private, max-age=31536000, immutable')
-    .header('X-Content-Type-Options', 'nosniff')
-    .type(image.contentType)
-    .send(image.body);
+  return (
+    reply
+      .header('Cache-Control', 'private, max-age=31536000, immutable')
+      // Uploaded bytes are only ever shown as images, never run as a page.
+      .header('Content-Security-Policy', "default-src 'none'; sandbox")
+      .type(image.contentType)
+      .send(image.body)
+  );
 });
 
 app.post('/api/boards/:boardId/join', async (request, reply) => {
@@ -829,7 +835,12 @@ app.get('/api/boards/:boardId/preview', async (request, reply) => {
   return { pages: pages.length, objects };
 });
 
-app.get('/api/ice-servers', async () => ({ iceServers: config.iceServers }));
+// TURN credentials let anyone relay traffic through our server, so only
+// people with a session get them (boards also send them in their welcome).
+app.get('/api/ice-servers', async (request, reply) => {
+  if (!(await currentUser(request, reply))) return;
+  return { iceServers: config.iceServers };
+});
 
 app.get('/api/health', async () => ({
   status: 'ok',

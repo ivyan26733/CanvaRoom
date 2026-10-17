@@ -232,7 +232,10 @@ async function joinRoom(connection: Connection) {
   }
   // A reconnecting tab keeps its peerId; drop the stale socket.
   for (const existing of room)
-    if (existing.peerId === connection.peerId) {
+    if (
+      existing.peerId === connection.peerId &&
+      existing.user.id === connection.user.id
+    ) {
       room.delete(existing);
       existing.socket.close(4409, 'replaced');
     }
@@ -379,6 +382,17 @@ async function authenticate(
   const board = await store.getMeta(hello.boardId);
   const member = board?.members[user.id];
   if (!board || !member) return 'Board not found or you do not have access.';
+  // Peer IDs are random per tab, and others in the room can see them. Only
+  // the same person may take one over, so nobody can knock someone else out
+  // of the room or receive the call signals meant for them.
+  const peerOwner = (await store.listPresence(board.id)).find(
+    (peer) => peer.peerId === hello.peerId,
+  )?.userId;
+  const localOwner = [...(rooms.get(board.id) ?? [])].find(
+    (existing) => existing.peerId === hello.peerId,
+  )?.user.id;
+  if ((peerOwner ?? user.id) !== user.id || (localOwner ?? user.id) !== user.id)
+    return 'This connection is already in use. Reload the page to rejoin.';
   return {
     socket,
     peerId: hello.peerId,
