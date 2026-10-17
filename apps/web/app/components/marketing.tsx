@@ -25,7 +25,20 @@ export const appSchema = {
   applicationCategory: 'BusinessApplication',
   operatingSystem: 'Any (web browser)',
   browserRequirements: 'Requires JavaScript and a modern browser.',
-  offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
+  offers: [
+    {
+      '@type': 'Offer',
+      name: '30-minute free trial',
+      price: '0',
+      priceCurrency: 'USD',
+    },
+    {
+      '@type': 'Offer',
+      name: '30-day pass',
+      price: '11.99',
+      priceCurrency: 'USD',
+    },
+  ],
   featureList: [
     'Real-time collaborative drawing',
     'Built-in voice and chat',

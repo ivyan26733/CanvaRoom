@@ -34,7 +34,7 @@ export type Faq = { q: string; a: string };
 export const HOME_FAQ: Faq[] = [
   {
     q: 'Is CanvaRoom free?',
-    a: 'Yes. Creating an account, making boards, adding pages, inviting people, and using voice and chat are all free.',
+    a: 'Every new account gets a 30-minute free trial with everything included. After that, a 30-day pass is $11.99 (launch offer, normally $15.99) to keep creating boards and inviting people. Scratch boards stay free, and your boards always stay yours to open and export.',
   },
   {
     q: 'Do the people I invite need an account?',
@@ -114,7 +114,7 @@ export const USE_CASES: UseCase[] = [
       },
       {
         q: 'Is the online whiteboard free?',
-        a: 'Yes. Boards, pages, invites, voice, and chat are free.',
+        a: 'Scratch boards are free with no sign-up. Accounts get a 30-minute free trial, then a 30-day pass is $11.99 to keep creating boards and inviting people.',
       },
       {
         q: 'Can I add images?',
@@ -207,7 +207,7 @@ export const USE_CASES: UseCase[] = [
     faq: [
       {
         q: 'Is the study board free for students?',
-        a: 'Yes, it is free to use.',
+        a: 'You can try it free for 30 minutes after signing up. After that, a 30-day pass is $11.99 (launch offer, normally $15.99).',
       },
       {
         q: 'Can my friends join without signing up?',
@@ -311,7 +311,7 @@ export const USE_CASES: UseCase[] = [
       },
       {
         q: 'Is it free?',
-        a: 'Yes. Boards, templates, invites, voice, and chat are free.',
+        a: 'It starts with a 30-minute free trial. After that, a 30-day pass is $11.99 (launch offer, normally $15.99).',
       },
     ],
   },
