@@ -15,6 +15,12 @@ type Link = {
   /** Signals for one peer must be applied strictly in arrival order. */
   queue: Promise<void>;
   audio: HTMLAudioElement;
+  /**
+   * A copy of the peer's audio for the speaking meter and recordings. Safari
+   * can stop playing a remote WebRTC track through its <audio> element once
+   * that track is also fed into Web Audio, so the element gets the original.
+   */
+  tap?: MediaStream | undefined;
   analyser?: AnalyserNode | undefined;
   /** When the connection was last not working, or undefined while it is. */
   unhealthySince: number | undefined;
@@ -30,6 +36,10 @@ export type CallState = {
   speaking: Set<string>;
   /** Peer IDs whose audio connection is up. */
   connected: Set<string>;
+  /** The browser refused to start playback until the page is tapped. */
+  needsTap: boolean;
+  /** The device paused the microphone (a phone call, Siri, the app hidden). */
+  micPaused: boolean;
   error: string;
 };
 
@@ -56,8 +66,11 @@ const HEAL_AFTER_MS = 12_000;
 export class AudioCall {
   private links = new Map<string, Link>();
   private stream: MediaStream | null = null;
+  /** A copy of the microphone for the speaking meter. */
+  private localTap: MediaStream | null = null;
   private context: AudioContext | null = null;
   private localAnalyser: AnalyserNode | null = null;
+  private reacquiring = false;
   private meterTimer: ReturnType<typeof setInterval> | undefined;
   private healTimer: ReturnType<typeof setInterval> | undefined;
   private state: CallState = {
@@ -66,6 +79,8 @@ export class AudioCall {
     muted: false,
     speaking: new Set(),
     connected: new Set(),
+    needsTap: false,
+    micPaused: false,
     error: '',
   };
 
@@ -94,39 +109,130 @@ export class AudioCall {
       return;
     }
     this.update({ joining: true, error: '' });
+    // Created while the click that joined is still being handled: Safari,
+    // and iOS in particular, keeps an AudioContext made later suspended.
+    this.context = new AudioContext();
+    void this.context.resume().catch(() => undefined);
     try {
-      this.stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-      });
+      this.stream = await this.openMicrophone();
     } catch (error) {
-      const name = (error as DOMException).name;
-      this.update({
-        joining: false,
-        error:
-          name === 'NotAllowedError'
-            ? 'Microphone access was blocked. Allow it in your browser’s site settings, then try again.'
-            : name === 'NotFoundError'
-              ? 'No microphone was found.'
-              : 'Could not start your microphone.',
-      });
+      void this.context.close().catch(() => undefined);
+      this.context = null;
+      this.update({ joining: false, error: microphoneError(error) });
       return;
     }
-    this.context = new AudioContext();
-    this.localAnalyser = this.analyse(this.stream) ?? null;
+    this.watchMicrophone();
     this.meterTimer = setInterval(() => this.measure(), 120);
     this.healTimer = setInterval(() => this.heal(), 3_000);
+    document.addEventListener('pointerdown', this.unlock, true);
+    document.addEventListener('keydown', this.unlock, true);
+    document.addEventListener('visibilitychange', this.onVisible);
     this.update({ joined: true, joining: false, muted: false });
     this.client.setCall(true, false);
   }
 
+  private openMicrophone() {
+    return navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+    });
+  }
+
+  /** Meters the microphone and follows what the device does to it. */
+  private watchMicrophone() {
+    const track = this.stream?.getAudioTracks()[0];
+    if (!track) return;
+    this.localTap?.getTracks().forEach((item) => item.stop());
+    this.localTap = new MediaStream([track.clone()]);
+    this.localAnalyser = this.analyse(this.localTap) ?? null;
+    track.onmute = () => this.update({ micPaused: true });
+    track.onunmute = () => this.update({ micPaused: false });
+    // iOS ends the capture after some interruptions; pick the mic up again.
+    track.onended = () => void this.reacquire();
+    this.update({ micPaused: track.muted });
+  }
+
+  /** Opens the microphone again and swaps it into every connection. */
+  private async reacquire() {
+    if (!this.state.joined || this.reacquiring) return;
+    if (document.visibilityState === 'hidden') return; // Retried on return.
+    this.reacquiring = true;
+    try {
+      const stream = await this.openMicrophone();
+      if (!this.state.joined) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
+      const track = stream.getAudioTracks()[0]!;
+      track.enabled = !this.state.muted;
+      this.stream?.getTracks().forEach((item) => item.stop());
+      this.stream = stream;
+      for (const link of this.links.values())
+        for (const sender of link.connection.getSenders())
+          if (sender.track?.kind === 'audio' || sender.track === null)
+            await sender.replaceTrack(track).catch(() => undefined);
+      this.watchMicrophone();
+    } catch (error) {
+      this.update({ error: microphoneError(error) });
+    } finally {
+      this.reacquiring = false;
+    }
+  }
+
+  /**
+   * Retries anything the browser would only start after a tap: suspended
+   * Web Audio and remote voices whose playback was refused.
+   */
+  private unlock = () => {
+    if (this.context?.state !== 'running')
+      void this.context?.resume().catch(() => undefined);
+    for (const link of this.links.values()) this.play(link);
+  };
+
+  private onVisible = () => {
+    if (document.visibilityState !== 'visible') return;
+    this.unlock();
+    if (this.stream?.getAudioTracks()[0]?.readyState === 'ended')
+      void this.reacquire();
+  };
+
+  private play(link: Link) {
+    if (!link.audio.srcObject) return;
+    const settled = () => {
+      if (
+        this.state.needsTap &&
+        [...this.links.values()].every(
+          (item) => !item.audio.srcObject || !item.audio.paused,
+        )
+      )
+        this.update({ needsTap: false });
+    };
+    if (!link.audio.paused) return settled();
+    link.audio.play().then(settled, (error: DOMException) => {
+      if (error.name === 'NotAllowedError') this.update({ needsTap: true });
+    });
+  }
+
+  /** What this tab's microphone hears, for session recordings. */
+  microphoneStream() {
+    return this.state.joined ? this.stream : null;
+  }
+
   leave() {
     for (const peerId of [...this.links.keys()]) this.drop(peerId);
-    this.stream?.getTracks().forEach((track) => track.stop());
+    document.removeEventListener('pointerdown', this.unlock, true);
+    document.removeEventListener('keydown', this.unlock, true);
+    document.removeEventListener('visibilitychange', this.onVisible);
+    for (const track of this.stream?.getTracks() ?? []) {
+      track.onended = null;
+      track.stop();
+    }
     this.stream = null;
+    this.localTap?.getTracks().forEach((track) => track.stop());
+    this.localTap = null;
     clearInterval(this.meterTimer);
     clearInterval(this.healTimer);
     void this.context?.close().catch(() => undefined);
@@ -138,6 +244,8 @@ export class AudioCall {
       muted: false,
       speaking: new Set(),
       connected: new Set(),
+      needsTap: false,
+      micPaused: false,
     });
     this.client.setCall(false, false);
   }
@@ -152,7 +260,7 @@ export class AudioCall {
   /** What everyone else in the call is saying, for session recordings. */
   remoteStreams() {
     return [...this.links.values()]
-      .map((link) => link.audio.srcObject)
+      .map((link) => link.tap)
       .filter((stream): stream is MediaStream => stream instanceof MediaStream);
   }
 
@@ -296,8 +404,10 @@ export class AudioCall {
     connection.ontrack = ({ streams, track }) => {
       const stream = streams[0] ?? new MediaStream([track]);
       audio.srcObject = stream;
-      void audio.play().catch(() => undefined);
-      link.analyser = this.analyse(stream);
+      this.play(link);
+      link.tap?.getTracks().forEach((item) => item.stop());
+      link.tap = new MediaStream([track.clone()]);
+      link.analyser = this.analyse(link.tap);
     };
     connection.onconnectionstatechange = () => {
       const connected = new Set(this.state.connected);
@@ -343,6 +453,7 @@ export class AudioCall {
     link.connection.close();
     link.audio.srcObject = null;
     link.audio.remove();
+    link.tap?.getTracks().forEach((track) => track.stop());
     const connected = new Set(this.state.connected);
     connected.delete(peerId);
     this.update({ connected });
@@ -377,4 +488,17 @@ export class AudioCall {
     )
       this.update({ speaking });
   }
+}
+
+/** Explains why the microphone could not start, including OS-level blocks. */
+function microphoneError(error: unknown) {
+  const { name, message } = error as DOMException;
+  if (name === 'NotAllowedError')
+    return /system/i.test(message)
+      ? 'Your computer blocked the microphone for this browser. On a Mac, allow it in System Settings → Privacy & Security → Microphone, then try again.'
+      : 'Microphone access was blocked. Allow it in your browser’s site settings (on iPhone: Settings → Safari → Microphone), then try again.';
+  if (name === 'NotFoundError') return 'No microphone was found.';
+  if (name === 'NotReadableError')
+    return 'Your microphone is busy or could not start. Close other apps using it, then try again.';
+  return 'Could not start your microphone.';
 }

@@ -163,6 +163,8 @@ const EMPTY_CALL: CallState = {
   muted: false,
   speaking: new Set(),
   connected: new Set(),
+  needsTap: false,
+  micPaused: false,
   error: '',
 };
 
@@ -2456,6 +2458,7 @@ export default function BoardPage() {
           title={board.title}
           hasCall={!isLocal}
           callStreams={() => callRef.current?.remoteStreams() ?? []}
+          callMicrophone={() => callRef.current?.microphoneStream() ?? null}
           onNotice={setNotice}
         />
         <div className="menu-anchor" ref={menuRef}>

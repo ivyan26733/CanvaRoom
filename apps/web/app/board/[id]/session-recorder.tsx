@@ -52,6 +52,7 @@ export function SessionRecorderControl({
   title,
   hasCall,
   callStreams,
+  callMicrophone,
   onNotice,
 }: {
   stageRef: React.RefObject<SVGSVGElement | null>;
@@ -59,6 +60,8 @@ export function SessionRecorderControl({
   /** Whether this board has a voice call to include. */
   hasCall: boolean;
   callStreams: () => MediaStream[];
+  /** The microphone the call already has open, if this tab is in the call. */
+  callMicrophone: () => MediaStream | null;
   onNotice: (message: string) => void;
 }) {
   const [unsupported, setUnsupported] = useState<string | null>(null);
@@ -131,6 +134,7 @@ export function SessionRecorderControl({
       { ...preference, callAudio: hasCall && preference.callAudio },
       title,
       callStreams,
+      callMicrophone,
     );
     try {
       const note = await recorder.start();

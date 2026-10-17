@@ -108,6 +108,7 @@ export class SessionRecorder {
     private readonly options: RecordingOptions,
     private readonly title: string,
     private readonly callStreams: () => MediaStream[],
+    private readonly callMicrophone: () => MediaStream | null = () => null,
   ) {
     this.height = options.height;
     this.width = Math.round((options.height * 16) / 9);
@@ -119,7 +120,14 @@ export class SessionRecorder {
   /** Starts recording. Resolves with a note when audio could not be added. */
   async start(): Promise<string> {
     let note = '';
-    if (this.options.microphone) {
+    const inCall = this.options.microphone ? this.callMicrophone() : null;
+    if (inCall) {
+      // Opening the microphone a second time can silence the call's copy
+      // (iOS allows one capture at a time), so record a copy of that one.
+      this.microphone = new MediaStream(
+        inCall.getAudioTracks().map((track) => track.clone()),
+      );
+    } else if (this.options.microphone) {
       try {
         this.microphone = await navigator.mediaDevices.getUserMedia({
           audio: {

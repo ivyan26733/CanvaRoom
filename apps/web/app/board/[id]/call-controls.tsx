@@ -68,6 +68,20 @@ export function CallControls({
 
   return (
     <div className="call-bar" role="group" aria-label="Voice call">
+      {call.needsTap && (
+        // Any tap retries playback; this button just gives one a target.
+        <button className="call-tap" title="Your browser paused the call audio">
+          Tap to hear the call
+        </button>
+      )}
+      {call.micPaused && !call.muted && (
+        <span
+          className="call-paused"
+          title="Your device paused the microphone, for example during a phone call. It resumes on its own."
+        >
+          Mic paused
+        </span>
+      )}
       <div className="call-people">
         {inCall.slice(0, 5).map((peer) => {
           const self = peer.peerId === selfPeerId;
