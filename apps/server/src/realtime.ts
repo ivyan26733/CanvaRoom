@@ -94,16 +94,30 @@ const REMOTE_CHECK_MS = 3_000;
 const REMOTE_HEARD_MS = 20_000;
 
 let subscriber: Redis | undefined;
+let subscriberReady: Promise<Redis> | undefined;
 // Whether another instance has this room open, and when that was last checked.
 const remoteRooms = new Map<
   string,
   { present: boolean; checkedAt: number; heardAt: number }
 >();
 
+/**
+ * The connection rooms subscribe on, once it is ready. Subscribing earlier
+ * races ioredis's own ready check: the SUBSCRIBE can reach Redis before its
+ * INFO, which then fails, and the joins waiting on it failed with it.
+ */
 function getSubscriber() {
   if (!redis) return;
-  if (subscriber) return subscriber;
+  if (subscriberReady) return subscriberReady;
   subscriber = redis.duplicate();
+  const connection = subscriber;
+  subscriberReady = new Promise<Redis>((resolve) => {
+    if (connection.status === 'ready') resolve(connection);
+    else connection.once('ready', () => resolve(connection));
+  });
+  subscriber.on('error', (error: Error) =>
+    console.error('Realtime relay connection error', error.message),
+  );
   subscriber.on('message', (name: string, raw: string) => {
     const boardId = name.slice('room:'.length);
     let envelope: Envelope;
@@ -135,7 +149,7 @@ function getSubscriber() {
       });
     else if (envelope.k === 'meta') deliverMeta(boardId, envelope.d);
   });
-  return subscriber;
+  return subscriberReady;
 }
 
 function hasRemoteListeners(boardId: string) {
@@ -288,9 +302,19 @@ async function joinRoom(connection: Connection) {
     rooms.set(connection.boardId, (room = new Set()));
     // So the sweep notices the tier change even if it ends before it runs.
     roomTiers.set(connection.boardId, boardTier(connection.board));
-    const sub = getSubscriber();
-    if (sub && redis) {
-      await sub.subscribe(channel(connection.boardId));
+    const ready = getSubscriber();
+    if (ready && redis) {
+      try {
+        await (await ready).subscribe(channel(connection.boardId));
+      } catch (error) {
+        // Without its subscription this instance would never hear the
+        // room's other instances, so let the next join try again.
+        if (!rooms.get(connection.boardId)?.size) {
+          rooms.delete(connection.boardId);
+          roomTiers.delete(connection.boardId);
+        }
+        throw error;
+      }
       // Let instances already serving this room know to start relaying.
       void redis.publish(
         channel(connection.boardId),
@@ -772,9 +796,12 @@ function onConnection(socket: WebSocket, user: User) {
     }
     const message = parsed.data;
     if (message.t === 'hello') {
-      joining ??= join(message).catch((error) =>
-        console.error('Realtime join failed', error),
-      );
+      joining ??= join(message).catch((error) => {
+        console.error('Realtime join failed', error);
+        // Close rather than leave the tab waiting for a welcome that never
+        // comes; it reconnects straight away.
+        socket.close(1011, 'join failed');
+      });
       return;
     }
     if (connection) handleMessage(connection, message);
