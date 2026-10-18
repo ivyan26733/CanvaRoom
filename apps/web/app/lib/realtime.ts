@@ -71,6 +71,12 @@ const PING_EVERY_MS = 10_000;
 const DEAD_AFTER_MS = 25_000;
 const LIVE_FLUSH_MS = 16;
 /**
+ * A pointer that is only moving, not drawing, is sent at most this often.
+ * Remote cursors glide between updates over 70 ms, so it looks the same,
+ * and it halves the traffic of everyone hovering over a board.
+ */
+const CURSOR_FLUSH_MS = 33;
+/**
  * Vercel ends a WebSocket when its function reaches the maximum duration (300 s
  * on Hobby). Reconnecting a little earlier, at a moment when nobody is
  * mid-stroke, keeps that cut from interrupting anything.
@@ -135,6 +141,7 @@ export class RealtimeClient {
     remove?: string[];
   } = {};
   private liveTimer: ReturnType<typeof setTimeout> | undefined;
+  private liveDue = 0;
   private appendIndex = new Map<string, number[]>();
 
   constructor(
@@ -434,7 +441,9 @@ export class RealtimeClient {
 
   liveCursor(cursor: LiveCursor | null) {
     this.live.cursor = cursor;
-    this.scheduleLive();
+    this.scheduleLive(
+      cursor && !cursor.active ? CURSOR_FLUSH_MS : LIVE_FLUSH_MS,
+    );
   }
 
   /** Streams an object that is being drawn, moved, resized, or typed. */
@@ -503,9 +512,15 @@ export class RealtimeClient {
     if (Object.keys(message).length > 1) this.rawSend(message);
   }
 
-  private scheduleLive() {
-    if (this.liveTimer) return;
-    this.liveTimer = setTimeout(() => this.flushLive(), LIVE_FLUSH_MS);
+  /** Sends pending live activity within `delay`, or sooner if already due. */
+  private scheduleLive(delay = LIVE_FLUSH_MS) {
+    const due = performance.now() + delay;
+    if (this.liveTimer) {
+      if (this.liveDue <= due) return;
+      clearTimeout(this.liveTimer);
+    }
+    this.liveDue = due;
+    this.liveTimer = setTimeout(() => this.flushLive(), delay);
   }
 
   close() {
