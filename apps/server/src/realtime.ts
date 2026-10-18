@@ -69,7 +69,9 @@ type Heard = { at: number; pongAt: number };
 type Envelope =
   | { o: string; k: 'msg'; d: string; x?: string; to?: string }
   | { o: string; k: 'meta'; d: BoardMeta }
-  | { o: string; k: 'hello' };
+  | { o: string; k: 'hello' }
+  // Several of the above, published together.
+  | { o: string; k: 'batch'; d: Envelope[] };
 
 const instanceId = randomUUID();
 const rooms = new Map<string, Set<Connection>>();
@@ -90,6 +92,12 @@ const HANDOVER_GRACE_MS = 5_000;
 /** How often rooms shared with other instances re-check for expired peers. */
 const REMOTE_PRESENCE_CHECK_MS = 10_000;
 const REMOTE_CHECK_MS = 3_000;
+/**
+ * While no other instance has the room, checking is only a fallback: an
+ * instance that opens the room announces itself, which starts relaying at
+ * once. Each check is a Redis command, so it runs far less often.
+ */
+const REMOTE_ABSENT_CHECK_MS = 30_000;
 /** Hearing from another instance keeps relaying on at least this long. */
 const REMOTE_HEARD_MS = 20_000;
 
@@ -119,7 +127,6 @@ function getSubscriber() {
     console.error('Realtime relay connection error', error.message),
   );
   subscriber.on('message', (name: string, raw: string) => {
-    const boardId = name.slice('room:'.length);
     let envelope: Envelope;
     try {
       envelope = JSON.parse(raw) as Envelope;
@@ -127,36 +134,76 @@ function getSubscriber() {
       return;
     }
     if (envelope.o === instanceId) return;
-    const known = remoteRooms.get(boardId);
-    remoteRooms.set(boardId, {
-      present: true,
-      checkedAt: known?.checkedAt ?? Date.now(),
-      heardAt: Date.now(),
-    });
-    if (envelope.k === 'msg' && envelope.d.startsWith('{"t":"presence"'))
-      try {
-        notePresence(
-          boardId,
-          (JSON.parse(envelope.d) as { peers: Presence[] }).peers,
-        );
-      } catch {
-        // Delivered as is below.
-      }
-    if (envelope.k === 'msg')
-      deliverLocal(boardId, envelope.d, {
-        ...(envelope.x ? { exceptPeer: envelope.x } : {}),
-        ...(envelope.to ? { to: envelope.to } : {}),
-      });
-    else if (envelope.k === 'meta') deliverMeta(boardId, envelope.d);
+    const boardId = name.slice('room:'.length);
+    if (envelope.k === 'batch')
+      for (const item of envelope.d) receiveEnvelope(boardId, item);
+    else receiveEnvelope(boardId, envelope);
   });
   return subscriberReady;
+}
+
+/** Handles one message relayed from another instance. */
+function receiveEnvelope(boardId: string, envelope: Envelope) {
+  const known = remoteRooms.get(boardId);
+  remoteRooms.set(boardId, {
+    present: true,
+    checkedAt: known?.checkedAt ?? Date.now(),
+    heardAt: Date.now(),
+  });
+  if (envelope.k === 'msg' && envelope.d.startsWith('{"t":"presence"'))
+    try {
+      notePresence(
+        boardId,
+        (JSON.parse(envelope.d) as { peers: Presence[] }).peers,
+      );
+    } catch {
+      // Delivered as is below.
+    }
+  if (envelope.k === 'msg')
+    deliverLocal(boardId, envelope.d, {
+      ...(envelope.x ? { exceptPeer: envelope.x } : {}),
+      ...(envelope.to ? { to: envelope.to } : {}),
+    });
+  else if (envelope.k === 'meta') deliverMeta(boardId, envelope.d);
+}
+
+/** Relay messages waiting to be published, per room. */
+const outbox = new Map<string, Envelope[]>();
+
+/**
+ * Publishes to the room's other instances. Everything queued for a room in
+ * the same turn of the event loop goes out as one PUBLISH: a busy room
+ * streams a message per person per frame, and each publish is a billed
+ * Redis command. Nothing waits for a timer, so relayed strokes are not
+ * delayed.
+ */
+function relay(boardId: string, envelope: Envelope) {
+  if (!redis) return;
+  let queue = outbox.get(boardId);
+  if (!queue) {
+    outbox.set(boardId, (queue = []));
+    setImmediate(() => {
+      outbox.delete(boardId);
+      void redis?.publish(
+        channel(boardId),
+        JSON.stringify(
+          queue!.length === 1
+            ? queue![0]
+            : ({ o: instanceId, k: 'batch', d: queue! } satisfies Envelope),
+        ),
+      );
+    });
+  }
+  queue.push(envelope);
 }
 
 function hasRemoteListeners(boardId: string) {
   if (!redis) return false;
   const known = remoteRooms.get(boardId);
   const now = Date.now();
-  if (!known || now - known.checkedAt > REMOTE_CHECK_MS) {
+  const every =
+    known?.present === false ? REMOTE_ABSENT_CHECK_MS : REMOTE_CHECK_MS;
+  if (!known || now - known.checkedAt > every) {
     remoteRooms.set(boardId, {
       present: known?.present ?? true,
       checkedAt: now,
@@ -239,7 +286,7 @@ export function broadcast(
       ...(options.exceptPeer ? { x: options.exceptPeer } : {}),
       ...(options.to ? { to: options.to } : {}),
     };
-    void redis.publish(channel(boardId), JSON.stringify(envelope));
+    relay(boardId, envelope);
   }
 }
 
@@ -247,10 +294,7 @@ export function broadcast(
 export function broadcastBoard(board: BoardMeta) {
   deliverMeta(board.id, board);
   if (redis && hasRemoteListeners(board.id))
-    void redis.publish(
-      channel(board.id),
-      JSON.stringify({ o: instanceId, k: 'meta', d: board } satisfies Envelope),
-    );
+    relay(board.id, { o: instanceId, k: 'meta', d: board });
 }
 
 /** What each room's presence looked like when last listed on this instance. */
