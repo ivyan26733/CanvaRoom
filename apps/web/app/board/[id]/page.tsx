@@ -26,7 +26,8 @@ import {
   type Peer,
   type User,
 } from '../../lib/api';
-import { AudioCall, type CallState } from '../../lib/audio';
+import { AudioCall, type CallState, type VoiceCall } from '../../lib/audio';
+import { SfuCall } from '../../lib/sfu-call';
 import {
   applyOperations,
   defaultFontSize,
@@ -288,7 +289,7 @@ export default function BoardPage() {
   const overlayRef = useRef<LocalOverlayHandle>(null);
   const imagePicker = useRef<HTMLInputElement>(null);
   const clientRef = useRef<RealtimeClient | null>(null);
-  const callRef = useRef<AudioCall | null>(null);
+  const callRef = useRef<VoiceCall | null>(null);
   const remote = useMemo(() => new RemoteActivity(), []);
   const objectsRef = useRef<BoardObject[]>([]);
   const viewRef = useRef(view);
@@ -508,6 +509,17 @@ export default function BoardPage() {
                 : [];
         if (editorRef.current) inProgress.push(editorRef.current.object);
         if (inProgress.length) client?.liveUpsert(inProgress);
+        // The server says whether calls go through its SFU or peer to peer.
+        // Switch before anyone joins; a call in progress keeps its kind.
+        if (client && callRef.current && !callRef.current.joined) {
+          const sfu = callRef.current instanceof SfuCall;
+          if (Boolean(message.sfu) !== sfu) {
+            callRef.current.leave();
+            callRef.current = message.sfu
+              ? new SfuCall(client, boardId, setCall)
+              : new AudioCall(client, [], setCall);
+          }
+        }
         callRef.current?.setIceServers(message.iceServers);
         callRef.current?.syncPeers(message.peers);
         callPeers.current = new Set(
@@ -624,10 +636,9 @@ export default function BoardPage() {
     });
     clientRef.current = client;
     setPending(client.pendingOperations.length);
-    const audio = new AudioCall(client, [], setCall);
-    callRef.current = audio;
+    callRef.current = new AudioCall(client, [], setCall);
     return () => {
-      audio.leave();
+      callRef.current?.leave();
       client.close();
       clientRef.current = null;
       callRef.current = null;

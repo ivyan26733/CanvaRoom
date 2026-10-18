@@ -38,6 +38,16 @@ import {
 import { attachRealtime, broadcast, broadcastBoard } from './realtime.js';
 import { loadStore, storageKind, store } from './store.js';
 import {
+  closeTracks,
+  publish,
+  pull,
+  renegotiate,
+  SfuError,
+  sessionToken,
+  sfuConfigured,
+  validSessionToken,
+} from './sfu.js';
+import {
   copyImages,
   deleteImages,
   MAX_IMAGE_BYTES,
@@ -1122,6 +1132,153 @@ app.post('/api/feedback', async (request, reply) => {
 
 // TURN credentials let anyone relay traffic through our server, so only
 // people with a session get them (boards also send them in their welcome).
+// ---- Voice (Cloudflare Realtime SFU) ----
+
+const sdpSchema = z.string().min(10).max(100_000);
+const sfuSessionSchema = z.string().regex(/^[0-9a-f]{16,128}$/);
+const trackNameSchema = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/);
+const midSchema = z.string().regex(/^[0-9]{1,6}$/);
+/** The caller's own SFU session, proven by the token issued with it. */
+const ownSessionSchema = z.object({
+  sessionId: sfuSessionSchema,
+  token: z.string().regex(/^[0-9a-f]{64}$/),
+});
+
+/**
+ * Who may use the board's call: members, while the board is open to them.
+ * Replies itself and returns undefined when not.
+ */
+const callAccess = async (request: FastifyRequest, reply: FastifyReply) => {
+  if (!sfuConfigured()) {
+    apiError(reply, 503, 'Voice calls are not set up on this server.');
+    return;
+  }
+  const access = await readAccess(request, reply, 'Board not found.');
+  if (!access) return;
+  if (access.user.id !== access.board.ownerId && !openToOthers(access.board)) {
+    apiError(
+      reply,
+      403,
+      'This board is closed to others until its owner upgrades.',
+    );
+    return;
+  }
+  if (!(await allow(reply, `call:${access.user.id}`, 300, 600))) return;
+  return access;
+};
+
+const ownSession = (
+  reply: FastifyReply,
+  boardId: string,
+  userId: string,
+  body: { sessionId: string; token: string },
+) => {
+  if (validSessionToken(boardId, userId, body.sessionId, body.token))
+    return true;
+  apiError(reply, 403, 'That call connection is not yours.');
+  return false;
+};
+
+const sfuFailed = (
+  request: FastifyRequest,
+  reply: FastifyReply,
+  error: unknown,
+) => {
+  request.log.error(error, 'Cloudflare Realtime request failed');
+  if (error instanceof SfuError && error.status === 401)
+    return apiError(reply, 502, 'Voice is misconfigured on the server.');
+  return apiError(
+    reply,
+    502,
+    'The call could not connect right now. Please try again.',
+  );
+};
+
+app.post('/api/boards/:boardId/call/publish', async (request, reply) => {
+  const body = z
+    .object({ sdp: sdpSchema, mid: midSchema })
+    .safeParse(request.body);
+  if (!body.success) return apiError(reply, 400, 'Invalid call offer.');
+  const access = await callAccess(request, reply);
+  if (!access) return;
+  try {
+    const published = await publish(body.data.sdp, body.data.mid);
+    return {
+      ...published,
+      token: sessionToken(access.board.id, access.user.id, published.sessionId),
+    };
+  } catch (error) {
+    return sfuFailed(request, reply, error);
+  }
+});
+
+app.post('/api/boards/:boardId/call/pull', async (request, reply) => {
+  const body = ownSessionSchema
+    .extend({
+      tracks: z
+        .array(
+          z.object({ sessionId: sfuSessionSchema, trackName: trackNameSchema }),
+        )
+        .min(1)
+        .max(50),
+    })
+    .safeParse(request.body);
+  if (!body.success) return apiError(reply, 400, 'Invalid call request.');
+  const access = await callAccess(request, reply);
+  if (!access) return;
+  if (!ownSession(reply, access.board.id, access.user.id, body.data)) return;
+  // Only microphones that people in this board's call published.
+  const published = new Set(
+    (await store.listPresence(access.board.id))
+      .filter((peer) => peer.inCall && peer.audio)
+      .map((peer) => `${peer.audio!.session}/${peer.audio!.track}`),
+  );
+  const tracks = body.data.tracks.filter((track) =>
+    published.has(`${track.sessionId}/${track.trackName}`),
+  );
+  if (!tracks.length) return { tracks: [] };
+  try {
+    return await pull(body.data.sessionId, tracks);
+  } catch (error) {
+    return sfuFailed(request, reply, error);
+  }
+});
+
+app.post('/api/boards/:boardId/call/renegotiate', async (request, reply) => {
+  const body = ownSessionSchema
+    .extend({ sdp: sdpSchema })
+    .safeParse(request.body);
+  if (!body.success) return apiError(reply, 400, 'Invalid call answer.');
+  const access = await callAccess(request, reply);
+  if (!access) return;
+  if (!ownSession(reply, access.board.id, access.user.id, body.data)) return;
+  try {
+    await renegotiate(body.data.sessionId, body.data.sdp);
+    return { ok: true };
+  } catch (error) {
+    return sfuFailed(request, reply, error);
+  }
+});
+
+app.post('/api/boards/:boardId/call/close', async (request, reply) => {
+  const body = ownSessionSchema
+    .extend({ sdp: sdpSchema, mids: z.array(midSchema).min(1).max(50) })
+    .safeParse(request.body);
+  if (!body.success) return apiError(reply, 400, 'Invalid call request.');
+  const access = await callAccess(request, reply);
+  if (!access) return;
+  if (!ownSession(reply, access.board.id, access.user.id, body.data)) return;
+  try {
+    return await closeTracks(
+      body.data.sessionId,
+      body.data.sdp,
+      body.data.mids,
+    );
+  } catch (error) {
+    return sfuFailed(request, reply, error);
+  }
+});
+
 app.get('/api/ice-servers', async (request, reply) => {
   if (!(await currentUser(request, reply))) return;
   return { iceServers: config.iceServers };

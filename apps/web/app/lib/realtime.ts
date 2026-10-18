@@ -36,6 +36,8 @@ export type ServerMessage =
       peers: Peer[];
       self: { peerId: string; userId: string };
       iceServers: RTCIceServer[];
+      /** Calls go through the server's SFU rather than peer to peer. */
+      sfu?: boolean;
     }
   | { t: 'op'; op: Operation; by: string }
   | { t: 'ack'; id: string }
@@ -50,6 +52,9 @@ export type ServerMessage =
   | { t: 'deleted' }
   | { t: 'error'; message: string; fatal?: boolean }
   | { t: 'pong' };
+
+/** A microphone on the SFU, with the server's proof that it is this tab's. */
+export type CallAudio = { session: string; track: string; token: string };
 
 export type ConnectionStatus = 'connecting' | 'live' | 'offline';
 
@@ -115,7 +120,10 @@ export class RealtimeClient {
   private rotateTimer: ReturnType<typeof setInterval> | undefined;
   private lastHeard = Date.now();
   private openedAt = 0;
-  private call = { inCall: false, muted: false };
+  private call: { inCall: boolean; muted: boolean; audio?: CallAudio } = {
+    inCall: false,
+    muted: false,
+  };
   private away = false;
   private awayTimer: ReturnType<typeof setTimeout> | undefined;
   /** The page is hidden in the back/forward cache, so stay disconnected. */
@@ -416,9 +424,10 @@ export class RealtimeClient {
     this.rawSend({ t: 'signal', to, data });
   }
 
-  setCall(inCall: boolean, muted: boolean) {
-    this.call = { inCall, muted };
-    this.rawSend({ t: 'call', inCall, muted });
+  /** `audio` names the microphone this tab published to the SFU. */
+  setCall(inCall: boolean, muted: boolean, audio?: CallAudio) {
+    this.call = { inCall, muted, ...(audio ? { audio } : {}) };
+    this.rawSend({ t: 'call', ...this.call });
   }
 
   // ---- Live activity, coalesced per frame ----

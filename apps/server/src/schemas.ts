@@ -80,6 +80,13 @@ export const operationSchema = z
   );
 
 /** Messages a browser may send over the board WebSocket. */
+// A microphone published to the SFU, with the token the server issued for it.
+const audioTrackSchema = z.object({
+  session: z.string().regex(/^[0-9a-f]{16,128}$/),
+  track: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/),
+  token: z.string().regex(/^[0-9a-f]{64}$/),
+});
+
 export const clientMessageSchema = z.discriminatedUnion('t', [
   z.object({
     t: z.literal('hello'),
@@ -88,6 +95,7 @@ export const clientMessageSchema = z.discriminatedUnion('t', [
     color: colorSchema,
     inCall: z.boolean().optional(),
     muted: z.boolean().optional(),
+    audio: audioTrackSchema.optional(),
     away: z.boolean().optional(),
   }),
   z.object({ t: z.literal('op'), op: operationSchema }),
@@ -131,6 +139,7 @@ export const clientMessageSchema = z.discriminatedUnion('t', [
     t: z.literal('call'),
     inCall: z.boolean(),
     muted: z.boolean(),
+    audio: audioTrackSchema.optional(),
   }),
   z.object({
     t: z.literal('signal'),

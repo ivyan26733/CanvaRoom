@@ -7,13 +7,8 @@ type Signal =
   /** Start this pair's connection over (see `heal`). */
   | { reset: true };
 
-type Link = {
-  connection: RTCPeerConnection;
-  polite: boolean;
-  makingOffer: boolean;
-  ignoreOffer: boolean;
-  /** Signals for one peer must be applied strictly in arrival order. */
-  queue: Promise<void>;
+/** Someone whose voice this tab plays. */
+export type Remote = {
   audio: HTMLAudioElement;
   /**
    * A copy of the peer's audio for the speaking meter and recordings. Safari
@@ -22,6 +17,15 @@ type Link = {
    */
   tap?: MediaStream | undefined;
   analyser?: AnalyserNode | undefined;
+};
+
+type Link = Remote & {
+  connection: RTCPeerConnection;
+  polite: boolean;
+  makingOffer: boolean;
+  ignoreOffer: boolean;
+  /** Signals for one peer must be applied strictly in arrival order. */
+  queue: Promise<void>;
   /** When the connection was last not working, or undefined while it is. */
   unhealthySince: number | undefined;
   /** Pending removal while the peer is missing from presence. */
@@ -53,27 +57,32 @@ const DROP_GRACE_MS = 20_000;
 /** A link that has not connected for this long is rebuilt from scratch. */
 const HEAL_AFTER_MS = 12_000;
 
+/** What the board page needs from a call, whichever way audio travels. */
+export type VoiceCall = {
+  join(): Promise<void>;
+  leave(): void;
+  setMuted(muted: boolean): void;
+  setIceServers(servers: RTCIceServer[]): void;
+  syncPeers(peers: Peer[]): void;
+  handleSignal(from: string, data: unknown): void;
+  remoteStreams(): MediaStream[];
+  microphoneStream(): MediaStream | null;
+  readonly joined: boolean;
+};
+
 /**
- * Group voice over a full mesh of peer-to-peer WebRTC connections, signalled
- * through the board's WebSocket. Fine for classroom-sized groups (up to ~8);
- * larger rooms would need an SFU.
- *
- * To avoid two offers crossing (after which Chrome may never exchange ICE
- * candidates), only the "impolite" side of each pair makes the first offer;
- * the polite side attaches its microphone when it answers. Later
- * renegotiations, such as ICE restarts, use the "perfect negotiation" pattern.
+ * The microphone, the speaking meter, and playback of everyone else's voice,
+ * shared by both ways of carrying a call: peer to peer, or through an SFU.
  */
-export class AudioCall {
-  private links = new Map<string, Link>();
-  private stream: MediaStream | null = null;
+export abstract class CallBase implements VoiceCall {
+  protected stream: MediaStream | null = null;
   /** A copy of the microphone for the speaking meter. */
   private localTap: MediaStream | null = null;
-  private context: AudioContext | null = null;
+  protected context: AudioContext | null = null;
   private localAnalyser: AnalyserNode | null = null;
   private reacquiring = false;
   private meterTimer: ReturnType<typeof setInterval> | undefined;
-  private healTimer: ReturnType<typeof setInterval> | undefined;
-  private state: CallState = {
+  protected state: CallState = {
     joined: false,
     joining: false,
     muted: false,
@@ -85,16 +94,39 @@ export class AudioCall {
   };
 
   constructor(
-    private readonly client: RealtimeClient,
-    private iceServers: RTCIceServer[],
+    protected readonly client: RealtimeClient,
     private readonly onChange: (state: CallState) => void,
   ) {}
 
-  setIceServers(servers: RTCIceServer[]) {
-    if (servers.length) this.iceServers = servers;
+  get joined() {
+    return this.state.joined;
   }
 
-  private update(patch: Partial<CallState>) {
+  /** Everyone whose voice this tab plays, by peer ID. */
+  protected abstract remotes(): Iterable<[string, Remote]>;
+  /** Starts carrying the open microphone; false if that failed. */
+  protected abstract connect(): Promise<boolean>;
+  /** Tears down whatever `connect` and `syncPeers` set up. */
+  protected abstract disconnect(): void;
+  /** Puts a reopened microphone track on the air. */
+  protected abstract useMicrophone(track: MediaStreamTrack): Promise<void>;
+  abstract syncPeers(peers: Peer[]): void;
+
+  /** Only peer-to-peer calls use these; the SFU brings its own. */
+  setIceServers(servers: RTCIceServer[]) {
+    void servers;
+  }
+  handleSignal(from: string, data: unknown) {
+    void from;
+    void data;
+  }
+
+  /** Tells the room whether this tab is in the call and muted. */
+  protected announce() {
+    this.client.setCall(this.state.joined, this.state.muted);
+  }
+
+  protected update(patch: Partial<CallState>) {
     this.state = { ...this.state, ...patch };
     this.onChange(this.state);
   }
@@ -123,15 +155,21 @@ export class AudioCall {
     }
     this.watchMicrophone();
     this.meterTimer = setInterval(() => this.measure(), 120);
-    this.healTimer = setInterval(() => this.heal(), 3_000);
     document.addEventListener('pointerdown', this.unlock, true);
     document.addEventListener('keydown', this.unlock, true);
     document.addEventListener('visibilitychange', this.onVisible);
+    if (!(await this.connect())) {
+      // Keeps the error `connect` showed.
+      if (this.state.joining) this.leave();
+      return;
+    }
+    // Hung up while connecting.
+    if (!this.state.joining) return;
     this.update({ joined: true, joining: false, muted: false });
-    this.client.setCall(true, false);
+    this.announce();
   }
 
-  private openMicrophone() {
+  protected openMicrophone() {
     return navigator.mediaDevices.getUserMedia({
       audio: {
         echoCancellation: true,
@@ -170,10 +208,7 @@ export class AudioCall {
       track.enabled = !this.state.muted;
       this.stream?.getTracks().forEach((item) => item.stop());
       this.stream = stream;
-      for (const link of this.links.values())
-        for (const sender of link.connection.getSenders())
-          if (sender.track?.kind === 'audio' || sender.track === null)
-            await sender.replaceTrack(track).catch(() => undefined);
+      await this.useMicrophone(track);
       this.watchMicrophone();
     } catch (error) {
       this.update({ error: microphoneError(error) });
@@ -189,7 +224,7 @@ export class AudioCall {
   private unlock = () => {
     if (this.context?.state !== 'running')
       void this.context?.resume().catch(() => undefined);
-    for (const link of this.links.values()) this.play(link);
+    for (const [, remote] of this.remotes()) this.play(remote);
   };
 
   private onVisible = () => {
@@ -199,21 +234,54 @@ export class AudioCall {
       void this.reacquire();
   };
 
-  private play(link: Link) {
-    if (!link.audio.srcObject) return;
+  /** Starts a remote voice, asking for a tap if the browser refuses. */
+  protected play(remote: Remote) {
+    if (!remote.audio.srcObject) return;
     const settled = () => {
       if (
         this.state.needsTap &&
-        [...this.links.values()].every(
-          (item) => !item.audio.srcObject || !item.audio.paused,
+        [...this.remotes()].every(
+          ([, item]) => !item.audio.srcObject || !item.audio.paused,
         )
       )
         this.update({ needsTap: false });
     };
-    if (!link.audio.paused) return settled();
-    link.audio.play().then(settled, (error: DOMException) => {
+    if (!remote.audio.paused) return settled();
+    remote.audio.play().then(settled, (error: DOMException) => {
       if (error.name === 'NotAllowedError') this.update({ needsTap: true });
     });
+  }
+
+  /** A hidden element that plays one remote voice. */
+  protected audioElement() {
+    const audio = document.createElement('audio');
+    audio.autoplay = true;
+    audio.setAttribute('playsinline', '');
+    audio.hidden = true;
+    document.body.append(audio);
+    return audio;
+  }
+
+  /** Plays a remote track and meters a copy of it. */
+  protected attach(
+    remote: Remote,
+    track: MediaStreamTrack,
+    stream?: MediaStream,
+  ) {
+    remote.audio.srcObject = stream ?? new MediaStream([track]);
+    this.play(remote);
+    remote.tap?.getTracks().forEach((item) => item.stop());
+    remote.tap = new MediaStream([track.clone()]);
+    remote.analyser = this.analyse(remote.tap);
+  }
+
+  /** Stops playing a remote voice and removes its element. */
+  protected detach(remote: Remote) {
+    remote.audio.srcObject = null;
+    remote.audio.remove();
+    remote.tap?.getTracks().forEach((track) => track.stop());
+    remote.tap = undefined;
+    remote.analyser = undefined;
   }
 
   /** What this tab's microphone hears, for session recordings. */
@@ -222,7 +290,7 @@ export class AudioCall {
   }
 
   leave() {
-    for (const peerId of [...this.links.keys()]) this.drop(peerId);
+    this.disconnect();
     document.removeEventListener('pointerdown', this.unlock, true);
     document.removeEventListener('keydown', this.unlock, true);
     document.removeEventListener('visibilitychange', this.onVisible);
@@ -234,10 +302,10 @@ export class AudioCall {
     this.localTap?.getTracks().forEach((track) => track.stop());
     this.localTap = null;
     clearInterval(this.meterTimer);
-    clearInterval(this.healTimer);
     void this.context?.close().catch(() => undefined);
     this.context = null;
     this.localAnalyser = null;
+    const wasIn = this.state.joined;
     this.update({
       joined: false,
       joining: false,
@@ -247,21 +315,107 @@ export class AudioCall {
       needsTap: false,
       micPaused: false,
     });
-    this.client.setCall(false, false);
+    if (wasIn) this.client.setCall(false, false);
   }
 
   setMuted(muted: boolean) {
     if (!this.state.joined) return;
     this.stream?.getAudioTracks().forEach((track) => (track.enabled = !muted));
     this.update({ muted });
-    this.client.setCall(true, muted);
+    this.announce();
   }
 
   /** What everyone else in the call is saying, for session recordings. */
   remoteStreams() {
-    return [...this.links.values()]
-      .map((link) => link.tap)
+    return [...this.remotes()]
+      .map(([, remote]) => remote.tap)
       .filter((stream): stream is MediaStream => stream instanceof MediaStream);
+  }
+
+  protected setConnected(peerId: string, connected: boolean) {
+    if (this.state.connected.has(peerId) === connected) return;
+    const next = new Set(this.state.connected);
+    if (connected) next.add(peerId);
+    else next.delete(peerId);
+    this.update({ connected: next });
+  }
+
+  private analyse(stream: MediaStream) {
+    if (!this.context) return undefined;
+    const analyser = this.context.createAnalyser();
+    analyser.fftSize = 512;
+    this.context.createMediaStreamSource(stream).connect(analyser);
+    return analyser;
+  }
+
+  private measure() {
+    const speaking = new Set<string>();
+    const sample = new Float32Array(512);
+    const level = (analyser?: AnalyserNode | null) => {
+      if (!analyser) return 0;
+      analyser.getFloatTimeDomainData(sample);
+      let sum = 0;
+      for (const value of sample) sum += value * value;
+      return Math.sqrt(sum / sample.length);
+    };
+    if (!this.state.muted && level(this.localAnalyser) > SPEAKING_LEVEL)
+      speaking.add(this.client.peerId);
+    for (const [peerId, remote] of this.remotes())
+      if (level(remote.analyser) > SPEAKING_LEVEL) speaking.add(peerId);
+    const previous = this.state.speaking;
+    if (
+      speaking.size !== previous.size ||
+      [...speaking].some((peerId) => !previous.has(peerId))
+    )
+      this.update({ speaking });
+  }
+}
+
+/**
+ * Group voice over a full mesh of peer-to-peer WebRTC connections, signalled
+ * through the board's WebSocket. Used when the server has no SFU set up; fine
+ * for small groups.
+ *
+ * To avoid two offers crossing (after which Chrome may never exchange ICE
+ * candidates), only the "impolite" side of each pair makes the first offer;
+ * the polite side attaches its microphone when it answers. Later
+ * renegotiations, such as ICE restarts, use the "perfect negotiation" pattern.
+ */
+export class AudioCall extends CallBase {
+  private links = new Map<string, Link>();
+  private healTimer: ReturnType<typeof setInterval> | undefined;
+
+  constructor(
+    client: RealtimeClient,
+    private iceServers: RTCIceServer[],
+    onChange: (state: CallState) => void,
+  ) {
+    super(client, onChange);
+  }
+
+  override setIceServers(servers: RTCIceServer[]) {
+    if (servers.length) this.iceServers = servers;
+  }
+
+  protected remotes() {
+    return this.links.entries();
+  }
+
+  protected async connect() {
+    this.healTimer = setInterval(() => this.heal(), 3_000);
+    return true;
+  }
+
+  protected disconnect() {
+    for (const peerId of [...this.links.keys()]) this.drop(peerId);
+    clearInterval(this.healTimer);
+  }
+
+  protected async useMicrophone(track: MediaStreamTrack) {
+    for (const link of this.links.values())
+      for (const sender of link.connection.getSenders())
+        if (sender.track?.kind === 'audio' || sender.track === null)
+          await sender.replaceTrack(track).catch(() => undefined);
   }
 
   /** Connects to everyone else in the call and drops anyone who left it. */
@@ -311,7 +465,7 @@ export class AudioCall {
     this.link(peerId);
   }
 
-  handleSignal(from: string, data: unknown) {
+  override handleSignal(from: string, data: unknown) {
     if (!this.state.joined) return;
     if ((data as { reset?: boolean } | null)?.reset) {
       const existing = this.links.get(from);
@@ -362,18 +516,13 @@ export class AudioCall {
     const existing = this.links.get(peerId);
     if (existing) return existing;
     const connection = new RTCPeerConnection({ iceServers: this.iceServers });
-    const audio = document.createElement('audio');
-    audio.autoplay = true;
-    audio.setAttribute('playsinline', '');
-    audio.hidden = true;
-    document.body.append(audio);
     const link: Link = {
       connection,
       polite: this.client.peerId < peerId,
       makingOffer: false,
       ignoreOffer: false,
       queue: Promise.resolve(),
-      audio,
+      audio: this.audioElement(),
       unhealthySince: Date.now(),
     };
     this.links.set(peerId, link);
@@ -401,25 +550,14 @@ export class AudioCall {
       this.client.sendSignal(peerId, {
         candidate: candidate?.toJSON() ?? null,
       });
-    connection.ontrack = ({ streams, track }) => {
-      const stream = streams[0] ?? new MediaStream([track]);
-      audio.srcObject = stream;
-      this.play(link);
-      link.tap?.getTracks().forEach((item) => item.stop());
-      link.tap = new MediaStream([track.clone()]);
-      link.analyser = this.analyse(link.tap);
-    };
+    connection.ontrack = ({ streams, track }) =>
+      this.attach(link, track, streams[0]);
     connection.onconnectionstatechange = () => {
-      const connected = new Set(this.state.connected);
-      if (connection.connectionState === 'connected') {
-        connected.add(peerId);
-        link.unhealthySince = undefined;
-      } else {
-        connected.delete(peerId);
-        link.unhealthySince ??= Date.now();
-      }
+      const up = connection.connectionState === 'connected';
+      if (up) link.unhealthySince = undefined;
+      else link.unhealthySince ??= Date.now();
       if (connection.connectionState === 'failed') connection.restartIce();
-      this.update({ connected });
+      this.setConnected(peerId, up);
     };
     return link;
   }
@@ -451,47 +589,13 @@ export class AudioCall {
     this.links.delete(peerId);
     clearTimeout(link.dropTimer);
     link.connection.close();
-    link.audio.srcObject = null;
-    link.audio.remove();
-    link.tap?.getTracks().forEach((track) => track.stop());
-    const connected = new Set(this.state.connected);
-    connected.delete(peerId);
-    this.update({ connected });
-  }
-
-  private analyse(stream: MediaStream) {
-    if (!this.context) return undefined;
-    const analyser = this.context.createAnalyser();
-    analyser.fftSize = 512;
-    this.context.createMediaStreamSource(stream).connect(analyser);
-    return analyser;
-  }
-
-  private measure() {
-    const speaking = new Set<string>();
-    const sample = new Float32Array(512);
-    const level = (analyser?: AnalyserNode | null) => {
-      if (!analyser) return 0;
-      analyser.getFloatTimeDomainData(sample);
-      let sum = 0;
-      for (const value of sample) sum += value * value;
-      return Math.sqrt(sum / sample.length);
-    };
-    if (!this.state.muted && level(this.localAnalyser) > SPEAKING_LEVEL)
-      speaking.add(this.client.peerId);
-    for (const [peerId, link] of this.links)
-      if (level(link.analyser) > SPEAKING_LEVEL) speaking.add(peerId);
-    const previous = this.state.speaking;
-    if (
-      speaking.size !== previous.size ||
-      [...speaking].some((peerId) => !previous.has(peerId))
-    )
-      this.update({ speaking });
+    this.detach(link);
+    this.setConnected(peerId, false);
   }
 }
 
 /** Explains why the microphone could not start, including OS-level blocks. */
-function microphoneError(error: unknown) {
+export function microphoneError(error: unknown) {
   const { name, message } = error as DOMException;
   if (name === 'NotAllowedError')
     return /system/i.test(message)

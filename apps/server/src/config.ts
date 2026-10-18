@@ -20,6 +20,10 @@ const environmentSchema = z.object({
   TURN_URLS: z.string().optional(),
   TURN_USERNAME: z.string().optional(),
   TURN_CREDENTIAL: z.string().optional(),
+  // Cloudflare Realtime (serverless SFU) for voice. The token never leaves
+  // the server; without both, calls stay peer to peer.
+  CF_REALTIME_APP_ID: z.string().optional(),
+  CF_REALTIME_APP_TOKEN: z.string().optional(),
   // Email for password resets. Resend's sandbox sender only delivers to the
   // Resend account owner until a domain is verified and MAIL_FROM uses it.
   RESEND_API_KEY: z.string().optional(),
@@ -76,6 +80,10 @@ export const config = {
     },
   },
   passDays: env.BILLING_PASS_DAYS,
+  sfu:
+    env.CF_REALTIME_APP_ID && env.CF_REALTIME_APP_TOKEN
+      ? { appId: env.CF_REALTIME_APP_ID, token: env.CF_REALTIME_APP_TOKEN }
+      : undefined,
   feedbackTo: env.FEEDBACK_TO,
   mailFrom: env.MAIL_FROM || 'CanvaRoom <onboarding@resend.dev>',
   // Resend's shared sender only delivers to the Resend account's own address,

@@ -202,6 +202,9 @@ export type SessionRecord = {
 };
 
 /** One connected tab. `peerId` is stable across reconnects so audio peers survive them. */
+/** A microphone track published to Cloudflare Realtime. */
+export type AudioTrack = { session: string; track: string };
+
 export type Presence = {
   peerId: string;
   userId: string;
@@ -211,6 +214,8 @@ export type Presence = {
   muted: boolean;
   /** The tab has been hidden for a while. */
   away?: boolean;
+  /** Their microphone on the SFU, for others in the call to pull. */
+  audio?: AudioTrack;
   updatedAt: number;
   /** The server instance holding this tab's socket. */
   instance?: string;

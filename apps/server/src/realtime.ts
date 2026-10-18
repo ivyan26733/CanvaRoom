@@ -19,12 +19,14 @@ import {
   type BoardObject,
   type ChatMessage,
   type Operation,
+  type AudioTrack,
   type Presence,
   type Role,
   type Tier,
   type User,
 } from './models.js';
 import { clientMessageSchema, type ClientMessage } from './schemas.js';
+import { sfuConfigured, validSessionToken } from './sfu.js';
 import { redis, store } from './store.js';
 
 /**
@@ -49,6 +51,8 @@ type Connection = {
   color: string;
   inCall: boolean;
   muted: boolean;
+  /** Their microphone on the SFU while they are in the call. */
+  audio: AudioTrack | undefined;
   away: boolean;
   presenceWrittenAt: number;
   /** When the browser was last heard from: any message, or a pong. */
@@ -269,6 +273,9 @@ function presenceOf(connection: Connection): Presence {
     inCall: connection.inCall,
     muted: connection.muted,
     ...(connection.away ? { away: true } : {}),
+    ...(connection.inCall && connection.audio
+      ? { audio: connection.audio }
+      : {}),
     updatedAt: Date.now(),
     instance: instanceId,
   };
@@ -539,6 +546,9 @@ function handleMessage(connection: Connection, message: ClientMessage) {
     case 'call':
       connection.inCall = message.inCall;
       connection.muted = message.muted;
+      connection.audio = message.inCall
+        ? verifiedAudio(connection.boardId, connection.user, message.audio)
+        : undefined;
       connection.presenceWrittenAt = Date.now();
       return chore(connection, async () => {
         await store.setPresence(boardId, presenceOf(connection));
@@ -570,6 +580,20 @@ function handleMessage(connection: Connection, message: ClientMessage) {
     case 'hello':
       return;
   }
+}
+
+/**
+ * A microphone track someone says is theirs, kept only if the server issued
+ * its token to this person for this board.
+ */
+function verifiedAudio(
+  boardId: string,
+  user: User,
+  audio: { session: string; track: string; token: string } | undefined,
+): AudioTrack | undefined {
+  if (!audio) return;
+  if (!validSessionToken(boardId, user.id, audio.session, audio.token)) return;
+  return { session: audio.session, track: audio.track };
 }
 
 async function authenticate(
@@ -618,6 +642,9 @@ async function authenticate(
     color: user.color,
     inCall: hello.inCall ?? false,
     muted: hello.muted ?? false,
+    audio: hello.inCall
+      ? verifiedAudio(board.id, user, hello.audio)
+      : undefined,
     away: hello.away ?? false,
     presenceWrittenAt: Date.now(),
     heard,
@@ -666,6 +693,8 @@ function onConnection(socket: WebSocket, user: User) {
         peers,
         self: { peerId: joined.peerId, userId: joined.user.id },
         iceServers: config.iceServers,
+        // Calls go through the SFU when it is set up, else peer to peer.
+        sfu: sfuConfigured(),
       }),
     );
     broadcast(
