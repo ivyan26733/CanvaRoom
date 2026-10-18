@@ -17,10 +17,8 @@ export type FollowMode = 'following' | 'paused' | 'off';
 const PAUSE_MS = 10_000;
 /** The view stays put for this long after this person's own last stroke. */
 const LOCAL_GRACE_MS = 2_500;
-/** The writer may move this far towards the screen edge before the view follows. */
-const COMFORT_INSET = 0.18;
-const MOVE_EVERY_MS = 450;
-const MOVE_DURATION_MS = 420;
+const MOVE_EVERY_MS = 150;
+const MOVE_DURATION_MS = 260;
 const MIN_ZOOM = 0.1;
 const MAX_ZOOM = 8;
 const STORAGE_KEY = 'canvaroom.follow';
@@ -42,42 +40,69 @@ function saveMode(mode: FollowMode) {
   }
 }
 
+type Area = [number, number, number, number];
+
 /**
- * Where to move so the writer's newest point is comfortably on screen, or
- * null when it already is. With `matchZoom`, when the writer sees a very
- * different amount of the canvas, the zoom changes to roughly match theirs.
+ * The view that shows exactly the part of the canvas the writer sees: the
+ * same centre, and the zoom that fits their whole area on this screen. On a
+ * screen shaped like theirs, the zoom matches theirs.
  */
-export function followTarget(
-  writing: Pick<Writing, 'x' | 'y' | 'view'>,
-  view: View,
+export function mirrorView(
+  area: Area,
   size: { width: number; height: number },
-  matchZoom: boolean,
-): View | null {
-  const width = size.width / view.zoom;
-  const height = size.height / view.zoom;
-  let zoom = view.zoom;
-  if (writing.view && matchZoom) {
-    const [, , viewWidth, viewHeight] = writing.view;
-    const fit = Math.min(
-      size.width / Math.max(viewWidth, 1),
-      size.height / Math.max(viewHeight, 1),
-    );
-    // Only large differences count, so small zoom changes never cause churn.
-    if (fit / view.zoom > 2.5 || fit / view.zoom < 0.6)
-      zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, fit));
-  }
-  const inside =
-    writing.x > view.x + width * COMFORT_INSET &&
-    writing.x < view.x + width * (1 - COMFORT_INSET) &&
-    writing.y > view.y + height * COMFORT_INSET &&
-    writing.y < view.y + height * (1 - COMFORT_INSET);
-  if (inside && zoom === view.zoom) return null;
+): View {
+  const [x, y, width, height] = area;
+  const zoom = Math.min(
+    MAX_ZOOM,
+    Math.max(
+      MIN_ZOOM,
+      Math.min(
+        size.width / Math.max(width, 1),
+        size.height / Math.max(height, 1),
+      ),
+    ),
+  );
   return {
-    x: writing.x - size.width / zoom / 2,
-    y: writing.y - size.height / zoom / 2,
+    x: x + width / 2 - size.width / zoom / 2,
+    y: y + height / 2 - size.height / zoom / 2,
     zoom,
   };
 }
+
+/**
+ * For writers whose app does not share what they see: keep their pen on
+ * screen at this person's own zoom, moving only when it nears the edge.
+ */
+export function followPoint(
+  writing: Pick<Writing, 'x' | 'y'>,
+  view: View,
+  size: { width: number; height: number },
+): View | null {
+  const width = size.width / view.zoom;
+  const height = size.height / view.zoom;
+  const inset = 0.18;
+  const inside =
+    writing.x > view.x + width * inset &&
+    writing.x < view.x + width * (1 - inset) &&
+    writing.y > view.y + height * inset &&
+    writing.y < view.y + height * (1 - inset);
+  if (inside) return null;
+  return {
+    x: writing.x - width / 2,
+    y: writing.y - height / 2,
+    zoom: view.zoom,
+  };
+}
+
+/** Whether two screens are shaped differently enough to outline the writer's area. */
+const differentShape = (
+  area: Area,
+  size: { width: number; height: number },
+) => {
+  const theirs = area[2] / Math.max(area[3], 1);
+  const ours = size.width / Math.max(size.height, 1);
+  return Math.abs(theirs / ours - 1) > 0.04;
+};
 
 /** Picks whose writing everyone's view follows: the earliest active writer keeps it. */
 export function pickFocus(
@@ -118,11 +143,12 @@ export function useFollow({
   const [focus, setFocus] = useState<Writing | null>(null);
   const modeRef = useRef<FollowMode>('following');
   const focusRef = useRef<string | null>(null);
+  const [frame, setFrame] = useState<Area | null>(null);
   const pausedUntil = useRef(0);
   const lastMove = useRef(0);
-  // Zoom is matched once per burst of writing, so a zoom chosen by hand
-  // afterwards sticks while the view keeps panning along.
-  const zoomedFor = useRef('');
+  // The writer's view last mirrored here. Writing alone never moves this
+  // person's view; only the writer panning, zooming, or resizing does.
+  const mirrored = useRef('');
 
   const setMode = useCallback((next: FollowMode) => {
     modeRef.current = next;
@@ -155,28 +181,51 @@ export function useFollow({
           ? current
           : writer,
       );
-      if (modeRef.current === 'paused' && now >= pausedUntil.current)
+      if (modeRef.current === 'paused' && now >= pausedUntil.current) {
+        mirrored.current = '';
         setMode('following');
+      }
+      const showFrame =
+        writer?.view &&
+        modeRef.current === 'following' &&
+        differentShape(writer.view, latest.current.size)
+          ? writer.view
+          : null;
+      setFrame((current) =>
+        current?.join() === showFrame?.join() ? current : showFrame,
+      );
+      if (!writer) mirrored.current = '';
       if (!writer || modeRef.current !== 'following') return;
       const { pageId, pages, size, moveView, goToPage, isBusy } =
         latest.current;
       // This person's own drawing always wins.
-      if (isBusy() || now - lastLocalWrite.current < LOCAL_GRACE_MS) return;
-      if (now - lastMove.current < MOVE_EVERY_MS) return;
+      if (isBusy() || now - lastLocalWrite.current < LOCAL_GRACE_MS) {
+        mirrored.current = '';
+        return;
+      }
+      if (now - lastMove.current < MOVE_EVERY_MS) {
+        // Catch up once the throttle allows, even if nothing else changes.
+        timer ??= setTimeout(
+          evaluate,
+          MOVE_EVERY_MS - (now - lastMove.current),
+        );
+        return;
+      }
       const writerPage = pageOf(writer, pages);
       if (writerPage !== pageId) {
         lastMove.current = now;
         goToPage(writerPage);
         return;
       }
-      const burst = `${writer.peerId}:${writer.since}`;
-      const target = followTarget(
-        writer,
-        viewRef.current,
-        size,
-        zoomedFor.current !== burst,
-      );
-      zoomedFor.current = burst;
+      if (writer.view) {
+        const key = `${writer.peerId}:${writerPage}:${writer.view.join()}:${size.width}x${size.height}`;
+        if (key === mirrored.current) return;
+        mirrored.current = key;
+        lastMove.current = now;
+        moveView(mirrorView(writer.view, size), MOVE_DURATION_MS);
+        return;
+      }
+      const target = followPoint(writer, viewRef.current, size);
       if (!target) return;
       lastMove.current = now;
       moveView(target, MOVE_DURATION_MS);
@@ -204,6 +253,7 @@ export function useFollow({
   const resume = useCallback(() => {
     pausedUntil.current = 0;
     lastMove.current = 0;
+    mirrored.current = '';
     saveMode('following');
     setMode('following');
   }, [setMode]);
@@ -213,7 +263,7 @@ export function useFollow({
     setMode('off');
   }, [setMode]);
 
-  return { mode, focus, noteManualView, resume, stop };
+  return { mode, focus, frame, noteManualView, resume, stop };
 }
 
 /** Says whose writing is being followed, with a way to stop or resume. */

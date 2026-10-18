@@ -75,6 +75,7 @@ import {
   LocalOverlay,
   RemoteActivity,
   RemoteLayer,
+  WRITING_GRACE_MS,
   type LocalOverlayHandle,
 } from './live-layers';
 import { Minimap } from './minimap';
@@ -327,6 +328,8 @@ export default function BoardPage() {
   const viewAnimation = useRef<number | undefined>(undefined);
   /** When this person last drew, erased, or typed, so following waits. */
   const lastLocalWrite = useRef(0);
+  /** Where this person's pointer last was, in canvas units. */
+  const lastPointer = useRef<{ x: number; y: number } | null>(null);
   /** True while following moves the view, so it does not count as manual. */
   const followDriving = useRef(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -889,6 +892,37 @@ export default function BoardPage() {
       round(size.height / current.zoom),
     ];
   }
+  // While someone is writing, everyone following sees exactly what they see,
+  // so their own panning and zooming is shared too, about ten times a second.
+  const sharedArea = useRef({ key: '', at: 0 });
+  const shareTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined,
+  );
+  useEffect(() => {
+    if (isLocal || !boardReady) return;
+    const share = () => {
+      shareTimer.current = undefined;
+      if (Date.now() - lastLocalWrite.current >= WRITING_GRACE_MS) return;
+      const area = visibleArea();
+      const key = area.join();
+      if (key === sharedArea.current.key) return;
+      const at = lastPointer.current;
+      if (!at) return;
+      sharedArea.current = { key, at: Date.now() };
+      stamp(lastLocalWrite);
+      clientRef.current?.liveCursor({
+        x: round(at.x),
+        y: round(at.y),
+        page: currentPage.id,
+        active: true,
+        view: area,
+      });
+    };
+    const wait = 100 - (Date.now() - sharedArea.current.at);
+    if (wait <= 0) share();
+    else shareTimer.current ??= setTimeout(share, wait);
+  });
+  useEffect(() => () => clearTimeout(shareTimer.current), []);
 
   function toWorld(clientX: number, clientY: number): Point {
     const rect = stageRef.current!.getBoundingClientRect();
@@ -1378,6 +1412,7 @@ export default function BoardPage() {
       current?.kind === 'shape' ||
       current?.kind === 'erase';
     if (writing) stamp(lastLocalWrite);
+    lastPointer.current = point;
     clientRef.current?.liveCursor({
       x: round(point.x),
       y: round(point.y),
@@ -2356,6 +2391,17 @@ export default function BoardPage() {
             pages={pages}
           />
           <LocalOverlay ref={overlayRef} zoom={view.zoom} />
+          {follow.frame && (
+            <rect
+              className="follow-frame"
+              x={follow.frame[0]}
+              y={follow.frame[1]}
+              width={follow.frame[2]}
+              height={follow.frame[3]}
+              vectorEffect="non-scaling-stroke"
+              aria-hidden="true"
+            />
+          )}
         </svg>
 
         {editorObject && (
