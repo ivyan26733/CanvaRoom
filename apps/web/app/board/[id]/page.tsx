@@ -1576,8 +1576,10 @@ export default function BoardPage() {
             height,
           };
         }
+        // The shape tool stays chosen, so several shapes can be drawn in a
+        // row; selecting the new one would put a resize handle under the
+        // pointer and swap the style panel for the inspector.
         perform([{ type: 'create', objectId: object.id, object }]);
-        setSelected([object.id]);
         break;
       }
       case 'move': {
@@ -1855,7 +1857,7 @@ export default function BoardPage() {
     if (isEditable(event.target) || textEditor) return;
     const modifier = event.metaKey || event.ctrlKey;
     const key = event.key.toLowerCase();
-    if (key === ' ' && !event.repeat) {
+    if (key === ' ' && !event.repeat && !modifier && !event.altKey) {
       setSpaceHeld(true);
       event.preventDefault();
       return;
@@ -1948,14 +1950,18 @@ export default function BoardPage() {
   useEffect(() => {
     const down = (event: KeyboardEvent) => onKeyDown(event);
     const up = (event: KeyboardEvent) => onKeyUp(event);
+    // A held Space can lose its keyup to another app or tab; without this
+    // every later press would pan instead of draw.
     const blur = () => setSpaceHeld(false);
     window.addEventListener('keydown', down);
     window.addEventListener('keyup', up);
     window.addEventListener('blur', blur);
+    document.addEventListener('visibilitychange', blur);
     return () => {
       window.removeEventListener('keydown', down);
       window.removeEventListener('keyup', up);
       window.removeEventListener('blur', blur);
+      document.removeEventListener('visibilitychange', blur);
     };
   }, []);
 
@@ -2332,7 +2338,12 @@ export default function BoardPage() {
                   item={item}
                   selected={isSelected}
                   scale={isSelected ? scale : 1}
-                  showHandle={isSelected && selected.length === 1 && !readonly}
+                  showHandle={
+                    isSelected &&
+                    selected.length === 1 &&
+                    !readonly &&
+                    tool === 'select'
+                  }
                 />
               );
             })}
