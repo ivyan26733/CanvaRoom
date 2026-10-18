@@ -171,6 +171,7 @@ export function AppShell({
           </Link>
           <UserMenu />
         </div>
+        <VerifyBanner />
         {children}
       </div>
       <div
@@ -210,4 +211,23 @@ export function timeAgo(iso: string) {
     month: 'short',
     day: 'numeric',
   });
+}
+
+/** Asks account holders to confirm their email, once codes can be sent. */
+function VerifyBanner() {
+  const { user } = useAuth();
+  if (!user || user.guest || user.emailVerified !== false) return null;
+  if (!user.verifyAvailable) return null;
+  return (
+    <div className="verify-banner" role="status">
+      <Icon name="inbox" size={16} />
+      <span>
+        Verify <strong>{user.email}</strong> to upgrade and keep your account
+        safe.
+      </span>
+      <Link href="/verify-email" className="button small primary">
+        Enter code
+      </Link>
+    </div>
+  );
 }

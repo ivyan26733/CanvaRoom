@@ -168,7 +168,7 @@ export function Story() {
         </div>
         <div className="st-finale-cta">
           {/* A full load, so the sign-in panel opens on the sign-up tab. */}
-          <a href="/?mode=signup" className="button primary">
+          <a href="/signup" className="button primary">
             Start a free board
           </a>
           <a href="#get-started" className="button ghost">

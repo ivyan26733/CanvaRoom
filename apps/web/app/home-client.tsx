@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AppShell,
@@ -60,16 +60,6 @@ export function HomeClient({
 
 function Landing() {
   const router = useRouter();
-  // Read from the router, not on mount, so links to `/?mode=signup` from this
-  // same page (such as the footer) still switch to the sign-up form.
-  const mode = useSearchParams().get('mode') === 'signup' ? 'signup' : 'login';
-  const auth = useRef<HTMLElement>(null);
-
-  useEffect(() => {
-    if (mode === 'signup' && window.scrollY > 0)
-      auth.current?.scrollIntoView({ block: 'start' });
-  }, [mode]);
-
   return (
     <main className="landing">
       <section className="landing-stage">
@@ -102,21 +92,29 @@ function Landing() {
         </div>
       </section>
 
-      <section className="landing-auth" id="get-started" ref={auth}>
+      <section className="landing-auth" id="get-started">
         <div className="landing-auth-top">
           <span className="landing-mobile-brand">
             <Logo size={26} /> CanvaRoom
           </span>
+          <Link href="/login" className="landing-signin">
+            Sign in
+          </Link>
           <ThemeToggle />
         </div>
-        <div className="auth-panel">
-          <h2>{mode === 'signup' ? 'Create your studio' : 'Welcome back'}</h2>
+        <div className="auth-panel landing-cta">
+          <p className="landing-cta-badge">Free trial · no card needed</p>
+          <h2>Your first lesson in 30 seconds</h2>
           <p className="auth-lede">
-            {mode === 'signup'
-              ? '30 minutes of free use, then a free plan. No card needed.'
-              : 'Sign in to pick up where your team left off.'}
+            Make a board, share the link or QR code, and start drawing. 30
+            minutes of active use free, then a free plan.
           </p>
-          <AuthForm key={mode} initialMode={mode} />
+          <Link href="/signup" className="button primary wide auth-submit">
+            Start free trial <span aria-hidden="true">→</span>
+          </Link>
+          <Link href="/login" className="button ghost wide">
+            I already have an account
+          </Link>
           <div className="auth-or">
             <span>or</span>
           </div>

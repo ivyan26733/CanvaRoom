@@ -13,6 +13,7 @@ export default function robots(): MetadataRoute.Robots {
         '/profile',
         '/reset-password',
         '/verify-email',
+        '/forgot-password',
       ],
     },
     sitemap: `${SITE.url}/sitemap.xml`,

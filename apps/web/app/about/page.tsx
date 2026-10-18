@@ -255,10 +255,10 @@ export default function AboutPage() {
           <Logo size={28} /> {SITE.name}
         </Link>
         <nav className="mk-header-actions" aria-label="Account">
-          <Link href="/" className="button ghost">
+          <Link href="/login" className="button ghost">
             Sign in
           </Link>
-          <Link href="/?mode=signup" className="button primary">
+          <Link href="/signup" className="button primary">
             Start free
           </Link>
         </nav>
@@ -395,7 +395,7 @@ export default function AboutPage() {
             every student, on every connection.
           </blockquote>
           <div className="about-cta">
-            <Link href="/?mode=signup" className="button primary">
+            <Link href="/signup" className="button primary">
               Start a free board
             </Link>
             <Link href="/contact" className="button ghost">

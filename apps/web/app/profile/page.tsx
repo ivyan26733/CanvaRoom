@@ -33,7 +33,7 @@ export default function ProfilePage() {
 
   useEffect(() => {
     if (user === null) router.replace('/');
-    if (user?.guest) router.replace('/?mode=signup');
+    if (user?.guest) router.replace('/signup');
   }, [user, router]);
 
   useEffect(() => {

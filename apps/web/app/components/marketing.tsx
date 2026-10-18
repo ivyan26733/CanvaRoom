@@ -114,10 +114,10 @@ export function MarketingFooter() {
         <h2>Get started</h2>
         <ul>
           <li>
-            <Link href="/?mode=signup">Create a free account</Link>
+            <Link href="/signup">Create a free account</Link>
           </li>
           <li>
-            <Link href="/">Sign in</Link>
+            <Link href="/login">Sign in</Link>
           </li>
           <li>
             <a href="/#pricing">Pricing</a>
@@ -193,10 +193,10 @@ export function UseCaseView({ slug }: { slug: string }) {
           <Logo size={28} /> {SITE.name}
         </Link>
         <nav className="mk-header-actions" aria-label="Account">
-          <Link href="/" className="button ghost">
+          <Link href="/login" className="button ghost">
             Sign in
           </Link>
-          <Link href="/?mode=signup" className="button primary">
+          <Link href="/signup" className="button primary">
             Start free
           </Link>
         </nav>
@@ -208,7 +208,7 @@ export function UseCaseView({ slug }: { slug: string }) {
           <h1>{useCase.heading}</h1>
           <p className="mk-lede">{useCase.intro}</p>
           <div className="mk-cta">
-            <Link href="/?mode=signup" className="button primary">
+            <Link href="/signup" className="button primary">
               Create a free board
             </Link>
             <Link href="/" className="button ghost">

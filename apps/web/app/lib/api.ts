@@ -102,6 +102,10 @@ export type User = {
    * pass runs to.
    */
   plan?: { trialUsedSeconds: number; trialBeatAt?: string; paidUntil?: string };
+  /** Account holders only: whether the email has been confirmed with a code. */
+  emailVerified?: boolean;
+  /** Whether a verification code can be emailed right now. */
+  verifyAvailable?: boolean;
 };
 export type Operation = {
   id: string;

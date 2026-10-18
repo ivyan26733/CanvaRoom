@@ -1028,6 +1028,36 @@ kbd {
   gap: 8px;
   font: 700 17px var(--display);
 }
+.landing-signin {
+  margin-left: auto;
+  margin-right: 10px;
+  color: var(--ink);
+  font-weight: 600;
+  font-size: 14px;
+  text-decoration: none;
+}
+.landing-signin:hover {
+  text-decoration: underline;
+}
+.landing-cta {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.landing-cta h2,
+.landing-cta .auth-lede {
+  margin-bottom: 4px;
+}
+.landing-cta-badge {
+  align-self: flex-start;
+  margin: 0;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-size: 13px;
+  font-weight: 600;
+}
 .auth-panel {
   width: 100%;
   max-width: 420px;
@@ -1073,6 +1103,8 @@ kbd {
 .mk {
   --mk-width: 1180px;
   background: var(--bg);
+  /* Story chapters slide in from the side as they scroll into view. */
+  overflow-x: clip;
 }
 .mk-section,
 .mk-hero,
@@ -3289,6 +3321,14 @@ kbd {
 }
 
 /* ---- Following whoever is writing ---- */
+.follow-frame {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  stroke-dasharray: 6 5;
+  opacity: 0.45;
+  pointer-events: none;
+}
 .follow-chip {
   display: flex;
   align-items: center;
@@ -4515,4 +4555,28 @@ button.plan-chip.is-pro {
 }
 .modal.feedback-modal {
   width: min(520px, 100%);
+}
+
+/* ---- Email verification reminder ---- */
+.verify-banner {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  margin: 16px clamp(16px, 3vw, 32px) 0;
+  padding: 10px 12px 10px 16px;
+  border-radius: var(--radius);
+  background: var(--accent-soft);
+  color: var(--ink);
+  font-size: 14px;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .verify-banner {
+    animation: m-rise-in var(--dur-2, 200ms) var(--ease-out, ease-out);
+  }
+}
+.verify-banner > span {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }

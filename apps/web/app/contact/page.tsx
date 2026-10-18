@@ -50,10 +50,10 @@ export default function ContactPage() {
           <Logo size={28} /> {SITE.name}
         </Link>
         <nav className="mk-header-actions" aria-label="Account">
-          <Link href="/" className="button ghost">
+          <Link href="/login" className="button ghost">
             Sign in
           </Link>
-          <Link href="/?mode=signup" className="button primary">
+          <Link href="/signup" className="button primary">
             Start free
           </Link>
         </nav>

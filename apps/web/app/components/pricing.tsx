@@ -154,7 +154,7 @@ export function Pricing({ currency }: { currency: Currency }) {
           </p>
           <div className="pr-cta">
             {/* Full loads, so the sign-in panel opens on the right tab. */}
-            <a href="/?mode=signup" className="button primary">
+            <a href="/signup" className="button primary">
               Start the free trial
             </a>
             <a href="/?upgrade=1" className="button ghost">

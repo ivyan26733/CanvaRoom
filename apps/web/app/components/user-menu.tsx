@@ -108,7 +108,7 @@ export function UserMenu({
             <Link
               className="menu-row"
               role="menuitem"
-              href="/?mode=signup"
+              href="/signup"
               onClick={() => setOpen(false)}
             >
               <Icon name="sparkle" />
