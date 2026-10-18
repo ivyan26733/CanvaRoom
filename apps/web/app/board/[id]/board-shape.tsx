@@ -33,6 +33,16 @@ function textLines(lines: string[], fontSize: number, x: number) {
   ));
 }
 
+/**
+ * The invisible touch target around a line or pen stroke: a fixed width on
+ * screen (the board sets `--hit-width` from its zoom), never thinner than
+ * the stroke itself. A width in board units grew with zoom until clicks
+ * beside a stroke picked it instead of the shape under the pointer.
+ */
+const hitWidth = (item: BoardObject) => ({
+  strokeWidth: `max(${item.strokeWidth + 4}px, var(--hit-width, 14px))`,
+});
+
 function Shape({ item }: { item: BoardObject }) {
   const stroke = item.color;
   const width = Math.max(1, item.width ?? 1);
@@ -47,7 +57,7 @@ function Shape({ item }: { item: BoardObject }) {
             d={d}
             fill="none"
             stroke="transparent"
-            strokeWidth={Math.max(14, item.strokeWidth + 10)}
+            style={hitWidth(item)}
             strokeLinecap="round"
             strokeLinejoin="round"
           />
@@ -74,7 +84,8 @@ function Shape({ item }: { item: BoardObject }) {
           <path
             d={`M${points[0]} ${points[1]}L${points[2]} ${points[3]}`}
             stroke="transparent"
-            strokeWidth={Math.max(14, item.strokeWidth + 10)}
+            style={hitWidth(item)}
+            strokeLinecap="round"
           />
           <path
             d={d}

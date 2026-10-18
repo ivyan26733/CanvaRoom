@@ -32,7 +32,7 @@ import {
   applyOperations,
   defaultFontSize,
   FONT_FAMILY,
-  intersects,
+  encloses,
   isBoxShape,
   layoutText,
   LINE_HEIGHT,
@@ -144,6 +144,10 @@ const TOOLS: { tool: Tool; icon: IconName; label: string; key?: string }[] = [
 /** Where the dock draws dividers between tool groups. */
 const DOCK_BREAKS = new Set<Tool>(['pen', 'rect', 'text']);
 const LAST_SHAPE_KEY = 'collabboard.lastShape';
+/** On-screen pixels a selection box must span before it selects anything. */
+const MARQUEE_THRESHOLD = 4;
+/** On-screen width of the touch target around lines and pen strokes. */
+const HIT_WIDTH = 12;
 const TOOL_KEYS = Object.fromEntries(
   TOOLS.filter((item) => item.key).map((item) => [
     item.key!.toLowerCase(),
@@ -1501,10 +1505,19 @@ export default function BoardPage() {
           width: Math.abs(point.x - current.start.x),
           height: Math.abs(point.y - current.start.y),
         };
-        setOverlay({ marquee: box });
-        const hits = pageObjectsRef.current
-          .filter((item) => intersects(box, objectBounds(item)))
-          .map((item) => item.id);
+        // A click on empty canvas jitters by a pixel or two; that must not
+        // pick up a shape whose bounding box happens to be under it.
+        const dragged =
+          Math.max(box.width, box.height) * viewRef.current.zoom >=
+          MARQUEE_THRESHOLD;
+        setOverlay(dragged ? { marquee: box } : {});
+        // Only what the box fully encloses, so dragging around one shape
+        // doesn't also take the neighbour it brushes against.
+        const hits = dragged
+          ? pageObjectsRef.current
+              .filter((item) => encloses(box, objectBounds(item)))
+              .map((item) => item.id)
+          : [];
         setSelected([...new Set([...current.base, ...hits])]);
         return;
       }
@@ -2302,7 +2315,15 @@ export default function BoardPage() {
           {textEditor && !textEditor.isNew && (
             <style>{`[data-oid="${CSS.escape(textEditor.object.id)}"]{visibility:hidden}`}</style>
           )}
-          <g ref={objectLayerRef} className="objects-layer">
+          <g
+            ref={objectLayerRef}
+            className="objects-layer"
+            style={
+              {
+                '--hit-width': `${HIT_WIDTH / view.zoom}px`,
+              } as React.CSSProperties
+            }
+          >
             {pageObjects.map((item) => {
               const isSelected = selected.includes(item.id);
               return (

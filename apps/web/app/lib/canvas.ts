@@ -268,12 +268,13 @@ export function unionBounds(objects: readonly BoardObject[]): Bounds | null {
   return { x: left, y: top, width: right - left, height: bottom - top };
 }
 
-export function intersects(a: Bounds, b: Bounds) {
+/** Whether `outer` contains all of `inner`. */
+export function encloses(outer: Bounds, inner: Bounds) {
   return (
-    a.x <= b.x + b.width &&
-    b.x <= a.x + a.width &&
-    a.y <= b.y + b.height &&
-    b.y <= a.y + a.height
+    inner.x >= outer.x &&
+    inner.y >= outer.y &&
+    inner.x + inner.width <= outer.x + outer.width &&
+    inner.y + inner.height <= outer.y + outer.height
   );
 }
 
