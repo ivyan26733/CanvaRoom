@@ -86,6 +86,20 @@ ALTER TABLE accounts ADD COLUMN IF NOT EXISTS paid_until timestamptz;
 UPDATE accounts SET trial_ends_at = now() + interval '30 minutes'
  WHERE trial_ends_at IS NULL;
 
+-- The trial counts active use, not wall-clock time: seconds used so far, and
+-- when time was last counted (a later count after a long gap adds nothing).
+-- Accounts from the wall-clock trial keep what it had left; expired ones stay
+-- expired. trial_ends_at is no longer read once this has run.
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS trial_used_seconds double precision;
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS trial_beat_at timestamptz;
+UPDATE accounts
+   SET trial_used_seconds = least(1800, greatest(0,
+         1800 - extract(epoch FROM (
+           coalesce(trial_ends_at, created_at + interval '30 minutes') - now()))))
+ WHERE trial_used_seconds IS NULL;
+ALTER TABLE accounts ALTER COLUMN trial_used_seconds SET DEFAULT 0;
+ALTER TABLE accounts ALTER COLUMN trial_used_seconds SET NOT NULL;
+
 -- Razorpay orders created for a user, and whether each was paid.
 CREATE TABLE IF NOT EXISTS payments (
   order_id text PRIMARY KEY,

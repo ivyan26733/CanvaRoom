@@ -30,7 +30,7 @@ export const appSchema = {
   offers: [
     {
       '@type': 'Offer',
-      name: 'Free plan, with a 30-minute trial',
+      name: 'Free plan, with a trial of 30 minutes of active use',
       price: '0',
       priceCurrency: 'USD',
     },

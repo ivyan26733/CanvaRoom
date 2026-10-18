@@ -20,6 +20,7 @@ import {
   type ChatMessage,
   type Operation,
   type AudioTrack,
+  type Plan,
   type Presence,
   type Role,
   type Tier,
@@ -322,6 +323,7 @@ async function leaveRoom(connection: Connection, handedOver = false) {
     remoteRooms.delete(connection.boardId);
     roomPresence.delete(connection.boardId);
     roomTiers.delete(connection.boardId);
+    trialCounted.delete(connection.boardId);
     await subscriber
       ?.unsubscribe(channel(connection.boardId))
       .catch(() => undefined);
@@ -402,9 +404,51 @@ function enforceTier(boardId: string, room: Set<Connection>, now: number) {
         );
 }
 
+/** How often an open trial board counts towards its owner's trial. */
+const TRIAL_COUNT_EVERY_MS = 10_000;
+/** When each room last counted towards its owner's trial. */
+const trialCounted = new Map<string, number>();
+
+/**
+ * A trial board in use counts towards its owner's 30 minutes of active use,
+ * whoever is using it: otherwise an owner could open a board, invite two
+ * people, and leave them using it for free. Nobody visible, nothing counts.
+ */
+function countTrial(boardId: string, room: Set<Connection>, now: number) {
+  const first = room.values().next().value;
+  if (!first || boardTier(first.board, now) !== 'trial') {
+    trialCounted.delete(boardId);
+    return;
+  }
+  if (now - (trialCounted.get(boardId) ?? 0) < TRIAL_COUNT_EVERY_MS) return;
+  if (![...room].some((connection) => !connection.away)) return;
+  trialCounted.set(boardId, now);
+  const ownerId = first.board.ownerId;
+  void store
+    .accrueTrial(ownerId)
+    .then((plan) => plan && refreshOwnerPlan(ownerId, plan))
+    .catch(() => undefined);
+}
+
+/**
+ * Applies an owner's latest plan to the boards they own that are open here,
+ * so a trial that just ran out takes effect right away.
+ */
+export function refreshOwnerPlan(ownerId: string, plan: Plan) {
+  const now = Date.now();
+  for (const [boardId, room] of rooms) {
+    const first = room.values().next().value;
+    if (first?.board.ownerId !== ownerId) continue;
+    for (const connection of room)
+      connection.board = { ...connection.board, ownerPlan: plan };
+    enforceTier(boardId, room, now);
+  }
+}
+
 function sweep() {
   const now = Date.now();
   for (const [boardId, room] of rooms) {
+    countTrial(boardId, room, now);
     enforceTier(boardId, room, now);
     for (const connection of room) {
       const { socket, heard } = connection;

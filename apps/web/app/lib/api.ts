@@ -96,8 +96,12 @@ export type User = {
   color: string;
   guest: boolean;
   email?: string;
-  /** Account holders only: when the free trial ends and the pass runs to. */
-  plan?: { trialEndsAt: string; paidUntil?: string };
+  /**
+   * Account holders only: active trial time used (the trial is 30 minutes of
+   * use, counted only while the app is open in a visible tab) and when a paid
+   * pass runs to.
+   */
+  plan?: { trialUsedSeconds: number; trialBeatAt?: string; paidUntil?: string };
 };
 export type Operation = {
   id: string;

@@ -35,7 +35,12 @@ import {
   sendPasswordReset,
   teamMailConfigured,
 } from './mail.js';
-import { attachRealtime, broadcast, broadcastBoard } from './realtime.js';
+import {
+  attachRealtime,
+  broadcast,
+  broadcastBoard,
+  refreshOwnerPlan,
+} from './realtime.js';
 import { loadStore, storageKind, store } from './store.js';
 import {
   closeTracks,
@@ -64,7 +69,6 @@ import {
   tierOf,
   TRIAL_BOARDS,
   TRIAL_GUESTS,
-  TRIAL_MINUTES,
 } from './models.js';
 import type {
   Account,
@@ -223,7 +227,7 @@ app.post('/api/auth/signup', async (request, reply) => {
     color: current?.color ?? colorFor(id),
     createdAt: new Date().toISOString(),
     passwordHash: await hashPassword(body.data.password),
-    trialEndsAt: new Date(Date.now() + TRIAL_MINUTES * 60_000).toISOString(),
+    trialUsedSeconds: 0,
   };
   if (!(await store.createAccount(account)))
     return apiError(
@@ -982,6 +986,21 @@ app.get('/api/billing/plan', async (request) => ({
   pass: priceFor(countryOf(request)),
   limits: { trialBoards: TRIAL_BOARDS, trialGuests: TRIAL_GUESTS },
 }));
+
+// While the app is open in a visible tab, the page beats every ~20 seconds;
+// only that time counts towards the 30-minute trial. The server measures the
+// time between beats itself, so a page can't claim more than it was here.
+app.post('/api/billing/heartbeat', async (request, reply) => {
+  const user = await currentUser(request, reply);
+  if (!user) return;
+  if (user.guest) return { plan: null };
+  if (!(await allow(reply, `beat:${user.id}`, 12, 60))) return;
+  const before = tierOf(user.plan);
+  const plan = await store.accrueTrial(user.id);
+  // The trial ran out on this beat: apply the free plan to open boards now.
+  if (plan && tierOf(plan) !== before) refreshOwnerPlan(user.id, plan);
+  return { plan: plan ?? null };
+});
 
 app.post('/api/billing/create-order', async (request, reply) => {
   const user = await currentUser(request, reply);

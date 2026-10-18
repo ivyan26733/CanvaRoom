@@ -119,18 +119,43 @@ export type User = {
   plan?: Plan;
 };
 
-/** When an account's free trial ends and how long a paid pass runs. */
-export type Plan = { trialEndsAt: string; paidUntil?: string };
+/**
+ * An account's free trial and paid pass. The trial is 30 minutes of active
+ * use, not wall-clock time: `trialUsedSeconds` only grows while the person
+ * has CanvaRoom open in a visible tab (see `accrueTrial`).
+ */
+export type Plan = {
+  trialUsedSeconds: number;
+  /** When active time was last counted; a beat after a long gap adds none. */
+  trialBeatAt?: string;
+  paidUntil?: string;
+};
 
-/** Minutes of free use a new account gets. */
+/** Minutes of active use a new account's trial includes. */
 export const TRIAL_MINUTES = 30;
+export const TRIAL_SECONDS = TRIAL_MINUTES * 60;
+/**
+ * Heartbeats arrive every 20 s or so while someone is active. A longer gap
+ * means the tab was hidden, offline, or closed, and that time isn't counted.
+ */
+export const ACTIVE_GAP_MS = 35_000;
 
-/** The trial end of an account, for rows saved before trials existed. */
-export const trialEnd = (account: Pick<Account, 'createdAt' | 'trialEndsAt'>) =>
-  account.trialEndsAt ??
-  new Date(
-    new Date(account.createdAt).getTime() + TRIAL_MINUTES * 60_000,
-  ).toISOString();
+/**
+ * Active trial time used by an account saved before it was counted: what its
+ * wall-clock trial had already run through.
+ */
+export function legacyTrialUsed(
+  account: Pick<Account, 'createdAt' | 'trialEndsAt'>,
+  now = Date.now(),
+) {
+  const ends = account.trialEndsAt
+    ? Date.parse(account.trialEndsAt)
+    : Date.parse(account.createdAt) + TRIAL_SECONDS * 1000;
+  return Math.min(
+    TRIAL_SECONDS,
+    Math.max(0, TRIAL_SECONDS - (ends - now) / 1000),
+  );
+}
 
 /**
  * Premium while a paid month runs, then the trial while it lasts, then free.
@@ -147,21 +172,51 @@ export const TRIAL_GUESTS = 2;
 export function tierOf(plan: Plan | undefined, now = Date.now()): Tier {
   if (!plan) return 'free';
   if (plan.paidUntil && Date.parse(plan.paidUntil) > now) return 'premium';
-  if (Date.parse(plan.trialEndsAt) > now) return 'trial';
+  if (plan.trialUsedSeconds < TRIAL_SECONDS) return 'trial';
   return 'free';
 }
 
-/** When the current tier runs out; undefined on the free plan. */
+/**
+ * When a paid month runs out; undefined otherwise. The trial has no end time,
+ * since it only counts down while the person is active.
+ */
 export function tierEndsAt(plan: Plan | undefined, now = Date.now()) {
-  const tier = tierOf(plan, now);
-  if (tier === 'premium') return plan!.paidUntil;
-  if (tier === 'trial') return plan!.trialEndsAt;
-  return undefined;
+  return tierOf(plan, now) === 'premium' ? plan!.paidUntil : undefined;
+}
+
+/**
+ * Counts active trial time for a heartbeat at `now`: the time since the last
+ * beat, unless that gap shows the person wasn't active. Returns the account's
+ * new trial fields, or undefined when nothing changes (Premium, or used up).
+ */
+export function accruedTrial(
+  account: Pick<
+    Account,
+    | 'createdAt'
+    | 'trialEndsAt'
+    | 'trialUsedSeconds'
+    | 'trialBeatAt'
+    | 'paidUntil'
+  >,
+  now = Date.now(),
+): Pick<Account, 'trialUsedSeconds' | 'trialBeatAt'> | undefined {
+  if (account.paidUntil && Date.parse(account.paidUntil) > now) return;
+  const used = account.trialUsedSeconds ?? legacyTrialUsed(account, now);
+  if (used >= TRIAL_SECONDS) return;
+  const gap = account.trialBeatAt
+    ? now - Date.parse(account.trialBeatAt)
+    : Infinity;
+  const counted = gap >= 0 && gap <= ACTIVE_GAP_MS ? gap / 1000 : 0;
+  return {
+    trialUsedSeconds: Math.min(TRIAL_SECONDS, used + counted),
+    trialBeatAt: new Date(now).toISOString(),
+  };
 }
 
 /** An account's trial and pass. */
 export const planOf = (account: Account): Plan => ({
-  trialEndsAt: trialEnd(account),
+  trialUsedSeconds: account.trialUsedSeconds ?? legacyTrialUsed(account),
+  ...(account.trialBeatAt ? { trialBeatAt: account.trialBeatAt } : {}),
   ...(account.paidUntil ? { paidUntil: account.paidUntil } : {}),
 });
 
@@ -198,8 +253,14 @@ export type Account = {
   createdAt: string;
   /** `scrypt$N$r$p$salt$hash`, never sent to clients. */
   passwordHash: string;
-  /** Missing on accounts saved before trials existed; see `trialEnd`. */
+  /**
+   * The wall-clock trial end used before trials counted active time. Only
+   * read for accounts saved before then; see `legacyTrialUsed`.
+   */
   trialEndsAt?: string;
+  /** Active trial time used, in seconds. */
+  trialUsedSeconds?: number;
+  trialBeatAt?: string;
   paidUntil?: string;
 };
 

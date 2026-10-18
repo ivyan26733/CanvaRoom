@@ -113,7 +113,7 @@ function Landing() {
           <h2>{mode === 'signup' ? 'Create your studio' : 'Welcome back'}</h2>
           <p className="auth-lede">
             {mode === 'signup'
-              ? 'Free for 30 minutes, then a free plan. No card needed.'
+              ? '30 minutes of free use, then a free plan. No card needed.'
               : 'Sign in to pick up where your team left off.'}
           </p>
           <AuthForm key={mode} initialMode={mode} />

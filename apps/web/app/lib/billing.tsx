@@ -1,9 +1,17 @@
 'use client';
 
 import dynamic from 'next/dynamic';
-import { useEffect, useState } from 'react';
+import { usePathname } from 'next/navigation';
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useEffectEvent,
+  useRef,
+  useState,
+} from 'react';
 import { Icon } from '../components/icons';
-import { PAYWALL_EVENT, type Board, type User } from './api';
+import { PAYWALL_EVENT, send, type Board, type User } from './api';
 import { useAuth } from './auth';
 
 // The dialog and its checkout code load only when someone opens it.
@@ -12,9 +20,14 @@ const UpgradeDialog = dynamic(() => import('./upgrade-dialog'), {
 });
 
 export type PlanState =
-  | { kind: 'trial'; until: string }
+  | { kind: 'trial'; secondsLeft: number }
   | { kind: 'premium'; until: string }
   | { kind: 'free' };
+
+/** The trial: 30 minutes of active use, counted by the server. */
+export const TRIAL_SECONDS = 30 * 60;
+/** How often an open, visible page tells the server it is in use. */
+const BEAT_EVERY_MS = 20_000;
 
 /** Boards the trial includes, and people besides the owner on each. */
 export const TRIAL_BOARDS = 2;
@@ -29,8 +42,11 @@ export function planState(
   if (!plan) return;
   if (plan.paidUntil && Date.parse(plan.paidUntil) > now)
     return { kind: 'premium', until: plan.paidUntil };
-  if (Date.parse(plan.trialEndsAt) > now)
-    return { kind: 'trial', until: plan.trialEndsAt };
+  if (plan.trialUsedSeconds < TRIAL_SECONDS)
+    return {
+      kind: 'trial',
+      secondsLeft: TRIAL_SECONDS - plan.trialUsedSeconds,
+    };
   return { kind: 'free' };
 }
 
@@ -83,8 +99,6 @@ export function openUpgrade(reason?: unknown) {
   );
 }
 
-const minutesLeft = (until: string, now: number) =>
-  Math.max(1, Math.ceil((Date.parse(until) - now) / 60_000));
 const daysLeft = (until: string, now: number) =>
   Math.max(1, Math.ceil((Date.parse(until) - now) / 86_400_000));
 
@@ -105,6 +119,7 @@ export const longDate = (iso: string) =>
 export function PlanChip({ className = '' }: { className?: string }) {
   const { user } = useAuth();
   const now = useNow();
+  const trial = useContext(TrialContext);
   const state = planState(user, now);
   if (!state) return null;
   if (
@@ -124,7 +139,7 @@ export function PlanChip({ className = '' }: { className?: string }) {
     >
       <Icon name="sparkle" size={14} />
       {state.kind === 'trial'
-        ? `Free trial · ${minutesLeft(state.until, now)} min left`
+        ? `Free trial · ${Math.max(1, Math.ceil((trial.left ?? state.secondsLeft) / 60))} min left${trial.paused ? ' · paused' : ''}`
         : state.kind === 'premium'
           ? `Premium ends in ${daysLeft(state.until, now)} d · Renew`
           : 'Free plan · Upgrade'}
@@ -148,6 +163,7 @@ export function PremiumTag() {
 export function BillingProvider({ children }: { children: React.ReactNode }) {
   // The reason the dialog opened, or an empty string for a plain upgrade.
   const [reason, setReason] = useState<string | null>(null);
+  const trial = useTrialClock();
   useEffect(() => {
     const show = (event: Event) =>
       setReason(((event as CustomEvent).detail as string | undefined) ?? '');
@@ -155,11 +171,109 @@ export function BillingProvider({ children }: { children: React.ReactNode }) {
     return () => window.removeEventListener(PAYWALL_EVENT, show);
   }, []);
   return (
-    <>
+    <TrialContext.Provider value={trial}>
       {children}
       {reason !== null && (
         <UpgradeDialog reason={reason} onClose={() => setReason(null)} />
       )}
-    </>
+    </TrialContext.Provider>
   );
+}
+
+/** Trial seconds left on this page's clock, and whether it is paused. */
+const TrialContext = createContext<{ left: number | null; paused: boolean }>({
+  left: null,
+  paused: false,
+});
+
+/** True while the page is visible and the browser is online. */
+function useActive() {
+  const [active, setActive] = useState(true);
+  useEffect(() => {
+    const update = () =>
+      setActive(document.visibilityState === 'visible' && navigator.onLine);
+    update();
+    document.addEventListener('visibilitychange', update);
+    window.addEventListener('online', update);
+    window.addEventListener('offline', update);
+    return () => {
+      document.removeEventListener('visibilitychange', update);
+      window.removeEventListener('online', update);
+      window.removeEventListener('offline', update);
+    };
+  }, []);
+  return active;
+}
+
+/**
+ * Counts down the trial while it is actually being used: the dashboard or a
+ * board open in a visible tab, online. The page tells the server every 20
+ * seconds; the server measures the time between those beats itself and
+ * ignores long gaps, so hidden or offline time is never charged and a page
+ * can't claim more than it was open. The countdown here is only a display
+ * between beats.
+ */
+function useTrialClock() {
+  const { user, setUser } = useAuth();
+  const pathname = usePathname();
+  const active = useActive();
+  const inApp =
+    pathname === '/' ||
+    (pathname.startsWith('/board/') && !pathname.startsWith('/board/local-'));
+  const state = planState(user);
+  const onTrial = !user?.guest && state?.kind === 'trial';
+  const counting = onTrial && active && inApp;
+  const serverLeft = state?.kind === 'trial' ? state.secondsLeft : null;
+  const [left, setLeft] = useState<number | null>(serverLeft);
+  // A fresh figure from the server replaces the local estimate.
+  const [shown, setShown] = useState(serverLeft);
+  if (serverLeft !== shown) {
+    setShown(serverLeft);
+    setLeft(serverLeft);
+  }
+  const lastBeat = useRef(0);
+
+  const beat = useEffectEvent(async () => {
+    if (!user || !onTrial) return;
+    lastBeat.current = Date.now();
+    try {
+      const result = await send<{ plan: User['plan'] | null }>(
+        '/billing/heartbeat',
+        'POST',
+        {},
+      );
+      if (!result.plan) return;
+      const next = { ...user, plan: result.plan };
+      if (planState(next)?.kind !== 'trial') setUser(next);
+      else setLeft(Math.max(0, TRIAL_SECONDS - result.plan.trialUsedSeconds));
+    } catch {
+      // Offline or rate-limited; the next beat catches up.
+    }
+  });
+
+  useEffect(() => {
+    if (!counting) return;
+    // Starting (or coming back) beats at once, at most every few seconds.
+    if (Date.now() - lastBeat.current > 5_000) void beat();
+    const beats = window.setInterval(() => void beat(), BEAT_EVERY_MS);
+    const ticks = window.setInterval(
+      () =>
+        setLeft((current) =>
+          current === null ? current : Math.max(0, current - 1),
+        ),
+      1_000,
+    );
+    return () => {
+      window.clearInterval(beats);
+      window.clearInterval(ticks);
+    };
+  }, [counting]);
+
+  // At zero the server decides; ask it now rather than at the next beat.
+  const runOut = counting && left === 0;
+  useEffect(() => {
+    if (runOut) void beat();
+  }, [runOut]);
+
+  return { left: onTrial ? left : null, paused: onTrial && !counting };
 }

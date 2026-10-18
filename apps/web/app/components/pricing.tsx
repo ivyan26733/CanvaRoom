@@ -48,7 +48,7 @@ const PERKS: { icon: IconName; title: string; body: string }[] = [
 ];
 
 const PLANS = [
-  { name: 'Free trial', note: 'First 30 minutes' },
+  { name: 'Free trial', note: '30 minutes of use' },
   { name: 'Free', note: 'After the trial' },
   { name: 'Premium', note: 'Per month' },
 ];
@@ -77,9 +77,10 @@ export function Pricing({ currency }: { currency: Currency }) {
           Start free. Go <span>Premium</span> when the class grows.
         </h2>
         <p className="pr-lede">
-          Every account starts with a 30-minute free trial. After it, the free
-          plan keeps your first board for you to use on your own. Premium opens
-          everything up, billed monthly.
+          Every account starts with a free trial of 30 minutes of active use;
+          the clock pauses whenever CanvaRoom isn’t open in front of you. After
+          it, the free plan keeps your first board for you to use on your own.
+          Premium opens everything up, billed monthly.
         </p>
       </div>
 

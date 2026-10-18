@@ -3,8 +3,9 @@ import {
   DEFAULT_PAGES,
   MAX_MESSAGES,
   MAX_SNAPSHOTS,
-  TRIAL_MINUTES,
-  trialEnd,
+  ACTIVE_GAP_MS,
+  planOf,
+  TRIAL_SECONDS,
 } from './models.js';
 import type {
   Account,
@@ -51,7 +52,9 @@ type BoardRow = {
   invite_revoked: boolean;
   pages: Page[] | null;
   members: Record<string, Member> | null;
-  owner_trial_ends_at: Date | null;
+  owner_exists: boolean | null;
+  owner_trial_used_seconds: number | null;
+  owner_trial_beat_at: Date | null;
   owner_paid_until: Date | null;
   owner_first_board: boolean | null;
 };
@@ -64,6 +67,8 @@ type AccountRow = {
   password_hash: string;
   created_at: Date;
   trial_ends_at: Date | null;
+  trial_used_seconds: number | null;
+  trial_beat_at: Date | null;
   paid_until: Date | null;
 };
 
@@ -75,6 +80,10 @@ const toAccount = (row: AccountRow): Account => ({
   passwordHash: row.password_hash,
   createdAt: iso(row.created_at),
   ...(row.trial_ends_at ? { trialEndsAt: iso(row.trial_ends_at) } : {}),
+  ...(row.trial_used_seconds !== null
+    ? { trialUsedSeconds: row.trial_used_seconds }
+    : {}),
+  ...(row.trial_beat_at ? { trialBeatAt: iso(row.trial_beat_at) } : {}),
   ...(row.paid_until ? { paidUntil: iso(row.paid_until) } : {}),
 });
 
@@ -182,13 +191,15 @@ export class PostgresStore implements Store {
       `SELECT b.*,
               (SELECT jsonb_object_agg(m.user_id, jsonb_build_object('role', m.role, 'name', m.name))
                  FROM board_members m WHERE m.board_id = b.id) AS members,
-              coalesce(a.trial_ends_at, a.created_at + make_interval(mins => $2)) AS owner_trial_ends_at,
+              a.id IS NOT NULL AS owner_exists,
+              a.trial_used_seconds AS owner_trial_used_seconds,
+              a.trial_beat_at AS owner_trial_beat_at,
               a.paid_until AS owner_paid_until,
               (SELECT f.id FROM boards f WHERE f.owner_id = b.owner_id
                 ORDER BY f.created_at, f.id LIMIT 1) = b.id AS owner_first_board
          FROM boards b LEFT JOIN accounts a ON a.id = b.owner_id
         WHERE b.id = $1`,
-      [boardId, TRIAL_MINUTES],
+      [boardId],
     );
     const row = rows[0];
     if (!row) return;
@@ -203,10 +214,13 @@ export class PostgresStore implements Store {
       inviteRevoked: row.invite_revoked,
       pages: row.pages?.length ? row.pages : DEFAULT_PAGES,
       members: row.members ?? {},
-      ...(row.owner_trial_ends_at
+      ...(row.owner_exists
         ? {
             ownerPlan: {
-              trialEndsAt: iso(row.owner_trial_ends_at),
+              trialUsedSeconds: row.owner_trial_used_seconds ?? TRIAL_SECONDS,
+              ...(row.owner_trial_beat_at
+                ? { trialBeatAt: iso(row.owner_trial_beat_at) }
+                : {}),
               ...(row.owner_paid_until
                 ? { paidUntil: iso(row.owner_paid_until) }
                 : {}),
@@ -422,7 +436,7 @@ export class PostgresStore implements Store {
 
   async createAccount(account: Account) {
     const { rowCount } = await this.pool.query(
-      `INSERT INTO accounts (id, email, name, color, password_hash, created_at, trial_ends_at)
+      `INSERT INTO accounts (id, email, name, color, password_hash, created_at, trial_used_seconds)
        VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT DO NOTHING`,
       [
         account.id,
@@ -431,7 +445,7 @@ export class PostgresStore implements Store {
         account.color,
         account.passwordHash,
         account.createdAt,
-        trialEnd(account),
+        account.trialUsedSeconds ?? 0,
       ],
     );
     return rowCount === 1;
@@ -594,6 +608,31 @@ export class PostgresStore implements Store {
         payment.createdAt,
       ],
     );
+  }
+
+  async accrueTrial(userId: string) {
+    // Adds the time since the last beat when it is short enough to mean the
+    // person was active throughout, in one statement so beats from several
+    // tabs or instances never count the same seconds twice.
+    const { rows } = await this.pool.query<AccountRow>(
+      `UPDATE accounts SET
+          trial_used_seconds = least($2::float8, trial_used_seconds + CASE
+            WHEN trial_beat_at IS NOT NULL
+             AND trial_beat_at >= now() - make_interval(secs => $3)
+             AND trial_beat_at <= now()
+            THEN extract(epoch FROM now() - trial_beat_at)
+            ELSE 0 END),
+          trial_beat_at = now()
+        WHERE id = $1
+          AND trial_used_seconds < $2
+          AND (paid_until IS NULL OR paid_until <= now())
+        RETURNING *`,
+      [userId, TRIAL_SECONDS, ACTIVE_GAP_MS / 1000],
+    );
+    const account = rows[0]
+      ? toAccount(rows[0])
+      : await this.getAccount(userId);
+    return account && planOf(account);
   }
 
   async getPayment(orderId: string) {

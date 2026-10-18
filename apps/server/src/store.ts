@@ -7,6 +7,7 @@ import {
   DEFAULT_PAGES,
   MAX_MESSAGES,
   MAX_SNAPSHOTS,
+  accruedTrial,
   planOf,
 } from './models.js';
 import { PostgresStore } from './pg-store.js';
@@ -20,6 +21,7 @@ import type {
   Page,
   Feedback,
   Payment,
+  Plan,
   Presence,
   SessionRecord,
   Snapshot,
@@ -110,6 +112,12 @@ export interface Store {
   markFeedbackMailed(id: string): Promise<void>;
   createPayment(payment: Payment): Promise<void>;
   getPayment(orderId: string): Promise<Payment | undefined>;
+  /**
+   * Counts a moment of active use towards the account's free trial: the time
+   * since the last count, unless the gap shows the person wasn't active.
+   * Returns the account's plan after counting.
+   */
+  accrueTrial(userId: string): Promise<Plan | undefined>;
   /**
    * Marks an unpaid order paid and extends its user's pass by `days` from
    * the later of now and their current pass end. Returns the new pass end, or
@@ -563,6 +571,17 @@ export class RedisStore implements Store {
     return value ? (JSON.parse(value) as Payment) : undefined;
   }
 
+  async accrueTrial(userId: string) {
+    // Only used without Postgres (local development), so not atomic.
+    const account = await this.getAccount(userId);
+    if (!account) return;
+    const trial = accruedTrial(account);
+    if (!trial) return planOf(account);
+    const next = { ...account, ...trial };
+    await this.redis.set(keys.account(userId), JSON.stringify(next));
+    return planOf(next);
+  }
+
   async completePayment(orderId: string, paymentId: string, days: number) {
     // Only used without Postgres (local development), so not atomic.
     const payment = await this.getPayment(orderId);
@@ -908,6 +927,17 @@ export class MemoryStore implements Store {
 
   async getPayment(orderId: string) {
     return this.payments.get(orderId);
+  }
+
+  async accrueTrial(userId: string) {
+    const account = this.accounts.get(userId);
+    if (!account) return;
+    const trial = accruedTrial(account);
+    if (!trial) return planOf(account);
+    const next = { ...account, ...trial };
+    this.accounts.set(userId, next);
+    this.scheduleSave();
+    return planOf(next);
   }
 
   async completePayment(orderId: string, paymentId: string, days: number) {
