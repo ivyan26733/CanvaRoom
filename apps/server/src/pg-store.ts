@@ -39,6 +39,7 @@ const accountColumns = {
   name: 'name',
   color: 'color',
   passwordHash: 'password_hash',
+  emailVerified: 'email_verified',
 } as const;
 
 type BoardRow = {
@@ -438,8 +439,8 @@ export class PostgresStore implements Store {
 
   async createAccount(account: Account) {
     const { rowCount } = await this.pool.query(
-      `INSERT INTO accounts (id, email, name, color, password_hash, created_at, trial_used_seconds)
-       VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT DO NOTHING`,
+      `INSERT INTO accounts (id, email, name, color, password_hash, created_at, trial_used_seconds, email_verified)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT DO NOTHING`,
       [
         account.id,
         account.email,
@@ -448,6 +449,7 @@ export class PostgresStore implements Store {
         account.passwordHash,
         account.createdAt,
         account.trialUsedSeconds ?? 0,
+        account.emailVerified ?? true,
       ],
     );
     return rowCount === 1;
@@ -564,6 +566,20 @@ export class PostgresStore implements Store {
     );
   }
 
+  async changeEmail(userId: string, email: string) {
+    try {
+      const { rowCount } = await this.pool.query(
+        `UPDATE accounts SET email = $2 WHERE id = $1`,
+        [userId, email],
+      );
+      return rowCount === 1;
+    } catch (error) {
+      // Another account already uses the address.
+      if ((error as { code?: string }).code === '23505') return false;
+      throw error;
+    }
+  }
+
   async createVerificationToken(key: string, userId: string, ttl: number) {
     await this.pool.query(
       `INSERT INTO email_verification_tokens (key, user_id, expires_at)
@@ -595,7 +611,8 @@ export class PostgresStore implements Store {
          DELETE FROM reset_tokens WHERE key = $1 AND expires_at > now()
          RETURNING user_id
        ), updated AS (
-         UPDATE accounts SET password_hash = $2
+         -- Receiving the code proves the address, too.
+         UPDATE accounts SET password_hash = $2, email_verified = true
           WHERE id IN (SELECT user_id FROM consumed)
           RETURNING id
        ), revoked AS (

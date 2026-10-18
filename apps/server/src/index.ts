@@ -1,6 +1,6 @@
 import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
 import { waitUntil } from '@vercel/functions';
-import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomInt, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { config } from './config.js';
 import {
@@ -34,7 +34,7 @@ import {
   mailConfigured,
   sendEmailVerification,
   sendFeedback,
-  sendPasswordReset,
+  sendPasswordResetCode,
   teamMailConfigured,
 } from './mail.js';
 import {
@@ -230,13 +230,6 @@ app.post('/api/auth/signup', async (request, reply) => {
     .object({ name: nameSchema, email: emailSchema, password: passwordSchema })
     .safeParse(request.body);
   if (!body.success) return apiError(reply, 400, firstIssue(body.error));
-  const printLink = !mailConfigured() && !process.env.VERCEL;
-  if (!mailConfigured() && !printLink)
-    return apiError(
-      reply,
-      503,
-      'Email verification isn’t available yet. Please try again later.',
-    );
   if (!(await allow(reply, `signup:${clientIp(request)}`, 10, 3600))) return;
   // A guest who signs up keeps the boards they already joined.
   const current = await userFromRequest(request.raw);
@@ -248,6 +241,8 @@ app.post('/api/auth/signup', async (request, reply) => {
     color: current?.color ?? colorFor(id),
     createdAt: new Date().toISOString(),
     passwordHash: await hashPassword(body.data.password),
+    // Unverified until they enter the emailed code. Without mail nothing is
+    // sent, nothing is blocked, and the code can be asked for once it works.
     emailVerified: false,
     trialUsedSeconds: 0,
   };
@@ -259,26 +254,12 @@ app.post('/api/auth/signup', async (request, reply) => {
     );
   if (current?.guest) {
     await renameEverywhere(publicUser(account));
+    const guestSession = currentSessionKey(request.raw);
+    if (guestSession) await store.deleteSession(guestSession);
   }
-  const token = randomBytes(32).toString('base64url');
-  await store.createVerificationToken(
-    hashToken(token),
-    account.id,
-    VERIFY_TTL_SECONDS,
-  );
-  const link = `${config.appUrl}/verify-email?token=${token}`;
-  if (printLink) request.log.warn({ link }, 'Email verification link (dev)');
-  else
-    sendMailInBackground(
-      sendEmailVerification(account.email, account.name, link),
-      request,
-      'Verification email failed',
-    );
-  return reply.code(201).send({
-    verificationRequired: true,
-    message:
-      'Check your email for a verification link. The link works for 24 hours.',
-  });
+  await startSession(request, reply, publicUser(account));
+  if (mailConfigured()) await sendVerificationCode(account, request);
+  return reply.code(201).send({ user: publicUser(account) });
 });
 
 app.post('/api/auth/login', async (request, reply) => {
@@ -299,12 +280,6 @@ app.post('/api/auth/login', async (request, reply) => {
   );
   if (!account || !valid)
     return apiError(reply, 401, 'That email and password don’t match.');
-  if (account.emailVerified === false)
-    return apiError(
-      reply,
-      403,
-      'Verify your email before signing in. You can request a new verification link below.',
-    );
   await startSession(request, reply, publicUser(account));
   return { user: publicUser(account) };
 });
@@ -331,21 +306,25 @@ app.post('/api/auth/logout', async (request, reply) => {
 
 // ---- Password reset ----
 
-const RESET_TTL_SECONDS = 30 * 60;
-const VERIFY_TTL_SECONDS = 24 * 60 * 60;
+const RESET_CODE_MINUTES = 10;
+const RESET_CODE_ATTEMPTS = 5;
 const hashToken = (token: string) =>
   createHash('sha256').update(token).digest('base64url');
+/** Reset codes are short, so each is stored hashed together with its account. */
+const resetCodeKey = (userId: string, code: string) =>
+  hashToken(`reset-code:${userId}:${code}`);
+const SUPPORT_EMAIL = 'ivyan26733@gmail.com';
 
 app.post('/api/auth/forgot', async (request, reply) => {
   const body = z.object({ email: emailSchema }).safeParse(request.body);
   if (!body.success) return apiError(reply, 400, firstIssue(body.error));
-  // Local development without email prints the link to the server log.
-  const printLink = !mailConfigured() && !process.env.VERCEL;
-  if (!mailConfigured() && !printLink)
+  // Local development without email prints the code to the server log.
+  const printCode = !mailConfigured() && !process.env.VERCEL;
+  if (!mailConfigured() && !printCode)
     return apiError(
       reply,
       503,
-      'Password reset email isn’t available yet. Please contact support.',
+      `Password reset email isn’t available yet. Email ${SUPPORT_EMAIL} and we’ll help you back in.`,
     );
   if (
     !(await allow(reply, `forgot-ip:${clientIp(request)}`, 10, 3600)) ||
@@ -355,115 +334,218 @@ app.post('/api/auth/forgot', async (request, reply) => {
   const account = await store.findAccountByEmail(body.data.email);
   // The reply is the same whether or not the account exists.
   if (account) {
-    const token = randomBytes(32).toString('base64url');
+    const code = randomInt(0, 1_000_000).toString().padStart(6, '0');
+    // A new code replaces any earlier one.
     await store.createResetToken(
-      hashToken(token),
+      resetCodeKey(account.id, code),
       account.id,
-      RESET_TTL_SECONDS,
+      RESET_CODE_MINUTES * 60,
     );
-    const link = `${config.appUrl}/reset-password?token=${token}`;
-    if (printLink) request.log.warn({ link }, 'Password reset link (dev)');
+    if (printCode) request.log.warn({ code }, 'Password reset code (dev)');
     else
       sendMailInBackground(
-        sendPasswordReset(account.email, account.name, link),
+        sendPasswordResetCode(
+          account.email,
+          account.name,
+          code,
+          RESET_CODE_MINUTES,
+        ),
         request,
         'Password reset email failed',
       );
   }
   return {
     ok: true,
-    message:
-      'If an account uses that email, a reset link is on its way. It works for 30 minutes.',
+    message: `If an account uses that email, we’ve sent it a 6-digit code. It works for ${RESET_CODE_MINUTES} minutes.`,
   };
 });
 
 app.post('/api/auth/reset', async (request, reply) => {
   const body = z
-    .object({ token: z.string().min(20).max(200), password: passwordSchema })
+    .object({
+      email: emailSchema,
+      code: z
+        .string()
+        .trim()
+        .regex(/^\d{6}$/, 'Enter the 6-digit code from the email.'),
+      password: passwordSchema,
+    })
     .safeParse(request.body);
   if (!body.success) return apiError(reply, 400, firstIssue(body.error));
   if (!(await allow(reply, `reset-ip:${clientIp(request)}`, 20, 900))) return;
-  const passwordHash = await hashPassword(body.data.password);
-  const userId = await store.completePasswordReset(
-    hashToken(body.data.token),
-    passwordHash,
+  const account = await store.findAccountByEmail(body.data.email);
+  // A few guesses per code: past that, the code is thrown away.
+  const attempts = await store.hit(
+    `reset-code:${body.data.email}`,
+    RESET_CODE_MINUTES * 60,
   );
-  const account = userId ? await store.getAccount(userId) : undefined;
-  if (!account)
+  if (attempts > RESET_CODE_ATTEMPTS) {
+    if (account)
+      await store.createResetToken(
+        hashToken(randomBytes(32).toString('base64url')),
+        account.id,
+        1,
+      );
+    return apiError(
+      reply,
+      429,
+      'Too many wrong codes. Request a new code in a few minutes.',
+    );
+  }
+  const passwordHash = await hashPassword(body.data.password);
+  const userId = account
+    ? await store.completePasswordReset(
+        resetCodeKey(account.id, body.data.code),
+        passwordHash,
+      )
+    : undefined;
+  const updated = userId ? await store.getAccount(userId) : undefined;
+  if (!updated)
     return apiError(
       reply,
       400,
-      'This reset link has expired or was already used. Request a new one.',
+      'That code is wrong or has expired. Check the email or request a new code.',
     );
-  await startSession(request, reply, publicUser(account));
-  return { user: publicUser(account) };
+  await startSession(request, reply, publicUser(updated));
+  return { user: publicUser(updated) };
 });
+
+// ---- Email verification ----
+
+const VERIFY_CODE_MINUTES = 10;
+const VERIFY_CODE_ATTEMPTS = 5;
+const verifyCodeKey = (userId: string, code: string) =>
+  hashToken(`verify-code:${userId}:${code}`);
+
+/** Emails a fresh 6-digit code, replacing any earlier one. */
+async function sendVerificationCode(account: Account, request: FastifyRequest) {
+  const code = randomInt(0, 1_000_000).toString().padStart(6, '0');
+  await store.createVerificationToken(
+    verifyCodeKey(account.id, code),
+    account.id,
+    VERIFY_CODE_MINUTES * 60,
+  );
+  if (!mailConfigured() && !process.env.VERCEL)
+    request.log.warn({ code }, 'Email verification code (dev)');
+  else
+    sendMailInBackground(
+      sendEmailVerification(
+        account.email,
+        account.name,
+        code,
+        VERIFY_CODE_MINUTES,
+      ),
+      request,
+      'Verification email failed',
+    );
+}
+
+/** The signed-in account that still needs to verify, or a reply saying why not. */
+async function unverifiedAccount(request: FastifyRequest, reply: FastifyReply) {
+  const user = await currentUser(request, reply);
+  if (!user) return;
+  if (user.guest) {
+    apiError(reply, 403, 'Create an account first.');
+    return;
+  }
+  const account = await store.getAccount(user.id);
+  if (!account) {
+    apiError(reply, 401, 'Please sign in again.');
+    return;
+  }
+  return account;
+}
 
 app.post('/api/auth/verify-email', async (request, reply) => {
   const body = z
-    .object({ token: z.string().min(20).max(200) })
+    .object({
+      code: z
+        .string()
+        .trim()
+        .regex(/^\d{6}$/, 'Enter the 6-digit code from the email.'),
+    })
     .safeParse(request.body);
-  if (!body.success)
+  if (!body.success) return apiError(reply, 400, firstIssue(body.error));
+  const account = await unverifiedAccount(request, reply);
+  if (!account) return;
+  if (account.emailVerified !== false) return { user: publicUser(account) };
+  const attempts = await store.hit(
+    `verify-code:${account.id}`,
+    VERIFY_CODE_MINUTES * 60,
+  );
+  if (attempts > VERIFY_CODE_ATTEMPTS) {
+    // Too many guesses: the code is thrown away.
+    await store.createVerificationToken(
+      hashToken(randomBytes(32).toString('base64url')),
+      account.id,
+      1,
+    );
     return apiError(
       reply,
-      400,
-      'Open the full verification link from your email.',
+      429,
+      'Too many wrong codes. Send yourself a new code and try again.',
     );
-  if (!(await allow(reply, `verify-ip:${clientIp(request)}`, 30, 900))) return;
-  const userId = await store.verifyEmailToken(hashToken(body.data.token));
-  const account = userId ? await store.getAccount(userId) : undefined;
-  if (!account)
-    return apiError(
-      reply,
-      400,
-      'This verification link has expired or was already used. Request a new one.',
-    );
-  const sessionKey = currentSessionKey(request.raw);
-  if (sessionKey) {
-    const existing = await store.getSession(sessionKey);
-    if (existing?.guest && existing.userId === account.id)
-      await store.deleteSession(sessionKey);
   }
-  await startSession(request, reply, publicUser(account));
-  return { user: publicUser(account) };
+  const userId = await store.verifyEmailToken(
+    verifyCodeKey(account.id, body.data.code),
+  );
+  const verified = userId ? await store.getAccount(userId) : undefined;
+  if (!verified)
+    return apiError(
+      reply,
+      400,
+      'That code is wrong or has expired. Check the email or send a new code.',
+    );
+  return { user: publicUser(verified) };
 });
 
+const RESEND_COOLDOWN_SECONDS = 60;
+
 app.post('/api/auth/resend-verification', async (request, reply) => {
-  const body = z.object({ email: emailSchema }).safeParse(request.body);
-  if (!body.success) return apiError(reply, 400, firstIssue(body.error));
-  const printLink = !mailConfigured() && !process.env.VERCEL;
-  if (!mailConfigured() && !printLink)
+  if (!mailConfigured())
     return apiError(
       reply,
       503,
-      'Email verification isn’t available yet. Please try again later.',
+      `Email isn’t available right now. Email ${SUPPORT_EMAIL} for help.`,
     );
+  const account = await unverifiedAccount(request, reply);
+  if (!account) return;
+  if (account.emailVerified !== false) return { ok: true, cooldown: 0 };
   if (
-    !(await allow(reply, `verify-resend-ip:${clientIp(request)}`, 10, 3600)) ||
-    !(await allow(reply, `verify-resend:${body.data.email}`, 3, 3600))
+    (await store.hit(`verify-cool:${account.id}`, RESEND_COOLDOWN_SECONDS)) > 1
   )
-    return;
-  const account = await store.findAccountByEmail(body.data.email);
-  if (account && account.emailVerified === false) {
-    const token = randomBytes(32).toString('base64url');
-    await store.createVerificationToken(
-      hashToken(token),
-      account.id,
-      VERIFY_TTL_SECONDS,
+    return apiError(
+      reply,
+      429,
+      'A code is already on its way. You can ask for another in a minute.',
     );
-    const link = `${config.appUrl}/verify-email?token=${token}`;
-    if (printLink) request.log.warn({ link }, 'Email verification link (dev)');
-    else
-      sendMailInBackground(
-        sendEmailVerification(account.email, account.name, link),
-        request,
-        'Verification email resend failed',
-      );
-  }
+  if (!(await allow(reply, `verify-send:${account.id}`, 6, 3600))) return;
+  await sendVerificationCode(account, request);
   return {
     ok: true,
-    message: 'If the account needs verification, a new link is on its way.',
+    cooldown: RESEND_COOLDOWN_SECONDS,
+    message: `We’ve sent a new code to ${account.email}.`,
   };
+});
+
+app.post('/api/auth/change-email', async (request, reply) => {
+  const body = z.object({ email: emailSchema }).safeParse(request.body);
+  if (!body.success) return apiError(reply, 400, firstIssue(body.error));
+  const account = await unverifiedAccount(request, reply);
+  if (!account) return;
+  if (account.emailVerified !== false)
+    return apiError(reply, 400, 'Your email is already verified.');
+  if (!(await allow(reply, `change-email:${account.id}`, 5, 3600))) return;
+  if (!(await store.changeEmail(account.id, body.data.email)))
+    return apiError(
+      reply,
+      409,
+      'An account with this email already exists. Sign in instead.',
+    );
+  const updated = { ...account, email: body.data.email };
+  await renameEverywhere(publicUser(updated));
+  if (mailConfigured()) await sendVerificationCode(updated, request);
+  return { user: publicUser(updated) };
 });
 
 /** Keeps a person's name and colour current on every board they belong to. */
@@ -1113,6 +1195,14 @@ app.post('/api/billing/create-order', async (request, reply) => {
   if (!user) return;
   if (user.guest)
     return apiError(reply, 403, 'Create an account before upgrading.');
+  // Receipts and renewals go to the account's email, so it must be real.
+  if (user.verifyAvailable && user.emailVerified === false)
+    return apiError(
+      reply,
+      403,
+      'Verify your email before upgrading. We’ve sent you a 6-digit code.',
+      'email_unverified',
+    );
   if (!(await allow(reply, `order:${user.id}`, 20, 3600))) return;
   const price = priceFor(countryOf(request));
   if (price.amount < 100)

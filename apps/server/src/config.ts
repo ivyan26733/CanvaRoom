@@ -28,6 +28,13 @@ const environmentSchema = z.object({
   // Resend account owner until a domain is verified and MAIL_FROM uses it.
   RESEND_API_KEY: z.string().optional(),
   MAIL_FROM: z.string().optional(),
+  // SMTP for mail to anyone (sign-up links, reset codes) without a domain:
+  // a Gmail account with an App Password works. Preferred over Resend.
+  SMTP_HOST: z.string().optional(),
+  SMTP_PORT: z.coerce.number().int().min(1).max(65535).default(465),
+  SMTP_USER: z.string().optional(),
+  SMTP_PASS: z.string().optional(),
+  SMTP_FROM: z.string().optional(),
   // Public address used in emailed links. Never taken from request headers.
   APP_URL: z.url().optional(),
   // Razorpay Standard Checkout. The secret signs orders and payments and must
@@ -64,6 +71,16 @@ export const config = {
   databaseUrl: env.DATABASE_URL || undefined,
   blobEnabled: Boolean(env.BLOB_READ_WRITE_TOKEN),
   resendApiKey: env.RESEND_API_KEY || undefined,
+  smtp:
+    env.SMTP_HOST && env.SMTP_USER && env.SMTP_PASS
+      ? {
+          host: env.SMTP_HOST,
+          port: env.SMTP_PORT,
+          user: env.SMTP_USER,
+          pass: env.SMTP_PASS,
+          from: env.SMTP_FROM || `CanvaRoom <${env.SMTP_USER}>`,
+        }
+      : undefined,
   resendApiUrl: env.RESEND_API_URL.replace(/\/$/, ''),
   razorpay:
     env.RAZORPAY_KEY_ID && env.RAZORPAY_KEY_SECRET

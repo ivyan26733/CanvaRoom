@@ -117,6 +117,9 @@ export type User = {
   email?: string;
   /** Account holders only, and only ever sent to that person. */
   plan?: Plan;
+  emailVerified?: boolean;
+  /** Whether a verification code can be emailed right now. */
+  verifyAvailable?: boolean;
 };
 
 /**

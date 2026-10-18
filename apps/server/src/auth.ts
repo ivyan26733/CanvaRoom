@@ -13,6 +13,7 @@ import {
   type SessionRecord,
   type User,
 } from './models.js';
+import { mailConfigured } from './mail.js';
 import { store } from './store.js';
 
 const COOKIE = 'cb_session';
@@ -80,6 +81,10 @@ export function publicUser(account: Account): User {
     email: account.email,
     guest: false,
     plan: planOf(account),
+    // Accounts from before verification existed are stored as verified.
+    emailVerified: account.emailVerified !== false,
+    // Codes can only be checked once mail reaches any address.
+    verifyAvailable: mailConfigured(),
   };
 }
 

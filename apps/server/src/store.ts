@@ -114,6 +114,8 @@ export interface Store {
     ttl: number,
   ): Promise<void>;
   verifyEmailToken(key: string): Promise<string | undefined>;
+  /** Moves an account to a new address; false if another account has it. */
+  changeEmail(userId: string, email: string): Promise<boolean>;
   completePasswordReset(
     key: string,
     passwordHash: string,
@@ -499,6 +501,20 @@ export class RedisStore implements Store {
     );
   }
 
+  async changeEmail(userId: string, email: string) {
+    const account = await this.getAccount(userId);
+    if (!account) return false;
+    if (account.email === email) return true;
+    const claimed = await this.redis.set(keys.email(email), userId, 'NX');
+    if (claimed !== 'OK') return false;
+    await this.redis
+      .multi()
+      .del(keys.email(account.email))
+      .set(keys.account(userId), JSON.stringify({ ...account, email }))
+      .exec();
+    return true;
+  }
+
   async boardIdsFor(userId: string) {
     return this.redis.smembers(keys.userBoards(userId));
   }
@@ -584,6 +600,7 @@ export class RedisStore implements Store {
       keys.verify(key),
       'u:',
       'acct:',
+      key,
     )) as string | undefined;
   }
 
@@ -598,6 +615,7 @@ export class RedisStore implements Store {
       if not account then return nil end
       local decoded = cjson.decode(account)
       decoded.passwordHash = ARGV[2]
+      decoded.emailVerified = true
       redis.call('SET', accountKey, cjson.encode(decoded))
       local sessionsKey = 'u:' .. userId .. ':sessions'
       local sessions = redis.call('SMEMBERS', sessionsKey)
@@ -936,6 +954,20 @@ export class MemoryStore implements Store {
     this.scheduleSave();
   }
 
+  async changeEmail(userId: string, email: string) {
+    const account = this.accounts.get(userId);
+    if (!account) return false;
+    if (
+      [...this.accounts.values()].some(
+        (item) => item.email === email && item.id !== userId,
+      )
+    )
+      return false;
+    this.accounts.set(userId, { ...account, email });
+    this.scheduleSave();
+    return true;
+  }
+
   async boardIdsFor(userId: string) {
     return [...this.boards.values()]
       .filter((board) => board.meta.members[userId])
@@ -999,7 +1031,7 @@ export class MemoryStore implements Store {
   async completePasswordReset(key: string, passwordHash: string) {
     const userId = await this.takeResetToken(key);
     if (!userId) return;
-    await this.updateAccount(userId, { passwordHash });
+    await this.updateAccount(userId, { passwordHash, emailVerified: true });
     await this.deleteSessionsFor(userId);
     return userId;
   }

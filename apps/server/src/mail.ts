@@ -1,11 +1,16 @@
+import nodemailer, { type Transporter } from 'nodemailer';
 import { config } from './config.js';
 
-/** Email to any address, which needs a verified sending domain. */
+/**
+ * Email to any address: SMTP (e.g. Gmail with an App Password), or Resend
+ * with a verified sending domain.
+ */
 export const mailConfigured = () =>
-  Boolean(config.resendApiKey && config.mailDomainVerified);
+  Boolean(config.smtp || (config.resendApiKey && config.mailDomainVerified));
 
-/** Email to the team, which Resend's shared sender can deliver. */
-export const teamMailConfigured = () => Boolean(config.resendApiKey);
+/** Email to the team, which Resend's shared sender can also deliver. */
+export const teamMailConfigured = () =>
+  Boolean(config.smtp || config.resendApiKey);
 
 const escapeHtml = (value: string) =>
   value.replace(
@@ -16,7 +21,19 @@ const escapeHtml = (value: string) =>
       ]!,
   );
 
-/** Sends one transactional email through Resend. Throws if it was not accepted. */
+let transporter: Transporter | undefined;
+const smtp = () =>
+  (transporter ??= nodemailer.createTransport({
+    host: config.smtp!.host,
+    port: config.smtp!.port,
+    secure: config.smtp!.port === 465,
+    auth: { user: config.smtp!.user, pass: config.smtp!.pass },
+    connectionTimeout: 10_000,
+    greetingTimeout: 10_000,
+    socketTimeout: 15_000,
+  }));
+
+/** Sends one email by SMTP when set up, otherwise Resend. Throws if not accepted. */
 async function send(
   to: string,
   subject: string,
@@ -24,6 +41,17 @@ async function send(
   text: string,
   replyTo?: string,
 ) {
+  if (config.smtp) {
+    await smtp().sendMail({
+      from: config.smtp.from,
+      to,
+      subject,
+      html,
+      text,
+      ...(replyTo ? { replyTo } : {}),
+    });
+    return;
+  }
   const response = await fetch(`${config.resendApiUrl}/emails`, {
     method: 'POST',
     headers: {
@@ -46,35 +74,39 @@ async function send(
     );
 }
 
-export async function sendPasswordReset(
+/** Emails a one-time code for choosing a new password. */
+export async function sendPasswordResetCode(
   to: string,
   name: string,
-  link: string,
+  code: string,
+  minutes: number,
 ) {
-  const subject = 'Reset your CanvaRoom password';
-  const text = `Hi ${name},\n\nSomeone asked to reset the password for your CanvaRoom account. Open this link within 30 minutes to choose a new one:\n\n${link}\n\nIf it wasn't you, ignore this email. Your password stays the same.`;
+  const subject = `${code} is your CanvaRoom reset code`;
+  const text = `Hi ${name},\n\nYour CanvaRoom password reset code is:\n\n${code}\n\nEnter it within ${minutes} minutes to choose a new password. If it wasn't you, ignore this email. Your password stays the same.`;
   const html = `<div style="font-family:system-ui,-apple-system,Segoe UI,sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;color:#141413">
   <p style="font-size:20px;font-weight:700;margin:0 0 24px">CanvaRoom</p>
   <p style="margin:0 0 16px">Hi ${escapeHtml(name)},</p>
-  <p style="margin:0 0 24px">Someone asked to reset the password for your account. This link works once, for 30 minutes.</p>
-  <p style="margin:0 0 24px"><a href="${escapeHtml(link)}" style="display:inline-block;background:#141413;color:#fff;text-decoration:none;font-weight:600;padding:12px 20px;border-radius:10px">Choose a new password</a></p>
+  <p style="margin:0 0 16px">Use this code to choose a new password. It works once, for ${minutes} minutes.</p>
+  <p style="margin:0 0 24px;font-size:32px;font-weight:700;letter-spacing:8px;font-family:ui-monospace,Menlo,monospace">${escapeHtml(code)}</p>
   <p style="margin:0;color:#57544d;font-size:14px">If it wasn’t you, ignore this email. Your password stays the same.</p>
 </div>`;
   await send(to, subject, html, text);
 }
 
+/** Emails the 6-digit code that confirms a new account's address. */
 export async function sendEmailVerification(
   to: string,
   name: string,
-  link: string,
+  code: string,
+  minutes: number,
 ) {
-  const subject = 'Verify your CanvaRoom email';
-  const text = `Hi ${name},\n\nVerify your email address to finish creating your CanvaRoom account. This link works once, for 24 hours:\n\n${link}\n\nIf you didn’t create this account, you can ignore this email.`;
+  const subject = `${code} is your CanvaRoom verification code`;
+  const text = `Hi ${name},\n\nWelcome to CanvaRoom. Your verification code is:\n\n${code}\n\nEnter it within ${minutes} minutes to confirm your email. If you didn't create this account, you can ignore this email.`;
   const html = `<div style="font-family:system-ui,-apple-system,Segoe UI,sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;color:#141413">
   <p style="font-size:20px;font-weight:700;margin:0 0 24px">CanvaRoom</p>
   <p style="margin:0 0 16px">Hi ${escapeHtml(name)},</p>
-  <p style="margin:0 0 24px">Verify your email address to finish creating your account. This link works once, for 24 hours.</p>
-  <p style="margin:0 0 24px"><a href="${escapeHtml(link)}" style="display:inline-block;background:#141413;color:#fff;text-decoration:none;font-weight:600;padding:12px 20px;border-radius:10px">Verify email</a></p>
+  <p style="margin:0 0 16px">Welcome aboard. Enter this code to confirm your email. It works once, for ${minutes} minutes.</p>
+  <p style="margin:0 0 24px;font-size:32px;font-weight:700;letter-spacing:8px;font-family:ui-monospace,Menlo,monospace">${escapeHtml(code)}</p>
   <p style="margin:0;color:#57544d;font-size:14px">If you didn’t create this account, ignore this email.</p>
 </div>`;
   await send(to, subject, html, text);
