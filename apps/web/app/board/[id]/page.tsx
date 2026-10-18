@@ -1706,17 +1706,8 @@ export default function BoardPage() {
   }
 
   function deletePage(page: Page) {
+    // The pages panel has already asked when the page has anything on it.
     if (readonly || pages.length < 2) return;
-    const count = objectsRef.current.filter(
-      (item) => pageOf(item, pages) === page.id,
-    ).length;
-    if (
-      count &&
-      !window.confirm(
-        `Delete “${page.name}” and its ${count} ${count === 1 ? 'item' : 'items'} for everyone?`,
-      )
-    )
-      return;
     const index = pages.findIndex((item) => item.id === page.id);
     const next = pages.filter((item) => item.id !== page.id);
     if (page.id === currentPage.id)
