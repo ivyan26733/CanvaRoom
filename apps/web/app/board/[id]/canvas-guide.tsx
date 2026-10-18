@@ -4,7 +4,10 @@ type ToolInfo = { tool: string; icon: IconName; label: string; key?: string };
 
 const GROUPS: { title: string; tools: string[] }[] = [
   { title: 'Draw', tools: ['pen', 'highlighter', 'eraser'] },
-  { title: 'Shapes', tools: ['rect', 'ellipse', 'diamond', 'line', 'arrow'] },
+  {
+    title: 'Shapes',
+    tools: ['rect', 'ellipse', 'diamond', 'triangle', 'line', 'arrow'],
+  },
   { title: 'Notes', tools: ['text', 'sticky'] },
   { title: 'Move', tools: ['select', 'hand'] },
 ];
@@ -86,6 +89,13 @@ export function CanvasGuide({
                   </li>
                 );
               })}
+              {group.title === 'Shapes' && (
+                <li>
+                  <Icon name="star" size={16} />
+                  <span>More shapes</span>
+                  <kbd>S</kbd>
+                </li>
+              )}
               {group.title === 'Notes' && (
                 <li>
                   <Icon name="image" size={16} />

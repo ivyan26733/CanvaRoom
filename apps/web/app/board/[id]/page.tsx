@@ -33,6 +33,7 @@ import {
   defaultFontSize,
   FONT_FAMILY,
   intersects,
+  isBoxShape,
   layoutText,
   LINE_HEIGHT,
   objectBounds,
@@ -41,6 +42,7 @@ import {
   STICKY_PADDING,
   unionBounds,
   type Bounds,
+  type BoxShape,
   type Point,
 } from '../../lib/canvas';
 import { dataUrl, exportBoard, prepareImage } from '../../lib/export';
@@ -78,6 +80,7 @@ import {
 import { Minimap } from './minimap';
 import { PagesPanel } from './pages-panel';
 import { SessionRecorderControl } from './session-recorder';
+import { ShapePicker, SHAPE_TOOLS } from './shape-picker';
 
 type Tool =
   | 'select'
@@ -85,9 +88,7 @@ type Tool =
   | 'pen'
   | 'highlighter'
   | 'eraser'
-  | 'rect'
-  | 'ellipse'
-  | 'diamond'
+  | BoxShape
   | 'line'
   | 'arrow'
   | 'text'
@@ -129,6 +130,12 @@ const TOOLS: { tool: Tool; icon: IconName; label: string; key?: string }[] = [
   { tool: 'rect', icon: 'rect', label: 'Rectangle', key: 'R' },
   { tool: 'ellipse', icon: 'ellipse', label: 'Ellipse', key: 'O' },
   { tool: 'diamond', icon: 'diamond', label: 'Diamond', key: 'D' },
+  // The rest of the shapes live in the dock's shapes menu.
+  ...SHAPE_TOOLS.filter((item) => !item.key).map((item) => ({
+    tool: item.tool,
+    icon: item.tool,
+    label: item.label,
+  })),
   { tool: 'line', icon: 'line', label: 'Line', key: 'L' },
   { tool: 'arrow', icon: 'arrow', label: 'Arrow', key: 'A' },
   { tool: 'text', icon: 'text', label: 'Text', key: 'T' },
@@ -136,6 +143,7 @@ const TOOLS: { tool: Tool; icon: IconName; label: string; key?: string }[] = [
 ];
 /** Where the dock draws dividers between tool groups. */
 const DOCK_BREAKS = new Set<Tool>(['pen', 'rect', 'text']);
+const LAST_SHAPE_KEY = 'collabboard.lastShape';
 const TOOL_KEYS = Object.fromEntries(
   TOOLS.filter((item) => item.key).map((item) => [
     item.key!.toLowerCase(),
@@ -245,6 +253,17 @@ export default function BoardPage() {
 
   // ---- Editor ----
   const [tool, setTool] = useState<Tool>('pen');
+  // The shape the dock's shapes button draws, remembered between visits.
+  const [lastShape, setLastShape] = useState<BoxShape>('rect');
+  const [shapesOpen, setShapesOpen] = useState(false);
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(LAST_SHAPE_KEY);
+      if (saved && isBoxShape(saved)) setLastShape(saved);
+    } catch {
+      // Storage can be unavailable; the rectangle is fine.
+    }
+  }, []);
   const [selected, setSelected] = useState<string[]>([]);
   const [color, setColor] = useState(COLORS[0]!);
   const [stickyColor, setStickyColor] = useState(STICKY_COLORS[0]!);
@@ -1297,8 +1316,18 @@ export default function BoardPage() {
       case 'rect':
       case 'ellipse':
       case 'diamond':
+      case 'triangle':
+      case 'right-triangle':
+      case 'parallelogram':
+      case 'trapezoid':
+      case 'pentagon':
+      case 'hexagon':
+      case 'star':
+      case 'cylinder':
+      case 'bubble':
       case 'line':
       case 'arrow': {
+        setShapesOpen(false);
         const object = shapeFrom(newObject(tool, point), point, point, false);
         gesture.current = { kind: 'shape', object, start: point };
         return;
@@ -1790,6 +1819,14 @@ export default function BoardPage() {
     cancelGesture();
     setTool(next);
     if (next !== 'select') setSelected([]);
+    if (isBoxShape(next) && next !== lastShape) {
+      setLastShape(next);
+      try {
+        localStorage.setItem(LAST_SHAPE_KEY, next);
+      } catch {
+        // Not remembered this time.
+      }
+    }
   }
 
   const onKeyDown = useEffectEvent((event: KeyboardEvent) => {
@@ -1878,6 +1915,11 @@ export default function BoardPage() {
     } else if (!modifier && !event.altKey) {
       if (key === 'm' && call.joined) {
         callRef.current?.setMuted(!call.muted);
+        return;
+      }
+      if (key === 's' && !readonly) {
+        chooseTool(lastShape);
+        setShapesOpen((open) => !open);
         return;
       }
       const next = TOOL_KEYS[key];
@@ -2762,24 +2804,41 @@ export default function BoardPage() {
           </div>
         )}
         <nav className="dock" aria-label="Drawing tools">
-          {TOOLS.map((item) => (
-            <div key={item.tool} className="dock-slot">
-              {DOCK_BREAKS.has(item.tool) && <span className="dock-sep" />}
-              <button
-                className={`dock-tool ${tool === item.tool ? 'is-active' : ''}`}
-                onClick={() => chooseTool(item.tool)}
-                aria-pressed={tool === item.tool}
-                aria-label={item.label}
-                data-tip={`${item.label}${item.key ? ` · ${item.key}` : ''}`}
-                disabled={
-                  readonly && item.tool !== 'select' && item.tool !== 'hand'
-                }
-              >
-                <Icon name={item.icon} size={20} />
-                {item.key && <kbd>{item.key}</kbd>}
-              </button>
-            </div>
-          ))}
+          {TOOLS.map((item) =>
+            isBoxShape(item.tool) ? (
+              // Every closed shape shares one button with a menu.
+              item.tool === 'rect' && (
+                <div key="shapes" className="dock-slot">
+                  <span className="dock-sep" />
+                  <ShapePicker
+                    tool={tool}
+                    last={lastShape}
+                    open={shapesOpen}
+                    disabled={readonly}
+                    onOpenChange={setShapesOpen}
+                    onChoose={chooseTool}
+                  />
+                </div>
+              )
+            ) : (
+              <div key={item.tool} className="dock-slot">
+                {DOCK_BREAKS.has(item.tool) && <span className="dock-sep" />}
+                <button
+                  className={`dock-tool ${tool === item.tool ? 'is-active' : ''}`}
+                  onClick={() => chooseTool(item.tool)}
+                  aria-pressed={tool === item.tool}
+                  aria-label={item.label}
+                  data-tip={`${item.label}${item.key ? ` · ${item.key}` : ''}`}
+                  disabled={
+                    readonly && item.tool !== 'select' && item.tool !== 'hand'
+                  }
+                >
+                  <Icon name={item.icon} size={20} />
+                  {item.key && <kbd>{item.key}</kbd>}
+                </button>
+              </div>
+            ),
+          )}
           <span className="dock-sep" />
           <button
             className={`dock-tool ${unlocked ? '' : 'is-premium-locked'}`}
@@ -2981,8 +3040,11 @@ export default function BoardPage() {
                     ? 'Sticky note'
                     : selectedObject.kind === 'path'
                       ? 'Drawing'
-                      : selectedObject.kind[0]!.toUpperCase() +
-                        selectedObject.kind.slice(1)
+                      : (SHAPE_TOOLS.find(
+                          (item) => item.tool === selectedObject.kind,
+                        )?.label ??
+                        selectedObject.kind[0]!.toUpperCase() +
+                          selectedObject.kind.slice(1))
                   : `${selectedObjects.length} objects`}
               </h2>
             </div>
@@ -3041,49 +3103,48 @@ export default function BoardPage() {
             </div>
           )}
 
-          {selectedObject &&
-            ['rect', 'ellipse', 'diamond'].includes(selectedObject.kind) && (
-              <div className="inspector-section">
-                <span className="inspector-label">Fill</span>
-                <div className="segmented wide">
-                  <button
-                    aria-pressed={
-                      !selectedObject.fillColor ||
-                      (selectedObject.fillColor.length === 9 &&
-                        !selectedObject.fillColor.endsWith('00'))
-                    }
-                    disabled={readonly}
-                    onClick={() =>
-                      updateSelected({
-                        fillColor: `${selectedObject.color.slice(0, 7)}1f`,
-                      })
-                    }
-                  >
-                    Tint
-                  </button>
-                  <button
-                    aria-pressed={Boolean(
-                      selectedObject.fillColor?.endsWith('00'),
-                    )}
-                    disabled={readonly}
-                    onClick={() => updateSelected({ fillColor: '#ffffff00' })}
-                  >
-                    None
-                  </button>
-                  <button
-                    aria-pressed={selectedObject.fillColor?.length === 7}
-                    disabled={readonly}
-                    onClick={() =>
-                      updateSelected({
-                        fillColor: selectedObject.color.slice(0, 7),
-                      })
-                    }
-                  >
-                    Solid
-                  </button>
-                </div>
+          {selectedObject && isBoxShape(selectedObject.kind) && (
+            <div className="inspector-section">
+              <span className="inspector-label">Fill</span>
+              <div className="segmented wide">
+                <button
+                  aria-pressed={
+                    !selectedObject.fillColor ||
+                    (selectedObject.fillColor.length === 9 &&
+                      !selectedObject.fillColor.endsWith('00'))
+                  }
+                  disabled={readonly}
+                  onClick={() =>
+                    updateSelected({
+                      fillColor: `${selectedObject.color.slice(0, 7)}1f`,
+                    })
+                  }
+                >
+                  Tint
+                </button>
+                <button
+                  aria-pressed={Boolean(
+                    selectedObject.fillColor?.endsWith('00'),
+                  )}
+                  disabled={readonly}
+                  onClick={() => updateSelected({ fillColor: '#ffffff00' })}
+                >
+                  None
+                </button>
+                <button
+                  aria-pressed={selectedObject.fillColor?.length === 7}
+                  disabled={readonly}
+                  onClick={() =>
+                    updateSelected({
+                      fillColor: selectedObject.color.slice(0, 7),
+                    })
+                  }
+                >
+                  Solid
+                </button>
               </div>
-            )}
+            </div>
+          )}
 
           {selectedObject &&
             (selectedObject.kind === 'text' ||
@@ -3369,6 +3430,7 @@ export default function BoardPage() {
               </div>
             ))}
             {[
+              ['Shapes menu (triangles, star, more)', 'S'],
               ['Pan the canvas', 'Space + drag · scroll'],
               ['Zoom', 'Ctrl/⌘ + scroll · pinch'],
               ['Zoom in / out', 'Ctrl/⌘ + / −'],

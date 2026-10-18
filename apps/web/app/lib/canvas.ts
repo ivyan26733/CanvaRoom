@@ -73,6 +73,146 @@ export function defaultFontSize(object: BoardObject) {
   return object.fontSize ?? (object.kind === 'sticky' ? 18 : 28);
 }
 
+/**
+ * Closed shapes drawn to fill their box. They all take a fill colour, resize
+ * from their corner, and keep their proportions with Shift.
+ */
+export const BOX_SHAPES = [
+  'rect',
+  'ellipse',
+  'diamond',
+  'triangle',
+  'right-triangle',
+  'parallelogram',
+  'trapezoid',
+  'pentagon',
+  'hexagon',
+  'star',
+  'cylinder',
+  'bubble',
+] as const;
+export type BoxShape = (typeof BOX_SHAPES)[number];
+export const isBoxShape = (kind: string): kind is BoxShape =>
+  (BOX_SHAPES as readonly string[]).includes(kind);
+
+const polygon = (points: [number, number][]) =>
+  `M${points.map(([x, y]) => `${round(x)} ${round(y)}`).join('L')}Z`;
+
+/** A regular polygon (or a star, with an inner radius) stretched to the box. */
+function radial(
+  corners: number,
+  width: number,
+  height: number,
+  inner?: number,
+  start = -Math.PI / 2,
+) {
+  const steps = inner ? corners * 2 : corners;
+  const raw: [number, number][] = [];
+  for (let index = 0; index < steps; index++) {
+    const angle = start + (index * 2 * Math.PI) / steps;
+    const radius = inner && index % 2 ? inner : 1;
+    raw.push([Math.cos(angle) * radius, Math.sin(angle) * radius]);
+  }
+  const xs = raw.map(([x]) => x);
+  const ys = raw.map(([, y]) => y);
+  const [minX, maxX] = [Math.min(...xs), Math.max(...xs)];
+  const [minY, maxY] = [Math.min(...ys), Math.max(...ys)];
+  return polygon(
+    raw.map(([x, y]) => [
+      ((x - minX) / (maxX - minX)) * width,
+      ((y - minY) / (maxY - minY)) * height,
+    ]),
+  );
+}
+
+/**
+ * The outline of a box shape as SVG path data, drawn in a `width` × `height`
+ * box from its top-left corner. `detail` is an extra unfilled line, such as
+ * the near rim of a cylinder. Rectangles and ellipses use native elements.
+ */
+export function shapeOutline(
+  kind: BoardObject['kind'],
+  width: number,
+  height: number,
+): { d: string; detail?: string } | undefined {
+  const [w, h] = [width, height];
+  switch (kind) {
+    case 'diamond':
+      return {
+        d: polygon([
+          [w / 2, 0],
+          [w, h / 2],
+          [w / 2, h],
+          [0, h / 2],
+        ]),
+      };
+    case 'triangle':
+      return {
+        d: polygon([
+          [w / 2, 0],
+          [w, h],
+          [0, h],
+        ]),
+      };
+    case 'right-triangle':
+      return {
+        d: polygon([
+          [0, 0],
+          [w, h],
+          [0, h],
+        ]),
+      };
+    case 'parallelogram': {
+      const slant = Math.min(w * 0.25, h * 0.5);
+      return {
+        d: polygon([
+          [slant, 0],
+          [w, 0],
+          [w - slant, h],
+          [0, h],
+        ]),
+      };
+    }
+    case 'trapezoid': {
+      const inset = Math.min(w * 0.22, h * 0.5);
+      return {
+        d: polygon([
+          [inset, 0],
+          [w - inset, 0],
+          [w, h],
+          [0, h],
+        ]),
+      };
+    }
+    case 'pentagon':
+      return { d: radial(5, w, h) };
+    case 'hexagon':
+      return { d: radial(6, w, h, undefined, 0) };
+    case 'star':
+      return { d: radial(5, w, h, 0.45) };
+    case 'cylinder': {
+      const rim = round(Math.min(h * 0.14, w * 0.3));
+      const rx = round(w / 2);
+      return {
+        d: `M0 ${rim}A${rx} ${rim} 0 0 1 ${w} ${rim}V${round(h - rim)}A${rx} ${rim} 0 0 1 0 ${round(h - rim)}Z`,
+        detail: `M0 ${rim}A${rx} ${rim} 0 0 0 ${w} ${rim}`,
+      };
+    }
+    case 'bubble': {
+      // A rounded box with a tail pointing down from its lower left.
+      const body = round(h * 0.8);
+      const r = round(Math.min(12, w / 5, body / 3));
+      const [from, to, tip] = [w * 0.22, w * 0.4, w * 0.14].map(round);
+      return {
+        d:
+          `M${r} 0H${round(w - r)}Q${w} 0 ${w} ${r}V${round(body - r)}` +
+          `Q${w} ${body} ${round(w - r)} ${body}H${to}L${tip} ${h}L${from} ${body}` +
+          `H${r}Q0 ${body} 0 ${round(body - r)}V${r}Q0 0 ${r} 0Z`,
+      };
+    }
+  }
+}
+
 /** World-space bounding box of an object, used for selection and hit tests. */
 export function objectBounds(object: BoardObject): Bounds {
   if (object.kind === 'text') {

@@ -4,19 +4,19 @@ import {
   arrowHead,
   arrowShaft,
   defaultFontSize,
+  BOX_SHAPES,
   FONT_FAMILY,
   layoutText,
   LINE_HEIGHT,
   objectBounds,
+  shapeOutline,
   smoothPath,
   STICKY_PADDING,
   tint,
 } from '../../lib/canvas';
 
 export const RESIZABLE = new Set<BoardObject['kind']>([
-  'rect',
-  'ellipse',
-  'diamond',
+  ...BOX_SHAPES,
   'image',
   'sticky',
 ]);
@@ -119,15 +119,36 @@ function Shape({ item }: { item: BoardObject }) {
         />
       );
     case 'diamond':
+    case 'triangle':
+    case 'right-triangle':
+    case 'parallelogram':
+    case 'trapezoid':
+    case 'pentagon':
+    case 'hexagon':
+    case 'star':
+    case 'cylinder':
+    case 'bubble': {
+      const outline = shapeOutline(item.kind, width, height)!;
       return (
-        <polygon
-          points={`${width / 2},0 ${width},${height / 2} ${width / 2},${height} 0,${height / 2}`}
-          fill={fill}
-          stroke={stroke}
-          strokeWidth={item.strokeWidth}
-          strokeLinejoin="round"
-        />
+        <>
+          <path
+            d={outline.d}
+            fill={fill}
+            stroke={stroke}
+            strokeWidth={item.strokeWidth}
+            strokeLinejoin="round"
+          />
+          {outline.detail && (
+            <path
+              d={outline.detail}
+              fill="none"
+              stroke={stroke}
+              strokeWidth={item.strokeWidth}
+            />
+          )}
+        </>
       );
+    }
     case 'sticky': {
       const fontSize = defaultFontSize(item);
       const layout = layoutText(

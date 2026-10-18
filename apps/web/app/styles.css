@@ -2929,6 +2929,66 @@ kbd {
 .dock-tool.is-active kbd {
   color: color-mix(in srgb, var(--bg) 60%, transparent);
 }
+/* The shapes button: draws the last shape; its corner mark opens the menu. */
+.shapes-caret {
+  position: absolute;
+  left: 4px;
+  bottom: 4px;
+  width: 0;
+  height: 0;
+  border-top: 5px solid transparent;
+  border-right: 5px solid currentColor;
+  opacity: 0.5;
+  transform: rotate(90deg);
+}
+.shape-menu {
+  position: fixed;
+  top: auto;
+  right: auto;
+  z-index: 80;
+  display: grid;
+  grid-template-columns: repeat(4, 44px);
+  gap: 4px;
+  min-width: 0;
+  padding: 8px;
+  transform-origin: bottom center;
+  animation-name: pop-up;
+}
+.shape-option {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  color: var(--ink-2);
+  transition:
+    background 0.12s,
+    color 0.12s;
+}
+.shape-option:hover {
+  color: var(--ink);
+  background: var(--bg-2);
+}
+.shape-option.is-active,
+.shape-option.is-active:hover {
+  color: var(--bg);
+  background: var(--ink);
+}
+.shape-option kbd {
+  position: absolute;
+  right: 3px;
+  bottom: 2px;
+  padding: 0;
+  border: 0;
+  color: var(--ink-3);
+  background: none;
+  font-size: 8.5px;
+  line-height: 1;
+}
+.shape-option.is-active kbd {
+  color: color-mix(in srgb, var(--bg) 60%, transparent);
+}
 [data-tip]:hover::after {
   content: attr(data-tip);
   position: absolute;

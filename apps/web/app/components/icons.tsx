@@ -31,6 +31,24 @@ const PATHS = {
   rect: <rect x="3.5" y="5" width="17" height="14" rx="2.5" />,
   ellipse: <circle cx="12" cy="12" r="8.5" />,
   diamond: <path d="M12 3 21 12 12 21 3 12z" strokeLinejoin="round" />,
+  triangle: <path d="M12 4 20.5 19.5h-17z" />,
+  'right-triangle': <path d="M4 4.5v15h16z" />,
+  parallelogram: <path d="M8 5.5h12.5l-4.5 13H3.5z" />,
+  trapezoid: <path d="M7.5 5.5h9l4 13h-17z" />,
+  pentagon: <path d="M12 3.5 20.5 9.7 17.3 19.5H6.7L3.5 9.7z" />,
+  hexagon: <path d="M7.7 4.5h8.6L20.5 12l-4.2 7.5H7.7L3.5 12z" />,
+  star: (
+    <path d="m12 3.5 2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.8l-5.2 2.8 1-5.8-4.3-4.1 5.9-.9z" />
+  ),
+  cylinder: (
+    <>
+      <ellipse cx="12" cy="6.5" rx="7.5" ry="2.5" />
+      <path d="M4.5 6.5v11c0 1.4 3.4 2.5 7.5 2.5s7.5-1.1 7.5-2.5v-11" />
+    </>
+  ),
+  bubble: (
+    <path d="M5 4.5h14a1.5 1.5 0 0 1 1.5 1.5v8.5a1.5 1.5 0 0 1-1.5 1.5h-8.5L6 19.5V16H5a1.5 1.5 0 0 1-1.5-1.5V6A1.5 1.5 0 0 1 5 4.5z" />
+  ),
   line: <path d="M5 19 19 5" />,
   arrow: (
     <>
