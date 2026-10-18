@@ -10,6 +10,18 @@ CREATE TABLE IF NOT EXISTS accounts (
   created_at timestamptz NOT NULL
 );
 
+-- Pre-existing accounts stay usable; new accounts default to unverified.
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+     WHERE table_schema = current_schema() AND table_name = 'accounts'
+       AND column_name = 'email_verified'
+  ) THEN
+    ALTER TABLE accounts ADD COLUMN email_verified boolean NOT NULL DEFAULT true;
+  END IF;
+END $$;
+ALTER TABLE accounts ALTER COLUMN email_verified SET DEFAULT false;
+
 -- Keyed by a hash of the cookie token. Guests have a session but no account.
 CREATE TABLE IF NOT EXISTS sessions (
   key text PRIMARY KEY,
@@ -25,6 +37,14 @@ CREATE TABLE IF NOT EXISTS reset_tokens (
   user_id text NOT NULL UNIQUE,
   expires_at timestamptz NOT NULL
 );
+
+-- A single live verification link per account; only a SHA-256 token hash is stored.
+CREATE TABLE IF NOT EXISTS email_verification_tokens (
+  key text PRIMARY KEY,
+  user_id text NOT NULL UNIQUE REFERENCES accounts(id) ON DELETE CASCADE,
+  expires_at timestamptz NOT NULL
+);
+CREATE INDEX IF NOT EXISTS email_verification_tokens_expiry_idx ON email_verification_tokens (expires_at);
 
 CREATE TABLE IF NOT EXISTS boards (
   id text PRIMARY KEY,

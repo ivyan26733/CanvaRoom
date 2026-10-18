@@ -7,7 +7,13 @@ export default function robots(): MetadataRoute.Robots {
       userAgent: '*',
       allow: '/',
       // Boards and account pages are private to their members.
-      disallow: ['/api/', '/board/', '/profile', '/reset-password'],
+      disallow: [
+        '/api/',
+        '/board/',
+        '/profile',
+        '/reset-password',
+        '/verify-email',
+      ],
     },
     sitemap: `${SITE.url}/sitemap.xml`,
     host: SITE.url,

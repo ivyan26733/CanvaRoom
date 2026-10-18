@@ -63,6 +63,23 @@ export async function sendPasswordReset(
   await send(to, subject, html, text);
 }
 
+export async function sendEmailVerification(
+  to: string,
+  name: string,
+  link: string,
+) {
+  const subject = 'Verify your CanvaRoom email';
+  const text = `Hi ${name},\n\nVerify your email address to finish creating your CanvaRoom account. This link works once, for 24 hours:\n\n${link}\n\nIf you didn’t create this account, you can ignore this email.`;
+  const html = `<div style="font-family:system-ui,-apple-system,Segoe UI,sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;color:#141413">
+  <p style="font-size:20px;font-weight:700;margin:0 0 24px">CanvaRoom</p>
+  <p style="margin:0 0 16px">Hi ${escapeHtml(name)},</p>
+  <p style="margin:0 0 24px">Verify your email address to finish creating your account. This link works once, for 24 hours.</p>
+  <p style="margin:0 0 24px"><a href="${escapeHtml(link)}" style="display:inline-block;background:#141413;color:#fff;text-decoration:none;font-weight:600;padding:12px 20px;border-radius:10px">Verify email</a></p>
+  <p style="margin:0;color:#57544d;font-size:14px">If you didn’t create this account, ignore this email.</p>
+</div>`;
+  await send(to, subject, html, text);
+}
+
 export type FeedbackMail = {
   email: string;
   name?: string;

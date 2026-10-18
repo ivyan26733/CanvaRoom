@@ -108,6 +108,16 @@ export interface Store {
   createResetToken(key: string, userId: string, ttl: number): Promise<void>;
   /** Returns the user a reset token belongs to and uses it up. */
   takeResetToken(key: string): Promise<string | undefined>;
+  createVerificationToken(
+    key: string,
+    userId: string,
+    ttl: number,
+  ): Promise<void>;
+  verifyEmailToken(key: string): Promise<string | undefined>;
+  completePasswordReset(
+    key: string,
+    passwordHash: string,
+  ): Promise<string | undefined>;
   addFeedback(feedback: Feedback): Promise<void>;
   markFeedbackMailed(id: string): Promise<void>;
   createPayment(payment: Payment): Promise<void>;
@@ -173,6 +183,8 @@ const keys = {
   rate: (key: string) => `rl:${key}`,
   reset: (key: string) => `reset:${key}`,
   userReset: (userId: string) => `u:${userId}:reset`,
+  verify: (key: string) => `verify:${key}`,
+  userVerify: (userId: string) => `u:${userId}:verify`,
   payment: (orderId: string) => `pay:${orderId}`,
   feedback: 'feedback',
 };
@@ -541,6 +553,67 @@ export class RedisStore implements Store {
     return current === key ? userId : undefined;
   }
 
+  async createVerificationToken(key: string, userId: string, ttl: number) {
+    const previous = await this.redis.get(keys.userVerify(userId));
+    const multi = this.redis.multi();
+    if (previous) multi.del(keys.verify(previous));
+    await multi
+      .set(keys.verify(key), userId, 'EX', ttl)
+      .set(keys.userVerify(userId), key, 'EX', ttl)
+      .exec();
+  }
+
+  async verifyEmailToken(key: string) {
+    const script = `
+      local userId = redis.call('GET', KEYS[1])
+      if not userId then return nil end
+      local userVerifyKey = KEYS[2] .. userId .. ':verify'
+      if redis.call('GET', userVerifyKey) ~= ARGV[1] then return nil end
+      local accountKey = KEYS[3] .. userId
+      local account = redis.call('GET', accountKey)
+      if not account then return nil end
+      local decoded = cjson.decode(account)
+      decoded.emailVerified = true
+      redis.call('SET', accountKey, cjson.encode(decoded))
+      redis.call('DEL', KEYS[1], userVerifyKey)
+      return userId
+    `;
+    return (await this.redis.eval(
+      script,
+      3,
+      keys.verify(key),
+      'u:',
+      'acct:',
+    )) as string | undefined;
+  }
+
+  async completePasswordReset(key: string, passwordHash: string) {
+    const script = `
+      local userId = redis.call('GET', KEYS[1])
+      if not userId then return nil end
+      local userResetKey = 'u:' .. userId .. ':reset'
+      if redis.call('GET', userResetKey) ~= ARGV[1] then return nil end
+      local accountKey = 'acct:' .. userId
+      local account = redis.call('GET', accountKey)
+      if not account then return nil end
+      local decoded = cjson.decode(account)
+      decoded.passwordHash = ARGV[2]
+      redis.call('SET', accountKey, cjson.encode(decoded))
+      local sessionsKey = 'u:' .. userId .. ':sessions'
+      local sessions = redis.call('SMEMBERS', sessionsKey)
+      for _, session in ipairs(sessions) do redis.call('DEL', 'sess:' .. session) end
+      redis.call('DEL', sessionsKey, KEYS[1], userResetKey)
+      return userId
+    `;
+    return (await this.redis.eval(
+      script,
+      1,
+      keys.reset(key),
+      key,
+      passwordHash,
+    )) as string | undefined;
+  }
+
   async hit(key: string, windowSeconds: number) {
     const [[, count] = []] =
       (await this.redis
@@ -618,6 +691,10 @@ export class MemoryStore implements Store {
   private sessions = new Map<string, SessionRecord & { expiresAt: number }>();
   private hits = new Map<string, { count: number; resetAt: number }>();
   private resets = new Map<string, { userId: string; expiresAt: number }>();
+  private verifications = new Map<
+    string,
+    { userId: string; expiresAt: number }
+  >();
   private payments = new Map<string, Payment>();
   private feedback: Feedback[] = [];
   private saveTimer: ReturnType<typeof setTimeout> | undefined;
@@ -900,6 +977,31 @@ export class MemoryStore implements Store {
     const reset = this.resets.get(key);
     this.resets.delete(key);
     return reset && reset.expiresAt > Date.now() ? reset.userId : undefined;
+  }
+
+  async createVerificationToken(key: string, userId: string, ttl: number) {
+    for (const [token, verification] of this.verifications)
+      if (verification.userId === userId) this.verifications.delete(token);
+    this.verifications.set(key, { userId, expiresAt: Date.now() + ttl * 1000 });
+  }
+
+  async verifyEmailToken(key: string) {
+    const verification = this.verifications.get(key);
+    this.verifications.delete(key);
+    if (!verification || verification.expiresAt <= Date.now()) return;
+    const account = this.accounts.get(verification.userId);
+    if (!account) return;
+    this.accounts.set(verification.userId, { ...account, emailVerified: true });
+    this.scheduleSave();
+    return verification.userId;
+  }
+
+  async completePasswordReset(key: string, passwordHash: string) {
+    const userId = await this.takeResetToken(key);
+    if (!userId) return;
+    await this.updateAccount(userId, { passwordHash });
+    await this.deleteSessionsFor(userId);
+    return userId;
   }
 
   async hit(key: string, windowSeconds: number) {

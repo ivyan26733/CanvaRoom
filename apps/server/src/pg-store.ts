@@ -62,6 +62,7 @@ type BoardRow = {
 type AccountRow = {
   id: string;
   email: string;
+  email_verified: boolean;
   name: string;
   color: string;
   password_hash: string;
@@ -75,6 +76,7 @@ type AccountRow = {
 const toAccount = (row: AccountRow): Account => ({
   id: row.id,
   email: row.email,
+  emailVerified: row.email_verified,
   name: row.name,
   color: row.color,
   passwordHash: row.password_hash,
@@ -560,6 +562,49 @@ export class PostgresStore implements Store {
        ON CONFLICT (user_id) DO UPDATE SET key = EXCLUDED.key, expires_at = EXCLUDED.expires_at`,
       [key, userId, ttl],
     );
+  }
+
+  async createVerificationToken(key: string, userId: string, ttl: number) {
+    await this.pool.query(
+      `INSERT INTO email_verification_tokens (key, user_id, expires_at)
+       VALUES ($1, $2, now() + make_interval(secs => $3))
+       ON CONFLICT (user_id) DO UPDATE SET key = EXCLUDED.key, expires_at = EXCLUDED.expires_at`,
+      [key, userId, ttl],
+    );
+  }
+
+  async verifyEmailToken(key: string) {
+    const { rows } = await this.pool.query<{ user_id: string }>(
+      `WITH consumed AS (
+         DELETE FROM email_verification_tokens
+          WHERE key = $1 AND expires_at > now()
+          RETURNING user_id
+       ), verified AS (
+         UPDATE accounts SET email_verified = true
+          WHERE id IN (SELECT user_id FROM consumed)
+          RETURNING id
+       ) SELECT id AS user_id FROM verified`,
+      [key],
+    );
+    return rows[0]?.user_id;
+  }
+
+  async completePasswordReset(key: string, passwordHash: string) {
+    const { rows } = await this.pool.query<{ user_id: string }>(
+      `WITH consumed AS (
+         DELETE FROM reset_tokens WHERE key = $1 AND expires_at > now()
+         RETURNING user_id
+       ), updated AS (
+         UPDATE accounts SET password_hash = $2
+          WHERE id IN (SELECT user_id FROM consumed)
+          RETURNING id
+       ), revoked AS (
+         DELETE FROM sessions WHERE user_id IN (SELECT id FROM updated)
+         RETURNING user_id
+       ) SELECT id AS user_id FROM updated`,
+      [key, passwordHash],
+    );
+    return rows[0]?.user_id;
   }
 
   async takeResetToken(key: string) {

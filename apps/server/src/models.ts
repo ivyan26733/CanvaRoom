@@ -248,6 +248,8 @@ export type Payment = {
 export type Account = {
   id: string;
   email: string;
+  /** Existing accounts are migrated as verified; newly registered accounts must verify first. */
+  emailVerified?: boolean;
   name: string;
   color: string;
   createdAt: string;
