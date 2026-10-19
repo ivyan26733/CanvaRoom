@@ -1,5 +1,7 @@
 /** The signed-in home: the board list. The landing page is always at "/". */
 export const DASHBOARD = '/dashboard';
+/** Fired by the header's "New board" button while the dashboard is open. */
+export const NEW_BOARD_EVENT = 'canvaroom:new-board';
 
 /**
  * Where to go after signing in. Only paths on this site are allowed, so a

@@ -76,6 +76,13 @@ export function LibraryPanel({
     variant === 'page' && !initialQuery ? 'browse' : 'mine',
   );
   const [query, setQuery] = useState(initialQuery);
+  // On the library page the header's search drives this through ?q=.
+  const [seenQuery, setSeenQuery] = useState(initialQuery);
+  if (variant === 'page' && seenQuery !== initialQuery) {
+    setSeenQuery(initialQuery);
+    setQuery(initialQuery);
+    if (initialQuery) setTab('mine');
+  }
   const [subject, setSubject] = useState('All');
   const [busy, setBusy] = useState<Record<string, number>>({});
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -252,17 +259,35 @@ export function LibraryPanel({
         </div>
       ) : (
         <>
-          <label className="lib-search">
-            <Icon name="search" size={16} />
-            <input
-              ref={searchRef}
-              type="search"
-              placeholder="Search formulas, tables, diagrams…"
-              aria-label="Search your library"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-            />
-          </label>
+          {variant === 'drawer' ? (
+            <label className="lib-search">
+              <Icon name="search" size={16} />
+              <input
+                ref={searchRef}
+                type="search"
+                placeholder="Search formulas, tables, diagrams…"
+                aria-label="Search your library"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+              />
+            </label>
+          ) : (
+            needle && (
+              <p className="lib-filter">
+                Showing items matching <strong>“{query.trim()}”</strong>
+                <button
+                  type="button"
+                  className="lib-link"
+                  onClick={() => {
+                    setQuery('');
+                    window.history.replaceState(null, '', location.pathname);
+                  }}
+                >
+                  Clear
+                </button>
+              </p>
+            )
+          )}
           {!canInsert && (
             <p className="lib-note">
               This board is view-only, so items can&apos;t be added here.

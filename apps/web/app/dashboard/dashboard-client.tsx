@@ -12,6 +12,7 @@ import {
 import { AuthForm } from '../components/auth-form';
 import { BoardPreview } from '../components/board-preview';
 import { Icon } from '../components/icons';
+import { JoinBoardModal } from '../components/join-board';
 import { Modal } from '../components/modal';
 import {
   TemplateArt,
@@ -23,7 +24,7 @@ import { api, send, type ApiError, type BoardListItem } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { openUpgrade, planState, TRIAL_BOARDS, useNow } from '../lib/billing';
 import { BOARD_NAV } from '../lib/navigation';
-import { DASHBOARD } from '../lib/next-url';
+import { DASHBOARD, NEW_BOARD_EVENT } from '../lib/next-url';
 
 type Sort = 'recent' | 'name';
 
@@ -54,13 +55,14 @@ function Boards() {
   const { user } = useAuth();
   const [boards, setBoards] = useState<BoardListItem[] | null>(null);
   const [view, setView] = useState<DashboardView>('all');
-  const [query, setQuery] = useState('');
   const [sort, setSort] = useState<Sort>('recent');
   const [layout, setLayout] = useState<'grid' | 'list'>('grid');
   const [creating, setCreating] = useState<TemplateId | null>(null);
   const [joining, setJoining] = useState(false);
   const [upgrade, setUpgrade] = useState(false);
   const [notice, setNotice] = useState('');
+  // "New board" from the header on another page lands here with ?new=1.
+  const [pendingNew, setPendingNew] = useState(false);
   // Re-renders as the trial runs out, so the upgrade prompt appears on time.
   const now = useNow();
 
@@ -71,7 +73,7 @@ function Boards() {
     if (params.get('mode') === 'signup') setUpgrade(true);
     // "Upgrade to Premium" on the pricing section links here.
     if (params.get('upgrade')) openUpgrade();
-    if (params.get('new')) setCreating('blank');
+    if (params.get('new')) setPendingNew(true);
     try {
       const saved = localStorage.getItem('canvasroom.layout');
       if (saved === 'list' || saved === 'grid') setLayout(saved);
@@ -87,9 +89,26 @@ function Boards() {
       .catch((error) => setNotice((error as Error).message));
   }, [user]);
 
+  // The header's "New board" button: on this page it asks directly, from
+  // other pages it arrives as ?new=1. Either way the plan limits apply, so
+  // it waits for the board list.
+  useEffect(() => {
+    const onNew = () => setPendingNew(true);
+    window.addEventListener(NEW_BOARD_EVENT, onNew);
+    return () => window.removeEventListener(NEW_BOARD_EVENT, onNew);
+  }, []);
+  useEffect(() => {
+    if (!pendingNew || boards === null) return;
+    setPendingNew(false);
+    if (location.search.includes('new='))
+      window.history.replaceState(null, '', location.pathname);
+    startBoard();
+    // startBoard reads this render's boards and plan.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingNew, boards]);
+
   const shown = useMemo(() => {
     if (!boards) return null;
-    const needle = query.trim().toLowerCase();
     return boards
       .filter((board) =>
         view === 'mine'
@@ -98,13 +117,12 @@ function Boards() {
             ? board.role !== 'owner'
             : true,
       )
-      .filter((board) => !needle || board.title.toLowerCase().includes(needle))
       .sort((a, b) =>
         sort === 'name'
           ? a.title.localeCompare(b.title)
           : b.updatedAt.localeCompare(a.updatedAt),
       );
-  }, [boards, view, query, sort]);
+  }, [boards, view, sort]);
 
   if (!user) return null;
 
@@ -196,29 +214,6 @@ function Boards() {
           : undefined
       }
     >
-      <header className="main-header">
-        <div className="search-field">
-          <Icon name="search" size={17} />
-          <input
-            type="search"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search boards"
-            aria-label="Search boards"
-          />
-        </div>
-        <div className="main-header-actions">
-          <button className="button ghost" onClick={() => setJoining(true)}>
-            <Icon name="link" size={17} />
-            Join with link
-          </button>
-          <button className="button primary" onClick={() => startBoard()}>
-            <Icon name="plus" size={17} strokeWidth={2.2} />
-            New board
-          </button>
-        </div>
-      </header>
-
       <div className="main-body">
         <section className="welcome-row">
           <div>
@@ -352,18 +347,12 @@ function Boards() {
                 <TemplateArt id="blank" />
               </div>
               <h3>
-                {query
-                  ? `Nothing matches “${query}”.`
-                  : view === 'shared'
-                    ? 'No one has shared a board with you yet.'
-                    : 'Your first board is one click away.'}
+                {view === 'shared'
+                  ? 'No one has shared a board with you yet.'
+                  : 'Your first board is one click away.'}
               </h3>
-              <p>
-                {query
-                  ? 'Try another name.'
-                  : 'Create a board, or paste an invite link someone sent you.'}
-              </p>
-              {!query && (
+              <p>Create a board, or paste an invite link someone sent you.</p>
+              {
                 <div className="empty-actions">
                   <button
                     className="button primary"
@@ -378,7 +367,7 @@ function Boards() {
                     Join with link
                   </button>
                 </div>
-              )}
+              }
             </div>
           )}
         </section>
@@ -391,7 +380,7 @@ function Boards() {
           onCreated={(id) => router.push(`/board/${id}`, BOARD_NAV)}
         />
       )}
-      {joining && <JoinModal onClose={() => setJoining(false)} />}
+      {joining && <JoinBoardModal onClose={() => setJoining(false)} />}
       {upgrade && user.guest && (
         <Modal onClose={() => setUpgrade(false)}>
           <p className="kicker">Keep your work</p>
@@ -594,61 +583,6 @@ function CreateBoardModal({
           </button>
           <button className="button primary" disabled={busy || !title.trim()}>
             {busy ? 'Creating…' : 'Create board'}
-          </button>
-        </div>
-      </form>
-    </Modal>
-  );
-}
-
-function JoinModal({ onClose }: { onClose: () => void }) {
-  const router = useRouter();
-  const [link, setLink] = useState('');
-  const [error, setError] = useState('');
-  const [busy, setBusy] = useState(false);
-
-  async function join(event: React.FormEvent) {
-    event.preventDefault();
-    const match = link
-      .trim()
-      .match(/\/board\/([^/?#]+)\?(?:.*&)?invite=([^&#]+)/);
-    if (!match) {
-      setError('Paste the complete invite link, including “?invite=”.');
-      return;
-    }
-    setBusy(true);
-    try {
-      await send(`/boards/${match[1]}/join`, 'POST', {
-        inviteToken: decodeURIComponent(match[2]!),
-      });
-      router.push(`/board/${match[1]}`, BOARD_NAV);
-    } catch (caught) {
-      setError((caught as Error).message);
-      setBusy(false);
-    }
-  }
-
-  return (
-    <Modal onClose={onClose}>
-      <form onSubmit={join}>
-        <p className="kicker">Join a board</p>
-        <h2>Paste your invite link</h2>
-        <label className="field">
-          <span>Invite link</span>
-          <input
-            value={link}
-            onChange={(event) => setLink(event.target.value)}
-            placeholder="https://…/board/…?invite=…"
-            autoFocus
-          />
-        </label>
-        {error && <p className="notice error">{error}</p>}
-        <div className="modal-actions">
-          <button type="button" className="button ghost" onClick={onClose}>
-            Cancel
-          </button>
-          <button className="button primary" disabled={busy || !link.trim()}>
-            Join board
           </button>
         </div>
       </form>

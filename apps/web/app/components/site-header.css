@@ -10,7 +10,10 @@
 }
 .sh-bar {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 560px) minmax(0, 1fr);
+  /* The sides keep their buttons whole; search shrinks first. */
+  grid-template-columns:
+    minmax(max-content, 1fr) minmax(180px, 560px)
+    minmax(max-content, 1fr);
   align-items: center;
   gap: 20px;
   height: var(--sh-bar);
@@ -46,6 +49,15 @@
 }
 .sh-boards {
   gap: 6px;
+}
+.sh-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.sh-actions .button {
+  gap: 6px;
+  white-space: nowrap;
 }
 .sh-account-placeholder {
   width: 180px;
@@ -335,8 +347,6 @@ html.sh-locked {
   background: color-mix(in srgb, var(--bg) 92%, transparent);
 }
 .sh-app {
-  /* The dashboard's own toolbar is the sticky one. */
-  position: relative;
   z-index: 25;
 }
 .sh-app .sh-plan {
@@ -350,6 +360,24 @@ html.sh-locked {
 @media (max-width: 1280px) {
   .sh-plan {
     display: none;
+  }
+}
+@media (max-width: 1280px) {
+  /* Join link folds to its icon first; the label is in its tooltip. */
+  .sh-join span {
+    display: none;
+  }
+  .sh-join {
+    padding-inline: 9px;
+  }
+}
+@media (max-width: 1100px) {
+  .sh-full .sh-boards span,
+  .sh-new span {
+    display: none;
+  }
+  .sh-new {
+    padding-inline: 9px;
   }
 }
 @media (max-width: 900px) {
@@ -385,7 +413,8 @@ html.sh-locked {
   .sh-search,
   .sh-nav,
   .sh-account > .button.primary:not(.sh-boards),
-  .sh-theme {
+  .sh-theme,
+  .sh-actions {
     display: none;
   }
   .sh-search-toggle,

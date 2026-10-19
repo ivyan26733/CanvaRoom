@@ -1,14 +1,15 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useAuth } from '../lib/auth';
 import { PlanChip } from '../lib/billing';
-import { DASHBOARD } from '../lib/next-url';
+import { DASHBOARD, NEW_BOARD_EVENT } from '../lib/next-url';
 import { USE_CASES } from '../lib/site';
 import { Icon, Logo } from './icons';
+import { JoinBoardModal } from './join-board';
 import { SiteSearch } from './site-search';
 import { ThemeToggle } from './theme-toggle';
 import { useDismiss, UserMenu } from './user-menu';
@@ -38,8 +39,10 @@ export function SiteHeader({
   onOpenSidebar?: () => void;
 }) {
   const { user } = useAuth();
+  const router = useRouter();
   const pathname = usePathname();
   const [sheet, setSheet] = useState(false);
+  const [joining, setJoining] = useState(false);
   const [searching, setSearching] = useState(false);
   const signedIn = Boolean(user && !user.guest);
 
@@ -64,6 +67,22 @@ export function SiteHeader({
     };
   }, [sheet]);
 
+  // Board actions live here rather than in a toolbar under the header.
+  // Guests can join boards and see the account prompt from "New board".
+  const boardActions =
+    variant !== 'compact' && (signedIn || (user?.guest && variant === 'app'));
+  const onDashboard = pathname === DASHBOARD;
+
+  function newBoard() {
+    setSheet(false);
+    if (onDashboard) window.dispatchEvent(new Event(NEW_BOARD_EVENT));
+    else router.push(`${DASHBOARD}?new=1`);
+  }
+  function joinBoard() {
+    setSheet(false);
+    setJoining(true);
+  }
+
   const isCurrent = (href: string) =>
     href === '/' ? pathname === '/' : !href.includes('#') && pathname === href;
 
@@ -72,13 +91,12 @@ export function SiteHeader({
       <span className="sh-account-placeholder" />
     ) : signedIn ? (
       <>
-        <Link
-          href={DASHBOARD}
-          className={`button ${pathname === DASHBOARD ? 'ghost' : 'primary'} small sh-boards`}
-        >
-          <Icon name="grid" size={16} />
-          <span>My boards</span>
-        </Link>
+        {!onDashboard && (
+          <Link href={DASHBOARD} className="button ghost small sh-boards">
+            <Icon name="grid" size={16} />
+            <span>My boards</span>
+          </Link>
+        )}
         <PlanChip className="sh-plan" />
         <UserMenu />
       </>
@@ -129,6 +147,28 @@ export function SiteHeader({
           >
             <Icon name={searching ? 'close' : 'search'} />
           </button>
+          {boardActions && (
+            <div className="sh-actions">
+              <button
+                type="button"
+                className="button ghost small sh-join"
+                onClick={joinBoard}
+                aria-label="Join a board with an invite link"
+                title="Join with link"
+              >
+                <Icon name="link" size={16} />
+                <span>Join link</span>
+              </button>
+              <button
+                type="button"
+                className="button primary small sh-new"
+                onClick={newBoard}
+              >
+                <Icon name="plus" size={16} strokeWidth={2.2} />
+                <span>New board</span>
+              </button>
+            </div>
+          )}
           <div className="sh-account">{account}</div>
           <button
             className="icon-button sh-menu-toggle"
@@ -243,6 +283,26 @@ export function SiteHeader({
               ))}
             </nav>
             <div className="sh-sheet-foot">
+              {boardActions && (
+                <>
+                  <button
+                    type="button"
+                    className="button primary wide"
+                    onClick={newBoard}
+                  >
+                    <Icon name="plus" size={16} strokeWidth={2.2} />
+                    New board
+                  </button>
+                  <button
+                    type="button"
+                    className="button ghost wide"
+                    onClick={joinBoard}
+                  >
+                    <Icon name="link" size={16} />
+                    Join with link
+                  </button>
+                </>
+              )}
               {signedIn ? (
                 <>
                   <PlanChip />
@@ -275,6 +335,11 @@ export function SiteHeader({
               <ThemeToggle withLabel />
             </div>
           </div>,
+          document.body,
+        )}
+      {joining &&
+        createPortal(
+          <JoinBoardModal onClose={() => setJoining(false)} />,
           document.body,
         )}
     </header>

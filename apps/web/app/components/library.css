@@ -670,3 +670,13 @@
     animation: none;
   }
 }
+
+.lib-filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 12px;
+  color: var(--ink-2);
+  font-size: 14px;
+}
