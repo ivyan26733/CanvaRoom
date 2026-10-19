@@ -5,3 +5,4 @@ apps/server/data
 .agents
 .claude
 .vercel
+apps/web/public/library

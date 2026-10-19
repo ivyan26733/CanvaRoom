@@ -16,7 +16,33 @@ const securityHeaders = [
 
 const nextConfig: NextConfig = {
   async headers() {
-    return [{ source: '/:path*', headers: securityHeaders }];
+    return [
+      { source: '/:path*', headers: securityHeaders },
+      // Library files sit under a versioned folder and never change in
+      // place, so browsers keep them; the catalogue itself is rechecked.
+      {
+        source: '/library/:version/:pack/:file+',
+        headers: [
+          {
+            key: 'Cache-Control',
+            value: 'public, max-age=31536000, immutable',
+          },
+          {
+            key: 'Content-Security-Policy',
+            value: "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+          },
+        ],
+      },
+      {
+        source: '/library/:version/index.json',
+        headers: [
+          {
+            key: 'Cache-Control',
+            value: 'public, max-age=3600, must-revalidate',
+          },
+        ],
+      },
+    ];
   },
   // In Vercel, the deployment-level rewrite routes /api directly to the
   // Fastify service. Keep this local proxy for the standalone dev server.
