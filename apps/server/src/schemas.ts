@@ -5,7 +5,12 @@ export const colorSchema = z
   .regex(/^#[0-9a-fA-F]{6}(?:[0-9a-fA-F]{2})?$/);
 // Uploaded images are referenced by their app path. Inline data URLs are
 // still accepted from boards and outboxes saved before uploads existed.
+// Library items point at the web app's own versioned static SVGs, so a board
+// never stores SVG markup from a browser.
+export const LIBRARY_SRC =
+  /^\/library\/v[0-9]{1,3}\/[a-z0-9-]{1,40}\/[a-z0-9-]{1,60}\.svg$/;
 const imageSchema = z.union([
+  z.string().regex(LIBRARY_SRC),
   z
     .string()
     .regex(

@@ -122,6 +122,13 @@ export interface Store {
   ): Promise<string | undefined>;
   addFeedback(feedback: Feedback): Promise<void>;
   markFeedbackMailed(id: string): Promise<void>;
+  /** Library packs an account has installed, oldest first. */
+  listLibrary(userId: string): Promise<string[]>;
+  setLibraryPack(
+    userId: string,
+    packId: string,
+    installed: boolean,
+  ): Promise<void>;
   createPayment(payment: Payment): Promise<void>;
   getPayment(orderId: string): Promise<Payment | undefined>;
   /**
@@ -189,6 +196,7 @@ const keys = {
   userVerify: (userId: string) => `u:${userId}:verify`,
   payment: (orderId: string) => `pay:${orderId}`,
   feedback: 'feedback',
+  library: (userId: string) => `u:${userId}:library`,
 };
 
 // One round trip, atomic per board: tombstoned objects are never recreated,
@@ -650,6 +658,16 @@ export class RedisStore implements Store {
     // Only Postgres records whether feedback was mailed.
   }
 
+  async listLibrary(userId: string) {
+    return this.redis.zrange(keys.library(userId), 0, -1);
+  }
+
+  async setLibraryPack(userId: string, packId: string, installed: boolean) {
+    if (installed)
+      await this.redis.zadd(keys.library(userId), 'NX', Date.now(), packId);
+    else await this.redis.zrem(keys.library(userId), packId);
+  }
+
   async createPayment(payment: Payment) {
     await this.redis.set(
       keys.payment(payment.orderId),
@@ -714,6 +732,7 @@ export class MemoryStore implements Store {
     { userId: string; expiresAt: number }
   >();
   private payments = new Map<string, Payment>();
+  private library = new Map<string, Set<string>>();
   private feedback: Feedback[] = [];
   private saveTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -1053,6 +1072,17 @@ export class MemoryStore implements Store {
 
   async markFeedbackMailed() {
     // Kept in memory only; nothing to update.
+  }
+
+  async listLibrary(userId: string) {
+    return [...(this.library.get(userId) ?? [])];
+  }
+
+  async setLibraryPack(userId: string, packId: string, installed: boolean) {
+    const packs = this.library.get(userId) ?? new Set<string>();
+    if (installed) packs.add(packId);
+    else packs.delete(packId);
+    this.library.set(userId, packs);
   }
 
   async createPayment(payment: Payment) {

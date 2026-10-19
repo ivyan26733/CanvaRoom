@@ -1282,6 +1282,57 @@ app.post('/api/billing/verify-payment', async (request, reply) => {
   return { ok: true, paidUntil };
 });
 
+// ---- Library ----
+
+// Packs are static files served by the web app; the server only remembers
+// which ones each account installed, so they follow it to other devices.
+const libraryPackId = z.string().regex(/^[a-z0-9-]{1,40}$/);
+const MAX_LIBRARY_PACKS = 50;
+
+/** The signed-in account for library routes; guests keep packs in the browser. */
+async function libraryAccount(request: FastifyRequest, reply: FastifyReply) {
+  const user = await currentUser(request, reply);
+  if (!user) return;
+  if (user.guest) {
+    apiError(reply, 403, 'Create an account to sync your library.');
+    return;
+  }
+  return user;
+}
+
+app.get('/api/library', async (request, reply) => {
+  const user = await libraryAccount(request, reply);
+  if (!user) return;
+  return { packs: await store.listLibrary(user.id) };
+});
+
+app.put('/api/library/:pack', async (request, reply) => {
+  const user = await libraryAccount(request, reply);
+  if (!user) return;
+  const pack = libraryPackId.safeParse(
+    (request.params as { pack: string }).pack,
+  );
+  if (!pack.success) return apiError(reply, 400, 'Unknown library pack.');
+  if (!(await allow(reply, `library:${user.id}`, 120, 3600))) return;
+  const packs = await store.listLibrary(user.id);
+  if (!packs.includes(pack.data) && packs.length >= MAX_LIBRARY_PACKS)
+    return apiError(reply, 400, 'Your library is full. Remove a pack first.');
+  await store.setLibraryPack(user.id, pack.data, true);
+  return { packs: await store.listLibrary(user.id) };
+});
+
+app.delete('/api/library/:pack', async (request, reply) => {
+  const user = await libraryAccount(request, reply);
+  if (!user) return;
+  const pack = libraryPackId.safeParse(
+    (request.params as { pack: string }).pack,
+  );
+  if (!pack.success) return apiError(reply, 400, 'Unknown library pack.');
+  if (!(await allow(reply, `library:${user.id}`, 120, 3600))) return;
+  await store.setLibraryPack(user.id, pack.data, false);
+  return { packs: await store.listLibrary(user.id) };
+});
+
 // ---- Feedback ----
 
 const FEEDBACK_CATEGORIES = [

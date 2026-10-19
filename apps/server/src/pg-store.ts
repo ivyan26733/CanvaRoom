@@ -651,6 +651,25 @@ export class PostgresStore implements Store {
     );
   }
 
+  async listLibrary(userId: string) {
+    const { rows } = await this.pool.query<{ pack_id: string }>(
+      `SELECT pack_id FROM account_library WHERE account_id = $1
+        ORDER BY installed_at, pack_id`,
+      [userId],
+    );
+    return rows.map((row) => row.pack_id);
+  }
+
+  async setLibraryPack(userId: string, packId: string, installed: boolean) {
+    await this.pool.query(
+      installed
+        ? `INSERT INTO account_library (account_id, pack_id, installed_at)
+           VALUES ($1, $2, now()) ON CONFLICT DO NOTHING`
+        : `DELETE FROM account_library WHERE account_id = $1 AND pack_id = $2`,
+      [userId, packId],
+    );
+  }
+
   async markFeedbackMailed(id: string) {
     await this.pool.query(`UPDATE feedback SET mailed = true WHERE id = $1`, [
       id,

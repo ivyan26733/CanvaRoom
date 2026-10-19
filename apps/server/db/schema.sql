@@ -150,3 +150,11 @@ CREATE TABLE IF NOT EXISTS feedback (
   mailed boolean NOT NULL DEFAULT false
 );
 CREATE INDEX IF NOT EXISTS feedback_created_idx ON feedback (created_at);
+
+-- Library packs each account has installed, so they follow it across devices.
+CREATE TABLE IF NOT EXISTS account_library (
+  account_id text NOT NULL,
+  pack_id text NOT NULL,
+  installed_at timestamptz NOT NULL,
+  PRIMARY KEY (account_id, pack_id)
+);
