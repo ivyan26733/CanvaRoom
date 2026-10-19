@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
+import { SiteHeader } from '../components/site-header';
 import Link from 'next/link';
-import { Logo } from '../components/icons';
 import { JsonLd, MarketingFooter } from '../components/marketing';
 import { SITE } from '../lib/site';
 import { FounderPortrait } from './founder-portraits';
@@ -250,19 +250,7 @@ export default function AboutPage() {
   return (
     <div className="mk mk-page about">
       <JsonLd data={aboutSchema} />
-      <header className="mk-header">
-        <Link href="/" className="mk-brand">
-          <Logo size={28} /> {SITE.name}
-        </Link>
-        <nav className="mk-header-actions" aria-label="Account">
-          <Link href="/login" className="button ghost">
-            Sign in
-          </Link>
-          <Link href="/signup" className="button primary">
-            Start free
-          </Link>
-        </nav>
-      </header>
+      <SiteHeader />
 
       <main>
         <section className="about-hero">

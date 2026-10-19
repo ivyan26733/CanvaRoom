@@ -6,8 +6,10 @@ import type { BoardListItem } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { PlanChip } from '../lib/billing';
 import { BOARD_NAV } from '../lib/navigation';
+import { DASHBOARD } from '../lib/next-url';
 import { openFeedback } from './feedback';
 import { Icon, Logo, type IconName } from './icons';
+import { SiteHeader } from './site-header';
 import { UserMenu } from './user-menu';
 
 export type DashboardView = 'all' | 'mine' | 'shared';
@@ -98,7 +100,11 @@ export function AppShell({
               <Link
                 key={item.view}
                 className={className}
-                href={item.view === 'all' ? '/' : `/?view=${item.view}`}
+                href={
+                  item.view === 'all'
+                    ? DASHBOARD
+                    : `${DASHBOARD}?view=${item.view}`
+                }
               >
                 {content}
               </Link>
@@ -164,20 +170,7 @@ export function AppShell({
       </aside>
 
       <div className="app-main">
-        <div className="mobile-appbar">
-          <button
-            className="icon-button"
-            aria-label="Open menu"
-            onClick={() => setNavOpen(true)}
-          >
-            <Icon name="sidebar" />
-          </button>
-          <Link className="brand" href="/">
-            <Logo size={24} />
-            <span>CanvaRoom</span>
-          </Link>
-          <UserMenu />
-        </div>
+        <SiteHeader variant="app" onOpenSidebar={() => setNavOpen(true)} />
         <VerifyBanner />
         {children}
       </div>

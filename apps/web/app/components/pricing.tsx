@@ -1,4 +1,5 @@
 import { formatMoney, PRICES, type Currency } from '../lib/pricing';
+import { PricingCta } from './plan-cta';
 import { Icon, type IconName } from './icons';
 import './pricing.css';
 
@@ -156,15 +157,7 @@ export function Pricing({ currency }: { currency: Currency }) {
             {other === 'INR' ? 'in India' : 'outside India'}. Each payment
             unlocks a month; nothing renews on its own.
           </p>
-          <div className="pr-cta">
-            {/* Full loads, so the sign-in panel opens on the right tab. */}
-            <a href="/signup" className="button primary">
-              Start the free trial
-            </a>
-            <a href="/?upgrade=1" className="button ghost">
-              Upgrade to Premium
-            </a>
-          </div>
+          <PricingCta />
         </aside>
         <ol className="pr-perks">
           {PERKS.map((perk, index) => (

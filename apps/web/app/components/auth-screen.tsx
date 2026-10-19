@@ -1,6 +1,5 @@
 import Link from 'next/link';
-import { Logo } from './icons';
-import { ThemeToggle } from './theme-toggle';
+import { SiteHeader } from './site-header';
 import './auth-screen.css';
 
 export type AuthScene = 'signup' | 'login' | 'recover' | 'verify';
@@ -84,44 +83,37 @@ export function AuthScreen({
 }) {
   const copy = COPY[scene];
   return (
-    <div className={`auth-page scene-${scene}`}>
-      <section className="auth-art" aria-hidden="true">
-        <Link href="/" className="auth-brand" tabIndex={-1}>
-          <Logo size={28} />
-          <span>CanvaRoom</span>
-        </Link>
-        <div className="auth-art-board">
-          <SceneArt scene={scene} />
-        </div>
-        <div className="auth-art-copy">
-          <p className="auth-kicker">{copy.kicker}</p>
-          <p className="auth-title">{copy.title}</p>
-          <ul className="auth-points">
-            {copy.points.map((point) => (
-              <li key={point}>{point}</li>
-            ))}
-          </ul>
-        </div>
-      </section>
-      <main className="auth-side">
-        <header className="auth-side-top">
-          <Link href="/" className="auth-side-brand">
-            <Logo size={24} />
-            <span>CanvaRoom</span>
-          </Link>
-          <div className="auth-side-actions">
-            {aside}
-            <ThemeToggle />
+    <>
+      <SiteHeader variant="compact" />
+      <div className={`auth-page scene-${scene}`}>
+        <section className="auth-art" aria-hidden="true">
+          <div className="auth-art-board">
+            <SceneArt scene={scene} />
           </div>
-        </header>
-        <div className="auth-side-body">{children}</div>
-        <footer className="auth-side-foot">
-          <Link href="/">Home</Link>
-          <Link href="/about">About</Link>
-          <Link href="/contact">Contact</Link>
-        </footer>
-      </main>
-    </div>
+          <div className="auth-art-copy">
+            <p className="auth-kicker">{copy.kicker}</p>
+            <p className="auth-title">{copy.title}</p>
+            <ul className="auth-points">
+              {copy.points.map((point) => (
+                <li key={point}>{point}</li>
+              ))}
+            </ul>
+          </div>
+        </section>
+        <main className="auth-side">
+          <header className="auth-side-top">
+            <span />
+            <div className="auth-side-actions">{aside}</div>
+          </header>
+          <div className="auth-side-body">{children}</div>
+          <footer className="auth-side-foot">
+            <Link href="/">Home</Link>
+            <Link href="/about">About</Link>
+            <Link href="/contact">Contact</Link>
+          </footer>
+        </main>
+      </div>
+    </>
   );
 }
 

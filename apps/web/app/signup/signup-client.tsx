@@ -7,7 +7,7 @@ import { AuthForm } from '../components/auth-form';
 import { AuthScreen } from '../components/auth-screen';
 import type { User } from '../lib/api';
 import { useAuth } from '../lib/auth';
-import { safeNext, withNext } from '../lib/next-url';
+import { DASHBOARD, safeNext, withNext } from '../lib/next-url';
 
 export function SignupClient() {
   const router = useRouter();
@@ -25,7 +25,7 @@ export function SignupClient() {
     // With email working, confirm the address first; the code is on its way.
     if (created.verifyAvailable && created.emailVerified === false)
       router.replace(
-        `/verify-email?sent=1${next !== '/' ? `&next=${encodeURIComponent(next)}` : ''}`,
+        `/verify-email?sent=1${next !== DASHBOARD ? `&next=${encodeURIComponent(next)}` : ''}`,
       );
     else router.replace(next);
   }

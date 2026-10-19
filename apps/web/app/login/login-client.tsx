@@ -6,7 +6,7 @@ import { useEffect } from 'react';
 import { AuthForm } from '../components/auth-form';
 import { AuthScreen } from '../components/auth-screen';
 import { useAuth } from '../lib/auth';
-import { safeNext, withNext } from '../lib/next-url';
+import { DASHBOARD, safeNext, withNext } from '../lib/next-url';
 
 export function LoginClient() {
   const router = useRouter();
@@ -37,7 +37,7 @@ export function LoginClient() {
         onForgot={(email) => {
           const params = new URLSearchParams();
           if (email) params.set('email', email);
-          if (next !== '/') params.set('next', next);
+          if (next !== DASHBOARD) params.set('next', next);
           const query = params.toString();
           router.push(`/forgot-password${query ? `?${query}` : ''}`);
         }}

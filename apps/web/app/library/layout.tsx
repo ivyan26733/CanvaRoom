@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { Suspense } from 'react';
 
 // Managed from inside the app, so keep it out of search results.
 export const metadata: Metadata = {
@@ -11,5 +12,6 @@ export default function LibraryLayout({
 }: {
   children: React.ReactNode;
 }) {
-  return children;
+  // The page reads ?q= from the URL, which needs a boundary to prerender.
+  return <Suspense>{children}</Suspense>;
 }

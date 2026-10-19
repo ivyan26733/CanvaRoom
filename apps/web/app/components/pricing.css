@@ -271,3 +271,7 @@
     display: none;
   }
 }
+.pr-cta .button.is-static {
+  cursor: default;
+  pointer-events: none;
+}

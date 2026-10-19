@@ -1,8 +1,11 @@
+/** The signed-in home: the board list. The landing page is always at "/". */
+export const DASHBOARD = '/dashboard';
+
 /**
  * Where to go after signing in. Only paths on this site are allowed, so a
  * crafted link can never send someone to another website.
  */
-export function safeNext(raw: string | null | undefined, fallback = '/') {
+export function safeNext(raw: string | null | undefined, fallback = DASHBOARD) {
   if (!raw) return fallback;
   let value: string;
   try {
@@ -26,4 +29,6 @@ export function safeNext(raw: string | null | undefined, fallback = '/') {
 
 /** Keeps the return address on links between the sign-in pages. */
 export const withNext = (path: string, next: string) =>
-  next && next !== '/' ? `${path}?next=${encodeURIComponent(next)}` : path;
+  next && next !== DASHBOARD
+    ? `${path}?next=${encodeURIComponent(next)}`
+    : path;

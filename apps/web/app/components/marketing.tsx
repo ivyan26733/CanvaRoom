@@ -1,4 +1,6 @@
 import Link from 'next/link';
+import { FooterAccountLinks } from './plan-cta';
+import { SiteHeader } from './site-header';
 import { HOME_FAQ, SITE, USE_CASES, type Faq } from '../lib/site';
 import { Logo } from './icons';
 import { decimal, PRICES, type Currency } from '../lib/pricing';
@@ -113,12 +115,7 @@ export function MarketingFooter() {
       <nav aria-label="Get started">
         <h2>Get started</h2>
         <ul>
-          <li>
-            <Link href="/signup">Create a free account</Link>
-          </li>
-          <li>
-            <Link href="/login">Sign in</Link>
-          </li>
+          <FooterAccountLinks />
           <li>
             <a href="/#pricing">Pricing</a>
           </li>
@@ -152,7 +149,11 @@ export function HomeContent({ currency }: { currency: Currency }) {
       <Story />
       <Pricing currency={currency} />
 
-      <section className="mk-uses" aria-labelledby="uses-heading">
+      <section
+        className="mk-uses"
+        id="use-cases"
+        aria-labelledby="uses-heading"
+      >
         <h2 id="uses-heading">One board, many rooms:</h2>
         <ul>
           {USE_CASES.map((useCase) => (
@@ -166,7 +167,7 @@ export function HomeContent({ currency }: { currency: Currency }) {
         </ul>
       </section>
 
-      <section className="mk-qa" aria-labelledby="faq-heading">
+      <section className="mk-qa" id="faq" aria-labelledby="faq-heading">
         <div className="mk-qa-head">
           <p className="st-eyebrow">Questions</p>
           <h2 id="faq-heading">Frequently asked questions</h2>
@@ -188,19 +189,7 @@ export function UseCaseView({ slug }: { slug: string }) {
   const others = USE_CASES.filter((item) => item.slug !== slug);
   return (
     <div className="mk mk-page">
-      <header className="mk-header">
-        <Link href="/" className="mk-brand">
-          <Logo size={28} /> {SITE.name}
-        </Link>
-        <nav className="mk-header-actions" aria-label="Account">
-          <Link href="/login" className="button ghost">
-            Sign in
-          </Link>
-          <Link href="/signup" className="button primary">
-            Start free
-          </Link>
-        </nav>
-      </header>
+      <SiteHeader />
 
       <main>
         <section className="mk-hero">

@@ -6,8 +6,8 @@
   --art-bg: #ffede5;
   --art-paper: #fffdf8;
   --art-ink: #141413;
-  min-height: 100vh;
-  min-height: 100dvh;
+  min-height: calc(100vh - 64px);
+  min-height: calc(100dvh - 64px);
   display: grid;
   grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
   background: var(--bg);
@@ -548,9 +548,6 @@
   .auth-side-top {
     order: 0;
     padding: 14px 20px;
-  }
-  .auth-side-brand {
-    display: inline-flex;
   }
   .auth-art {
     order: 1;

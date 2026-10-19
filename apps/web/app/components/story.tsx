@@ -1,3 +1,4 @@
+import { StoryCta } from './plan-cta';
 import {
   DropArt,
   JuggleArt,
@@ -113,7 +114,7 @@ const ACTS: Act[] = [
 export function Story() {
   let index = 0;
   return (
-    <section className="st" aria-labelledby="story-heading">
+    <section className="st" id="features" aria-labelledby="story-heading">
       <header className="st-intro">
         <p className="st-eyebrow">A story in three acts</p>
         <h2 id="story-heading">
@@ -166,15 +167,7 @@ export function Story() {
             together live, and talk without leaving the board.
           </p>
         </div>
-        <div className="st-finale-cta">
-          {/* A full load, so the sign-in panel opens on the sign-up tab. */}
-          <a href="/signup" className="button primary">
-            Start a free board
-          </a>
-          <a href="#get-started" className="button ghost">
-            Sign in or try a scratch board
-          </a>
-        </div>
+        <StoryCta />
       </div>
     </section>
   );

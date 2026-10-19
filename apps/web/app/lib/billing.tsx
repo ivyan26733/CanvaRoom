@@ -13,6 +13,7 @@ import {
 import { Icon } from '../components/icons';
 import { PAYWALL_EVENT, send, type Board, type User } from './api';
 import { useAuth } from './auth';
+import { DASHBOARD } from './next-url';
 
 // The dialog and its checkout code load only when someone opens it.
 const UpgradeDialog = dynamic(() => import('./upgrade-dialog'), {
@@ -226,7 +227,7 @@ function useTrialClock() {
   const pathname = usePathname();
   const active = useActive();
   const inApp =
-    pathname === '/' ||
+    pathname === DASHBOARD ||
     (pathname.startsWith('/board/') && !pathname.startsWith('/board/local-'));
   const state = planState(user);
   const onTrial = !user?.guest && state?.kind === 'trial';

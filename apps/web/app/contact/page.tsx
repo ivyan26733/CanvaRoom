@@ -1,7 +1,8 @@
 import type { Metadata } from 'next';
+import { SiteHeader } from '../components/site-header';
 import Link from 'next/link';
 import { FeedbackForm } from '../components/feedback';
-import { Icon, Logo } from '../components/icons';
+import { Icon } from '../components/icons';
 import { JsonLd, MarketingFooter } from '../components/marketing';
 import { CONTACT, SITE } from '../lib/site';
 import './contact.css';
@@ -43,19 +44,7 @@ export default function ContactPage() {
   return (
     <div className="mk mk-page contact">
       <JsonLd data={contactSchema} />
-      <header className="mk-header">
-        <Link href="/" className="mk-brand">
-          <Logo size={28} /> {SITE.name}
-        </Link>
-        <nav className="mk-header-actions" aria-label="Account">
-          <Link href="/login" className="button ghost">
-            Sign in
-          </Link>
-          <Link href="/signup" className="button primary">
-            Start free
-          </Link>
-        </nav>
-      </header>
+      <SiteHeader />
 
       <main className="contact-main">
         <section className="contact-intro" aria-labelledby="contact-heading">

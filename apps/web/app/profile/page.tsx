@@ -8,6 +8,7 @@ import { Icon } from '../components/icons';
 import { Avatar } from '../components/user-menu';
 import { api, send, type User } from '../lib/api';
 import { useAuth } from '../lib/auth';
+import { DASHBOARD } from '../lib/next-url';
 
 type Profile = {
   user: User;
@@ -32,7 +33,7 @@ export default function ProfilePage() {
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    if (user === null) router.replace('/');
+    if (user === null) router.replace('/login?next=/profile');
     if (user?.guest) router.replace('/signup');
   }, [user, router]);
 
@@ -86,7 +87,7 @@ export default function ProfilePage() {
     <AppShell active="profile">
       <header className="main-header">
         <div className="main-title">
-          <Link href="/" className="back-link">
+          <Link href={DASHBOARD} className="back-link">
             <Icon name="chevronLeft" size={16} /> Boards
           </Link>
           <h1>Profile &amp; settings</h1>

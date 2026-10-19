@@ -66,6 +66,7 @@ import {
   TRIAL_GUESTS,
 } from '../../lib/billing';
 import { BOARD_NAV } from '../../lib/navigation';
+import { DASHBOARD } from '../../lib/next-url';
 import { BoardShape } from './board-shape';
 import { CallControls } from './call-controls';
 import { CanvasGuide } from './canvas-guide';
@@ -656,7 +657,7 @@ export default function BoardPage() {
         setCanRedo(false);
         return;
       case 'deleted':
-        router.push('/', BOARD_NAV);
+        router.push(DASHBOARD, BOARD_NAV);
         return;
       case 'error':
         if (message.fatal) setLoadError(message.message);
@@ -2306,7 +2307,7 @@ export default function BoardPage() {
         {loadError && (
           <Link
             className="button ghost"
-            href="/"
+            href={isLocal ? '/' : DASHBOARD}
             transitionTypes={BOARD_NAV.transitionTypes}
           >
             Back to boards
@@ -2564,11 +2565,11 @@ export default function BoardPage() {
       {/* ---- Top left: board identity ---- */}
       <header className="island island-board">
         <Link
-          href="/"
+          href={isLocal ? '/' : DASHBOARD}
           transitionTypes={BOARD_NAV.transitionTypes}
           className="island-logo"
           onClick={leave}
-          title="All boards"
+          title={isLocal ? 'Home' : 'My boards'}
         >
           <Logo size={26} />
         </Link>
@@ -2816,15 +2817,26 @@ export default function BoardPage() {
                 <span className="menu-row-hint">?</span>
               </button>
               <ThemeToggle withLabel />
+              {!isLocal && (
+                <Link
+                  className="menu-row"
+                  role="menuitem"
+                  href={DASHBOARD}
+                  transitionTypes={BOARD_NAV.transitionTypes}
+                  onClick={leave}
+                >
+                  <Icon name="grid" />
+                  <span>My boards</span>
+                </Link>
+              )}
               <Link
                 className="menu-row"
                 role="menuitem"
                 href="/"
-                transitionTypes={BOARD_NAV.transitionTypes}
                 onClick={leave}
               >
                 <Icon name="home" />
-                <span>All boards</span>
+                <span>Home page</span>
               </Link>
             </div>
           )}

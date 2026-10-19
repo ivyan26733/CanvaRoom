@@ -58,6 +58,7 @@ export function LibraryPanel({
   onInsert,
   onClose,
   variant = 'drawer',
+  initialQuery = '',
 }: {
   /** Signed-in accounts keep their packs on the server. */
   synced: boolean;
@@ -65,12 +66,16 @@ export function LibraryPanel({
   onInsert?: (request: InsertRequest) => void;
   onClose?: () => void;
   variant?: 'drawer' | 'page';
+  /** Opens on "My library" filtered to this, e.g. from the site search. */
+  initialQuery?: string;
 }) {
   const [packs, setPacks] = useState<PackSummary[]>();
   const [installed, setInstalled] = useState<string[]>();
   const [items, setItems] = useState<Record<string, LibraryItem[]>>({});
-  const [tab, setTab] = useState<Tab>(variant === 'page' ? 'browse' : 'mine');
-  const [query, setQuery] = useState('');
+  const [tab, setTab] = useState<Tab>(
+    variant === 'page' && !initialQuery ? 'browse' : 'mine',
+  );
+  const [query, setQuery] = useState(initialQuery);
   const [subject, setSubject] = useState('All');
   const [busy, setBusy] = useState<Record<string, number>>({});
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());

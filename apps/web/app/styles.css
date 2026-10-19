@@ -712,15 +712,17 @@ kbd {
    ========================================================================== */
 
 .landing {
+  /* The universal header's bar and page strip sit above. */
+  --landing-height: calc(100dvh - 105px);
   display: grid;
   grid-template-columns: minmax(0, 1.4fr) minmax(420px, 1fr);
-  min-height: 100dvh;
+  min-height: max(560px, var(--landing-height));
 }
 .landing-stage {
   position: relative;
   display: flex;
   flex-direction: column;
-  min-height: 100dvh;
+  min-height: max(560px, var(--landing-height));
   overflow: hidden;
   padding: 32px clamp(28px, 4vw, 64px) clamp(32px, 5vw, 64px);
   color: #f1eee7;
@@ -1043,6 +1045,12 @@ kbd {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+.landing-cta .button {
+  text-decoration: none;
+}
+.landing-cta-wait {
+  min-height: 440px;
 }
 .landing-cta h2,
 .landing-cta .auth-lede {
@@ -1575,9 +1583,6 @@ kbd {
 }
 .app-main {
   min-width: 0;
-}
-.mobile-appbar {
-  display: none;
 }
 .sidebar-scrim {
   display: none;
@@ -4016,9 +4021,10 @@ kbd {
 @media (max-width: 900px) {
   .landing {
     grid-template-columns: 1fr;
+    min-height: 0;
   }
   .landing-stage {
-    min-height: 58vh;
+    min-height: 52vh;
   }
   .landing-brand {
     display: none;
@@ -4064,18 +4070,6 @@ kbd {
   }
   .sidebar-close {
     display: inline-grid;
-  }
-  .mobile-appbar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    height: 56px;
-    padding: 0 12px;
-    border-bottom: 1px solid var(--line);
-    background: var(--surface-2);
-  }
-  .mobile-appbar .brand {
-    font-size: 16px;
   }
   .main-header {
     position: static;

@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import { useAuth } from '../lib/auth';
+import { DASHBOARD } from '../lib/next-url';
 import { openFeedback } from './feedback';
 import { Icon } from './icons';
 import { ThemeToggle } from './theme-toggle';
@@ -128,11 +129,20 @@ export function UserMenu({
           <Link
             className="menu-row"
             role="menuitem"
-            href="/"
+            href={DASHBOARD}
             onClick={() => setOpen(false)}
           >
             <Icon name="grid" />
-            <span>All boards</span>
+            <span>My boards</span>
+          </Link>
+          <Link
+            className="menu-row"
+            role="menuitem"
+            href="/"
+            onClick={() => setOpen(false)}
+          >
+            <Icon name="home" />
+            <span>Home page</span>
           </Link>
           <button
             className="menu-row"
