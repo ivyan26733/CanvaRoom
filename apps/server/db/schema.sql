@@ -38,7 +38,7 @@ CREATE TABLE IF NOT EXISTS reset_tokens (
   expires_at timestamptz NOT NULL
 );
 
--- A single live verification link per account; only a SHA-256 token hash is stored.
+-- One live sign-up code per account, stored only as a SHA-256 hash.
 CREATE TABLE IF NOT EXISTS email_verification_tokens (
   key text PRIMARY KEY,
   user_id text NOT NULL UNIQUE REFERENCES accounts(id) ON DELETE CASCADE,
