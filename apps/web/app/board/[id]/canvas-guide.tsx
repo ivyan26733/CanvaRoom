@@ -58,6 +58,11 @@ export function CanvasGuide({
         ]
       : []),
     {
+      icon: 'library',
+      title: 'Library',
+      body: 'Formulas, tables, diagrams · press B',
+    },
+    {
       icon: 'download',
       title: 'Export',
       body: isLocal ? 'PNG, SVG, PDF in ⋯' : 'PNG, SVG, PDF and versions in ⋯',

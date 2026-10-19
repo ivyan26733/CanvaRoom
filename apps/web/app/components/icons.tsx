@@ -69,6 +69,14 @@ const PATHS = {
       <path d="M15 20.5V16a1 1 0 0 1 1-1h4.5" />
     </>
   ),
+  library: (
+    <>
+      <path d="M4 4.5h3.5v15H4z" />
+      <path d="M9.5 4.5H13v15H9.5z" />
+      <path d="m15.2 5.6 3.4-.9 3.4 14.5-3.4.8z" />
+      <path d="M4 8h3.5M9.5 8H13M4 16h3.5M9.5 16H13" />
+    </>
+  ),
   image: (
     <>
       <rect x="3" y="3.5" width="18" height="17" rx="2.5" />

@@ -2227,6 +2227,13 @@ kbd {
   :is([fill='#1f2d27']) {
   fill: #ecebe6;
 }
+/* Library items are drawn in dark ink on clear backgrounds; flipping the
+   lightness keeps them readable and roughly keeps their accent colours. */
+.dark
+  :is(.objects-layer, .remote-drafts, .local-overlay, .board-preview)
+  image[href^='/library/'] {
+  filter: invert(1) hue-rotate(180deg);
+}
 
 .canvas-text-editor {
   position: absolute;

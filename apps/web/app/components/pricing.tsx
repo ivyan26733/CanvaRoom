@@ -13,6 +13,10 @@ const ROWS: { label: string; cells: [Cell, Cell, Cell] }[] = [
   },
   { label: 'Live drawing, voice and chat', cells: [true, true, true] },
   { label: 'Pages, templates, zoom, history', cells: [true, true, true] },
+  {
+    label: 'Teaching library: formulas, periodic table, diagrams',
+    cells: [true, true, true],
+  },
   { label: 'Follow-the-writer', cells: [true, false, true] },
   { label: 'Export to PNG, SVG and PDF', cells: [false, false, true] },
   { label: 'Images on the board', cells: [false, false, true] },

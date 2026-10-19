@@ -57,7 +57,7 @@ function escapeXml(text: string) {
 }
 
 /** The dark-mode ink swaps from styles.css, for SVGs drawn outside the page. */
-const DARK_INK = `[stroke='#1b1b1b']{stroke:#ecebe6}[fill='#1b1b1b']{fill:#ecebe6}[stroke='#1b1b1b66']{stroke:#ecebe666}[stroke='#1f2d27']{stroke:#ecebe6}[fill='#1f2d27']{fill:#ecebe6}`;
+const DARK_INK = `[stroke='#1b1b1b']{stroke:#ecebe6}[fill='#1b1b1b']{fill:#ecebe6}[stroke='#1b1b1b66']{stroke:#ecebe666}[stroke='#1f2d27']{stroke:#ecebe6}[fill='#1f2d27']{fill:#ecebe6}.library-item{filter:invert(1) hue-rotate(180deg)}`;
 
 type Region = { x: number; y: number; width: number; height: number };
 

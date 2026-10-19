@@ -30,7 +30,7 @@ export function AppShell({
 }: {
   children: React.ReactNode;
   /** The highlighted nav item; `profile` when on the account page. */
-  active: DashboardView | 'profile';
+  active: DashboardView | 'profile' | 'library';
   /** On the dashboard, nav switches views in place instead of navigating. */
   onView?: (view: DashboardView) => void;
   onNewBoard?: () => void;
@@ -104,6 +104,13 @@ export function AppShell({
               </Link>
             );
           })}
+          <Link
+            className={`nav-item ${active === 'library' ? 'is-active' : ''}`}
+            href="/library"
+          >
+            <Icon name="library" />
+            <span>Library</span>
+          </Link>
           {user && !user.guest && (
             <Link
               className={`nav-item ${active === 'profile' ? 'is-active' : ''}`}

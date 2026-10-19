@@ -78,10 +78,22 @@ import {
   WRITING_GRACE_MS,
   type LocalOverlayHandle,
 } from './live-layers';
+import dynamic from 'next/dynamic';
+import { DRAG_TYPE, itemSrc } from '../../lib/library';
+import type { InsertRequest } from '../../components/library-panel';
 import { Minimap } from './minimap';
 import { PagesPanel } from './pages-panel';
 import { SessionRecorderControl } from './session-recorder';
 import { ShapePicker, SHAPE_TOOLS } from './shape-picker';
+
+// The library loads only when someone opens it, so boards stay light.
+const LibraryPanel = dynamic(
+  () => import('../../components/library-panel').then((m) => m.LibraryPanel),
+  {
+    ssr: false,
+    loading: () => <p className="lib-note lib-loading">Opening the library…</p>,
+  },
+);
 
 type Tool =
   | 'select'
@@ -288,6 +300,7 @@ export default function BoardPage() {
   // ---- Panels ----
   const [notice, setNotice] = useState('');
   const [chatOpen, setChatOpen] = useState(false);
+  const [libraryOpen, setLibraryOpen] = useState(false);
   const [unread, setUnread] = useState(0);
   const [typing, setTyping] = useState<
     { peerId: string; name: string; until: number }[]
@@ -1879,8 +1892,17 @@ export default function BoardPage() {
     }
   }
 
+  function toggleLibrary() {
+    setLibraryOpen((open) => !open);
+    setChatOpen(false);
+  }
+
   const onKeyDown = useEffectEvent((event: KeyboardEvent) => {
     if (event.key === 'Escape') {
+      if (libraryOpen && !isEditable(event.target)) {
+        setLibraryOpen(false);
+        return;
+      }
       if (shareOpen || membersOpen || snapshotsOpen || helpOpen) {
         setShareOpen(false);
         setMembersOpen(false);
@@ -1965,6 +1987,10 @@ export default function BoardPage() {
     } else if (!modifier && !event.altKey) {
       if (key === 'm' && call.joined) {
         callRef.current?.setMuted(!call.muted);
+        return;
+      }
+      if (key === 'b') {
+        toggleLibrary();
         return;
       }
       if (key === 's' && !readonly) {
@@ -2152,6 +2178,34 @@ export default function BoardPage() {
     ]);
   }
 
+  /**
+   * Places a library item: at the centre of the view, or where it was dropped.
+   * It keeps the tool in hand, so a teacher can carry on writing straight away.
+   */
+  function insertLibraryItem(request: InsertRequest, at?: Point) {
+    if (readonly) return;
+    const current = viewRef.current;
+    const fit = Math.min(
+      1,
+      (size.width * 0.6) / request.width,
+      (size.height * 0.6) / request.height,
+    );
+    const width = round((request.width * fit) / current.zoom);
+    const height = round((request.height * fit) / current.zoom);
+    const centre = at ?? {
+      x: current.x + size.width / current.zoom / 2,
+      y: current.y + size.height / current.zoom / 2,
+    };
+    const object = newObject(
+      'image',
+      { x: centre.x - width / 2, y: centre.y - height / 2 },
+      { width, height, src: itemSrc(request.pack, request.item) },
+    );
+    perform([{ type: 'create', objectId: object.id, object }]);
+    // Mid-lesson on a phone the sheet covers the canvas, so it steps aside.
+    if (window.matchMedia('(max-width: 720px)').matches) setLibraryOpen(false);
+  }
+
   async function addImage(file: File | undefined) {
     if (!file || readonly) return;
     if (!unlocked)
@@ -2300,7 +2354,7 @@ export default function BoardPage() {
 
   return (
     <main
-      className={`editor ${pagesOpen ? 'pages-open' : ''} ${chatOpen && !isLocal ? 'chat-open' : ''}`}
+      className={`editor ${pagesOpen ? 'pages-open' : ''} ${(chatOpen && !isLocal) || libraryOpen ? 'chat-open' : ''}`}
     >
       <div className="canvas-region">
         <input
@@ -2329,6 +2383,25 @@ export default function BoardPage() {
           onPointerLeave={() => clientRef.current?.liveCursor(null)}
           onDoubleClick={onDoubleClick}
           onContextMenu={(event) => event.preventDefault()}
+          onDragOver={(event) => {
+            if (!readonly && event.dataTransfer.types.includes(DRAG_TYPE)) {
+              event.preventDefault();
+              event.dataTransfer.dropEffect = 'copy';
+            }
+          }}
+          onDrop={(event) => {
+            const data = event.dataTransfer.getData(DRAG_TYPE);
+            if (!data || readonly) return;
+            event.preventDefault();
+            try {
+              insertLibraryItem(
+                JSON.parse(data) as InsertRequest,
+                toWorld(event.clientX, event.clientY),
+              );
+            } catch {
+              // Not something the library sent.
+            }
+          }}
         >
           <defs>
             <pattern
@@ -2592,6 +2665,7 @@ export default function BoardPage() {
               className={`icon-button chat-toggle ${chatOpen ? 'is-active' : ''}`}
               onClick={() => {
                 setChatOpen((open) => !open);
+                setLibraryOpen(false);
                 setUnread(0);
               }}
               aria-label={unread ? `Chat, ${unread} unread` : 'Chat'}
@@ -2932,6 +3006,16 @@ export default function BoardPage() {
             disabled={readonly}
           >
             <Icon name="image" size={20} />
+          </button>
+          <button
+            className={`dock-tool ${libraryOpen ? 'is-active' : ''}`}
+            onClick={toggleLibrary}
+            aria-pressed={libraryOpen}
+            aria-label="Library"
+            data-tip="Library · B"
+          >
+            <Icon name="library" size={20} />
+            <kbd>B</kbd>
           </button>
         </nav>
       </div>
@@ -3314,6 +3398,17 @@ export default function BoardPage() {
         </aside>
       )}
 
+      {libraryOpen && (
+        <aside className="lib-drawer-shell" aria-label="Library">
+          <LibraryPanel
+            synced={Boolean(authUser && !authUser.guest)}
+            canInsert={!readonly}
+            onInsert={(request) => insertLibraryItem(request)}
+            onClose={() => setLibraryOpen(false)}
+          />
+        </aside>
+      )}
+
       {chatOpen && !isLocal && (
         <ChatPanel
           messages={messages}
@@ -3509,6 +3604,7 @@ export default function BoardPage() {
             ))}
             {[
               ['Shapes menu (triangles, star, more)', 'S'],
+              ['Library of formulas and diagrams', 'B'],
               ['Pan the canvas', 'Space + drag · scroll'],
               ['Zoom', 'Ctrl/⌘ + scroll · pinch'],
               ['Zoom in / out', 'Ctrl/⌘ + / −'],

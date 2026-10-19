@@ -204,6 +204,9 @@ function Shape({ item }: { item: BoardObject }) {
           width={width}
           height={height}
           preserveAspectRatio="xMidYMid meet"
+          className={
+            item.src?.startsWith('/library/') ? 'library-item' : undefined
+          }
         />
       );
     case 'text': {
