@@ -31,8 +31,7 @@ export const SITE = {
 
 /** How to reach the team. */
 export const CONTACT = {
-  phone: '+91 70732 95354',
-  email: 'ivyan26733@gmail.com',
+  email: 'canvacollabroom@gmail.com',
 };
 
 export type Faq = { q: string; a: string };

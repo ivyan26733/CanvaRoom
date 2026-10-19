@@ -7,7 +7,7 @@ import { CONTACT, SITE } from '../lib/site';
 import './contact.css';
 
 const DESCRIPTION =
-  'Call, email, or send feedback to the team behind CanvaRoom, the online whiteboard with live ink, voice, and chat.';
+  'Email or send feedback to the team behind CanvaRoom, the online whiteboard with live ink, voice, and chat.';
 
 export const metadata: Metadata = {
   title: 'Contact us',
@@ -31,12 +31,10 @@ const contactSchema = {
     name: SITE.name,
     url: SITE.url,
     email: CONTACT.email,
-    telephone: CONTACT.phone,
     contactPoint: {
       '@type': 'ContactPoint',
       contactType: 'customer support',
       email: CONTACT.email,
-      telephone: CONTACT.phone,
     },
   },
 };
@@ -72,15 +70,6 @@ export default function ContactPage() {
           </p>
 
           <ul className="contact-ways">
-            <li>
-              <span className="contact-way-label">
-                <Icon name="mic" size={18} /> Phone
-              </span>
-              <a href={`tel:${CONTACT.phone.replace(/\s/g, '')}`}>
-                {CONTACT.phone}
-              </a>
-              <small>We’re in India, on IST.</small>
-            </li>
             <li>
               <span className="contact-way-label">
                 <Icon name="inbox" size={18} /> Email

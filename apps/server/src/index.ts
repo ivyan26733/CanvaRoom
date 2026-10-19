@@ -313,7 +313,7 @@ const hashToken = (token: string) =>
 /** Reset codes are short, so each is stored hashed together with its account. */
 const resetCodeKey = (userId: string, code: string) =>
   hashToken(`reset-code:${userId}:${code}`);
-const SUPPORT_EMAIL = 'ivyan26733@gmail.com';
+const SUPPORT_EMAIL = 'canvacollabroom@gmail.com';
 
 app.post('/api/auth/forgot', async (request, reply) => {
   const body = z.object({ email: emailSchema }).safeParse(request.body);

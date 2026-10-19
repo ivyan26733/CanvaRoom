@@ -243,7 +243,7 @@ No. CanvaRoom runs in any modern browser, on a laptop, tablet or phone.
 
 We read every message.
 
-- ✉️ **Email:** [ivyan26733@gmail.com](mailto:ivyan26733@gmail.com)
+- ✉️ **Email:** [canvacollabroom@gmail.com](mailto:canvacollabroom@gmail.com)
 - 📬 **Contact page:** [canva-room-blush.vercel.app/contact](https://canva-room-blush.vercel.app/contact)
 - 💡 **Feedback:** use **Send feedback** in the app's sidebar or footer. It reaches us directly.
 
