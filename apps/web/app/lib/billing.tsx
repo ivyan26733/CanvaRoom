@@ -87,6 +87,14 @@ export function useNow(ms = 15_000) {
 }
 
 /**
+ * Session recording follows the person, not the board: only someone with
+ * Premium may record, on any board, scratch boards included.
+ */
+export function canRecord(user: User | null | undefined, now = Date.now()) {
+  return planState(user, now)?.kind === 'premium';
+}
+
+/**
  * Opens the upgrade dialog from anywhere on the page, optionally saying what
  * the person just tried to do.
  */

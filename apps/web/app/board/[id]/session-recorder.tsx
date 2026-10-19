@@ -1,5 +1,7 @@
 'use client';
 
+import Link from 'next/link';
+import { usePathname } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Icon } from '../../components/icons';
@@ -55,6 +57,7 @@ export function SessionRecorderControl({
   callMicrophone,
   onNotice,
   locked = false,
+  needsAccount = false,
   onLocked,
 }: {
   stageRef: React.RefObject<SVGSVGElement | null>;
@@ -67,8 +70,12 @@ export function SessionRecorderControl({
   onNotice: (message: string) => void;
   /** Recording is a Premium feature; locked opens the upgrade instead. */
   locked?: boolean;
+  /** Signed out or a guest: the way in is an account, not a payment. */
+  needsAccount?: boolean;
   onLocked?: () => void;
 }) {
+  const pathname = usePathname();
+  const [accountPromptOpen, setAccountPromptOpen] = useState(false);
   const [unsupported, setUnsupported] = useState<string | null>(null);
   const [setupOpen, setSetupOpen] = useState(false);
   const [preference, setPreference] = useState<Preference>({
@@ -90,6 +97,11 @@ export function SessionRecorderControl({
   }, []);
 
   const active = status === 'recording' || status === 'paused';
+
+  // A plan that ends while the setup is open cannot start a recording.
+  useEffect(() => {
+    if (locked) setSetupOpen(false);
+  }, [locked]);
 
   useEffect(() => {
     if (status !== 'recording') return;
@@ -116,7 +128,8 @@ export function SessionRecorderControl({
 
   async function start() {
     const stage = stageRef.current;
-    if (!stage) return;
+    // The button is the only way in, but never start for a locked plan.
+    if (!stage || locked) return;
     try {
       localStorage.setItem(PREFERENCE_KEY, JSON.stringify(preference));
     } catch {
@@ -220,7 +233,8 @@ export function SessionRecorderControl({
       <button
         className={`icon-button rec-button ${locked ? 'is-premium-locked' : ''}`}
         onClick={() => {
-          if (locked) return onLocked?.();
+          if (locked)
+            return needsAccount ? setAccountPromptOpen(true) : onLocked?.();
           setSetupOpen(true);
           // Fetch the recorder while the person picks a resolution.
           void import('../../lib/recorder').catch(() => undefined);
@@ -236,6 +250,42 @@ export function SessionRecorderControl({
       >
         <Icon name="record" />
       </button>
+
+      {accountPromptOpen &&
+        createPortal(
+          <Modal
+            onClose={() => setAccountPromptOpen(false)}
+            className="record-modal"
+          >
+            <p className="kicker">Premium feature</p>
+            <h2>Recording is a Premium feature</h2>
+            <p className="modal-copy">
+              Create a free account to start your trial, then upgrade to Premium
+              to record your lessons in up to 4K.
+            </p>
+            <div className="modal-actions">
+              <button
+                className="button ghost"
+                onClick={() => setAccountPromptOpen(false)}
+              >
+                Not now
+              </button>
+              <Link
+                className="button ghost"
+                href={`/login?next=${encodeURIComponent(pathname)}`}
+              >
+                Sign in
+              </Link>
+              <Link
+                className="button primary"
+                href={`/signup?next=${encodeURIComponent(pathname)}`}
+              >
+                Create account
+              </Link>
+            </div>
+          </Modal>,
+          document.body,
+        )}
 
       {setupOpen &&
         createPortal(

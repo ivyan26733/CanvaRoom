@@ -59,6 +59,7 @@ import { useDismiss, UserMenu } from '../../components/user-menu';
 import { useAuth } from '../../lib/auth';
 import {
   boardTier,
+  canRecord,
   openUpgrade,
   premiumUnlocked,
   PremiumTag,
@@ -2696,7 +2697,8 @@ export default function BoardPage() {
           callStreams={() => callRef.current?.remoteStreams() ?? []}
           callMicrophone={() => callRef.current?.microphoneStream() ?? null}
           onNotice={setNotice}
-          locked={!unlocked}
+          locked={!canRecord(authUser)}
+          needsAccount={!authUser || Boolean(authUser.guest)}
           onLocked={() =>
             openUpgrade(
               'Session recording is a Premium feature. Upgrade to record your lessons in HD.',
