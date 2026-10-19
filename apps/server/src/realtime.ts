@@ -824,15 +824,18 @@ function onConnection(socket: WebSocket, user: User) {
 
   socket.on('message', (raw) => {
     heard.at = Date.now();
-    let parsed;
+    let input: unknown;
     try {
-      parsed = clientMessageSchema.safeParse(JSON.parse(raw.toString()));
+      input = JSON.parse(raw.toString());
     } catch {
       return;
     }
+    const parsed = clientMessageSchema.safeParse(input);
     if (!parsed.success) {
-      const id = (parsed.data as { op?: { id?: string } } | undefined)?.op?.id;
-      if (id)
+      // A failed parse has no data, so the id comes from the raw message:
+      // the sender can then drop the edit instead of retrying it forever.
+      const id = (input as { op?: { id?: unknown } } | null)?.op?.id;
+      if (typeof id === 'string' && id.length <= 100)
         socket.send(
           JSON.stringify({ t: 'nack', id, message: 'Invalid canvas update.' }),
         );
