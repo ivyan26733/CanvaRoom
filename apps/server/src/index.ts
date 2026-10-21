@@ -806,8 +806,11 @@ app.get('/api/boards/:boardId/images/:name', async (request, reply) => {
   return (
     reply
       .header('Cache-Control', 'private, max-age=31536000, immutable')
-      // Uploaded bytes are only ever shown as images, never run as a page.
+      // Uploaded bytes are only ever shown as images, never run as a page,
+      // and only this site may embed them.
       .header('Content-Security-Policy', "default-src 'none'; sandbox")
+      .header('Cross-Origin-Resource-Policy', 'same-origin')
+      .header('Content-Disposition', `inline; filename="${name}"`)
       .type(image.contentType)
       .send(image.body)
   );

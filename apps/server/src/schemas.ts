@@ -9,31 +9,36 @@ export const colorSchema = z
 // never stores SVG markup from a browser.
 export const LIBRARY_SRC =
   /^\/library\/v[0-9]{1,3}\/[a-z0-9-]{1,40}\/[a-z0-9-]{1,60}\.svg$/;
+// An uploaded image's app path; the board it names must be the board the
+// object is on (checked where the board is known).
+export const UPLOADED_SRC =
+  /^\/api\/boards\/([A-Za-z0-9_-]{1,64})\/images\/[0-9a-f-]{36}\.(?:png|jpg|webp)$/;
 const imageSchema = z.union([
   z.string().regex(LIBRARY_SRC),
-  z
-    .string()
-    .regex(
-      /^\/api\/boards\/[A-Za-z0-9_-]{1,64}\/images\/[0-9a-f-]{36}\.(?:png|jpg|webp)$/,
-    ),
+  z.string().regex(UPLOADED_SRC),
   z
     .string()
     .regex(/^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/)
     .max(800_000),
 ]);
-const pointsSchema = z.array(z.number().finite()).max(100_000);
+// Board coordinates and sizes. Far beyond any real board, but bounded, so a
+// crafted object can't make every viewer's browser lay out or export a
+// canvas billions of pixels wide.
+const COORD = 10_000_000;
+const coordSchema = z.number().min(-COORD).max(COORD);
+const pointsSchema = z.array(coordSchema).max(100_000);
 
 const fieldShape = {
-  x: z.number().finite(),
-  y: z.number().finite(),
-  width: z.number().finite().optional(),
-  height: z.number().finite().optional(),
+  x: coordSchema,
+  y: coordSchema,
+  width: coordSchema.optional(),
+  height: coordSchema.optional(),
   points: pointsSchema.optional(),
   text: z.string().max(20_000).optional(),
   src: imageSchema.optional(),
   color: colorSchema,
   strokeWidth: z.number().min(0.5).max(160),
-  rotation: z.number().finite().optional(),
+  rotation: z.number().min(-COORD).max(COORD).optional(),
   fontSize: z.number().min(8).max(160).optional(),
   opacity: z.number().min(0).max(1).optional(),
   fillColor: colorSchema.optional(),
@@ -120,18 +125,13 @@ export const clientMessageSchema = z.discriminatedUnion('t', [
     t: z.literal('live'),
     cursor: z
       .object({
-        x: z.number().finite(),
-        y: z.number().finite(),
+        x: coordSchema,
+        y: coordSchema,
         page: z.string().min(1).max(40).optional(),
         // Set while drawing, erasing, or typing, so others can follow along.
         active: z.boolean().optional(),
         view: z
-          .tuple([
-            z.number().finite(),
-            z.number().finite(),
-            z.number().finite(),
-            z.number().finite(),
-          ])
+          .tuple([coordSchema, coordSchema, coordSchema, coordSchema])
           .optional(),
       })
       .nullable()
@@ -171,3 +171,7 @@ export type ClientMessage = z.infer<typeof clientMessageSchema>;
 
 export const pageIdSchema = z.string().regex(/^[A-Za-z0-9_-]{1,40}$/);
 export const pageNameSchema = z.string().trim().min(1).max(60);
+
+/** Whether an object's image, if any, may appear on board `boardId`. */
+export const srcAllowedOn = (boardId: string, src: string | undefined) =>
+  !src || (UPLOADED_SRC.exec(src)?.[1] ?? boardId) === boardId;

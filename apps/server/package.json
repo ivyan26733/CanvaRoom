@@ -8,7 +8,8 @@
     "lint": "eslint src",
     "start": "node --import tsx src/index.ts",
     "db:migrate": "node --import tsx scripts/migrate.ts",
-    "db:import-redis": "node --import tsx scripts/import-redis.ts"
+    "db:import-redis": "node --import tsx scripts/import-redis.ts",
+    "test": "node --import tsx --test test/*.test.ts"
   },
   "dependencies": {
     "@vercel/blob": "^2.8.2",

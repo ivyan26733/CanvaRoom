@@ -553,6 +553,9 @@ export class SessionRecorder {
       /(<image\b[^>]*?\shref=")([^"]+)(")/g,
       (match, start: string, href: string, end: string) => {
         if (href.startsWith('data:')) return match;
+        // Only this site's own images are fetched, never another host.
+        if (!href.startsWith('/') || href.startsWith('//'))
+          return `${start}${end}`;
         const cached = this.images.get(href);
         if (typeof cached === 'string') return `${start}${cached}${end}`;
         if (!cached) this.images.set(href, this.loadImage(href));

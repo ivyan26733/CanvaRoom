@@ -1,9 +1,13 @@
 import type { NextConfig } from 'next';
 
 // Pages cannot be framed by other sites (so board controls cannot be
-// clickjacked), and only this site may use the microphone.
+// clickjacked), and only this site may use the microphone. Injected markup
+// can't load plugins or move the base URL for relative links and scripts.
 const securityHeaders = [
-  { key: 'Content-Security-Policy', value: "frame-ancestors 'none'" },
+  {
+    key: 'Content-Security-Policy',
+    value: "frame-ancestors 'none'; base-uri 'self'; object-src 'none'",
+  },
   { key: 'X-Frame-Options', value: 'DENY' },
   { key: 'X-Content-Type-Options', value: 'nosniff' },
   { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },

@@ -26,7 +26,11 @@ import {
   type Tier,
   type User,
 } from './models.js';
-import { clientMessageSchema, type ClientMessage } from './schemas.js';
+import {
+  clientMessageSchema,
+  srcAllowedOn,
+  type ClientMessage,
+} from './schemas.js';
 import { sfuConfigured, validSessionToken } from './sfu.js';
 import { redis, store } from './store.js';
 
@@ -579,6 +583,14 @@ function handleOperation(connection: Connection, op: Operation) {
     (op.object?.src ?? op.fields?.src ?? '').length > 800_000
   )
     return reply({ t: 'nack', id: op.id, message: 'That image is too large.' });
+  // Uploaded images are only shown on the board they were uploaded to, so
+  // one board can't point at (or keep alive) another board's files.
+  if (!srcAllowedOn(connection.boardId, op.object?.src ?? op.fields?.src))
+    return reply({
+      t: 'nack',
+      id: op.id,
+      message: 'That image isn’t on this board.',
+    });
   // New images are a Premium feature. Uploads are checked by the upload
   // route; images embedded inline would skip it, so they are checked here.
   if (
@@ -625,7 +637,14 @@ function handleMessage(connection: Connection, message: ClientMessage) {
     case 'live': {
       // Viewers may share their cursor, but not draw.
       const live = canEdit(connection.role, connection.board)
-        ? message
+        ? {
+            ...message,
+            ...(message.upsert && {
+              upsert: message.upsert.filter((object) =>
+                srcAllowedOn(boardId, object.src),
+              ),
+            }),
+          }
         : { t: 'live' as const, cursor: message.cursor };
       if (
         live.cursor === undefined &&
