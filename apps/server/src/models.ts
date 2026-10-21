@@ -248,6 +248,32 @@ export type Payment = {
   paidAt?: string;
 };
 
+/**
+ * A captured Razorpay payment for one of our orders. The same payment can be
+ * reported by the browser after checkout, by Razorpay's webhook, and by
+ * reconciling an order, in any order and more than once.
+ */
+export type Capture = {
+  orderId: string;
+  paymentId: string;
+  source: 'checkout' | 'webhook' | 'reconcile';
+  /** What Razorpay says was paid; checked against the order when given. */
+  amount?: number;
+  currency?: string;
+};
+
+export type CaptureResult =
+  /** This payment extended the pass. */
+  | { outcome: 'applied'; userId: string; paidUntil: string }
+  /** This payment was applied before; nothing changed. */
+  | { outcome: 'repeat'; userId: string }
+  /** The order was already paid by another payment; this one needs a refund. */
+  | { outcome: 'extra'; userId: string }
+  /** The amount or currency differs from the order; nothing changed. */
+  | { outcome: 'mismatch'; userId: string }
+  /** Not one of our orders. */
+  | { outcome: 'unknown' };
+
 export type Account = {
   id: string;
   email: string;

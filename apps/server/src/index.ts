@@ -26,9 +26,14 @@ import {
 import {
   billingConfigured,
   createOrder,
+  ORDER_ID,
+  orderCapture,
+  PAYMENT_ID,
   priceFor,
   RazorpayError,
   validPaymentSignature,
+  validWebhookSignature,
+  webhookCapture,
 } from './billing.js';
 import {
   mailConfigured,
@@ -76,6 +81,8 @@ import type {
   Account,
   BoardMeta,
   BoardObject,
+  Capture,
+  CaptureResult,
   Operation,
   Page,
   Snapshot,
@@ -1166,7 +1173,34 @@ app.get('/api/boards/:boardId/preview', async (request, reply) => {
 
 // ---- Billing ----
 
-const orderIdSchema = z.string().regex(/^order_[A-Za-z0-9]{6,40}$/);
+const orderIdSchema = z.string().regex(ORDER_ID);
+// Opening checkout again within this long hands back the same unpaid order,
+// so a double click or a second tab can't lead to two charges.
+const ORDER_REUSE_MINUTES = 20;
+
+/**
+ * Applies a captured payment, from whichever path reported it first, and
+ * unlocks the owner's boards for everyone in them when it extended the pass.
+ */
+async function applyCapture(
+  capture: Capture,
+  log: FastifyRequest['log'],
+): Promise<CaptureResult> {
+  const result = await store.recordPayment(capture, config.passDays);
+  const context = { ...capture, outcome: result.outcome };
+  if (result.outcome === 'extra')
+    log.warn(context, 'Extra payment on an order already paid: refund it');
+  else if (result.outcome === 'mismatch')
+    log.error(context, 'Captured amount differs from the order');
+  else if (result.outcome === 'applied') {
+    log.info(context, 'Payment applied');
+    for (const boardId of await store.boardIdsFor(result.userId)) {
+      const board = await store.getMeta(boardId);
+      if (board?.ownerId === result.userId) broadcastBoard(board);
+    }
+  }
+  return result;
+}
 
 /** Vercel's edge sets the visitor's country; locally it is missing. */
 const countryOf = (request: FastifyRequest) =>
@@ -1210,6 +1244,38 @@ app.post('/api/billing/create-order', async (request, reply) => {
   const price = priceFor(countryOf(request));
   if (price.amount < 100)
     return apiError(reply, 500, 'The Premium price is set too low.');
+  const checkout = (order: {
+    orderId: string;
+    amount: number;
+    currency: string;
+  }) => ({
+    order_id: order.orderId,
+    amount: order.amount,
+    currency: order.currency,
+    key_id: config.razorpay!.keyId,
+    name: price.name,
+  });
+  const open = await store.openOrder(
+    user.id,
+    price.amount,
+    price.currency,
+    ORDER_REUSE_MINUTES,
+  );
+  if (open) {
+    // Reuse it only while Razorpay says it is unpaid. If it was paid but we
+    // never heard (the tab closed before checkout reported back), apply that
+    // payment now rather than charging again.
+    const state = await orderCapture(open.orderId).catch((error: unknown) => {
+      request.log.warn(error, 'Could not check an open Razorpay order');
+      return undefined;
+    });
+    if (state && !state.paid) return checkout(open);
+    if (state?.capture) {
+      await applyCapture(state.capture, request.log);
+      const account = await store.getAccount(user.id);
+      return { already_paid: true, paidUntil: account?.paidUntil };
+    }
+  }
   try {
     const order = await createOrder(
       `cr_${Date.now().toString(36)}_${user.id.slice(0, 12)}`,
@@ -1222,13 +1288,7 @@ app.post('/api/billing/create-order', async (request, reply) => {
       status: 'created',
       createdAt: new Date().toISOString(),
     });
-    return {
-      order_id: order.orderId,
-      amount: order.amount,
-      currency: order.currency,
-      key_id: config.razorpay!.keyId,
-      name: price.name,
-    };
+    return checkout(order);
   } catch (error) {
     request.log.error(error, 'Could not create a Razorpay order');
     if (error instanceof RazorpayError && error.status === 401)
@@ -1254,7 +1314,7 @@ app.post('/api/billing/verify-payment', async (request, reply) => {
   const body = z
     .object({
       razorpay_order_id: orderIdSchema,
-      razorpay_payment_id: z.string().regex(/^pay_[A-Za-z0-9]{6,40}$/),
+      razorpay_payment_id: z.string().regex(PAYMENT_ID),
       razorpay_signature: z.string().regex(/^[0-9a-f]{64}$/),
     })
     .safeParse(request.body);
@@ -1272,17 +1332,62 @@ app.post('/api/billing/verify-payment', async (request, reply) => {
     return apiError(reply, 400, 'We don’t recognise that payment.');
   if (!validPaymentSignature(orderId, paymentId, signature))
     return apiError(reply, 400, 'The payment could not be verified.');
-  if (payment.status === 'paid' && payment.paymentId !== paymentId)
-    return apiError(reply, 400, 'That order was already paid.');
+  // The signature ties this payment to our order, whose amount we set. The
+  // webhook may have applied it already; that is a repeat, not an error.
+  const result = await applyCapture(
+    { orderId, paymentId, source: 'checkout' },
+    request.log,
+  );
+  if (result.outcome === 'extra')
+    return apiError(
+      reply,
+      409,
+      'That order was already paid, so this second payment wasn’t used.',
+      'already_paid',
+    );
+  if (result.outcome !== 'applied' && result.outcome !== 'repeat')
+    return apiError(reply, 400, 'We don’t recognise that payment.');
   const paidUntil =
-    (await store.completePayment(orderId, paymentId, config.passDays)) ??
-    (await store.getAccount(user.id))?.paidUntil;
-  // Boards the user owns become editable for everyone in them right away.
-  for (const boardId of await store.boardIdsFor(user.id)) {
-    const board = await store.getMeta(boardId);
-    if (board?.ownerId === user.id) broadcastBoard(board);
-  }
+    result.outcome === 'applied'
+      ? result.paidUntil
+      : (await store.getAccount(user.id))?.paidUntil;
   return { ok: true, paidUntil };
+});
+
+// Razorpay calls this when a payment is captured, so a pass is granted even
+// if the browser never reports back. Set up in the Razorpay dashboard with
+// the events payment.captured and order.paid, and the same secret in
+// RAZORPAY_WEBHOOK_SECRET. The signature covers the raw bytes, so this route
+// keeps the body unparsed.
+app.register(async (webhook) => {
+  webhook.removeContentTypeParser('application/json');
+  webhook.addContentTypeParser(
+    'application/json',
+    { parseAs: 'buffer', bodyLimit: 1_000_000 },
+    (_request, body, done) => done(null, body),
+  );
+  webhook.post('/api/billing/webhook', async (request, reply) => {
+    if (!config.razorpayWebhookSecret)
+      return apiError(reply, 503, 'The payment webhook is not set up.');
+    const signature = request.headers['x-razorpay-signature'];
+    if (
+      !Buffer.isBuffer(request.body) ||
+      typeof signature !== 'string' ||
+      !validWebhookSignature(request.body, signature)
+    )
+      return apiError(reply, 400, 'Invalid signature.');
+    let event: unknown;
+    try {
+      event = JSON.parse(request.body.toString('utf8'));
+    } catch {
+      return apiError(reply, 400, 'Invalid body.');
+    }
+    const capture = webhookCapture(event);
+    // Other events, and orders that aren't ours, are acknowledged and
+    // ignored. A database error answers 500, so Razorpay retries later.
+    if (capture) await applyCapture(capture, request.log);
+    return { ok: true };
+  });
 });
 
 // ---- Library ----

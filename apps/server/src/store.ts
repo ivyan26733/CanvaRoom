@@ -15,6 +15,8 @@ import type {
   Account,
   BoardMeta,
   BoardObject,
+  Capture,
+  CaptureResult,
   ChatMessage,
   Member,
   Operation,
@@ -137,16 +139,20 @@ export interface Store {
    * Returns the account's plan after counting.
    */
   accrueTrial(userId: string): Promise<Plan | undefined>;
+  /** The user's newest unpaid order for this price, made in the last `minutes`. */
+  openOrder(
+    userId: string,
+    amount: number,
+    currency: string,
+    minutes: number,
+  ): Promise<Payment | undefined>;
   /**
-   * Marks an unpaid order paid and extends its user's pass by `days` from
-   * the later of now and their current pass end. Returns the new pass end, or
-   * undefined when the order was already paid.
+   * Applies a captured payment exactly once: the order is marked paid and its
+   * user's pass extended by `days` from the later of now and the current pass
+   * end. Repeats of the same payment, and further payments on an order that
+   * is already paid, change nothing.
    */
-  completePayment(
-    orderId: string,
-    paymentId: string,
-    days: number,
-  ): Promise<string | undefined>;
+  recordPayment(capture: Capture, days: number): Promise<CaptureResult>;
 }
 
 /** The oldest of an owner's boards, given each board's owner and creation. */
@@ -167,6 +173,43 @@ const extendPass = (from: string | undefined, days: number) =>
     Math.max(from ? new Date(from).getTime() : 0, Date.now()) +
       days * 86_400_000,
   ).toISOString();
+
+/**
+ * What a capture does to an order, for the stores without Postgres (local
+ * development). Returns the order as paid when the capture applies.
+ */
+function settle(
+  payment: Payment | undefined,
+  account: Account | undefined,
+  capture: Capture,
+  days: number,
+): { result: CaptureResult; paid?: Payment; paidUntil?: string } {
+  if (!payment || !account) return { result: { outcome: 'unknown' } };
+  const { userId } = payment;
+  if (
+    capture.amount !== undefined &&
+    (capture.amount !== payment.amount || capture.currency !== payment.currency)
+  )
+    return { result: { outcome: 'mismatch', userId } };
+  if (payment.status === 'paid')
+    return {
+      result: {
+        outcome: payment.paymentId === capture.paymentId ? 'repeat' : 'extra',
+        userId,
+      },
+    };
+  const paidUntil = extendPass(account.paidUntil, days);
+  return {
+    result: { outcome: 'applied', userId, paidUntil },
+    paid: {
+      ...payment,
+      status: 'paid',
+      paymentId: capture.paymentId,
+      paidAt: new Date().toISOString(),
+    },
+    paidUntil,
+  };
+}
 
 /** Short-lived state that never needs to reach the database. */
 export type LiveStore = Pick<
@@ -195,6 +238,7 @@ const keys = {
   verify: (key: string) => `verify:${key}`,
   userVerify: (userId: string) => `u:${userId}:verify`,
   payment: (orderId: string) => `pay:${orderId}`,
+  openOrder: (userId: string) => `u:${userId}:open-order`,
   feedback: 'feedback',
   library: (userId: string) => `u:${userId}:library`,
 };
@@ -673,6 +717,12 @@ export class RedisStore implements Store {
       keys.payment(payment.orderId),
       JSON.stringify(payment),
     );
+    await this.redis.set(
+      keys.openOrder(payment.userId),
+      payment.orderId,
+      'EX',
+      3600,
+    );
   }
 
   async getPayment(orderId: string) {
@@ -691,23 +741,35 @@ export class RedisStore implements Store {
     return planOf(next);
   }
 
-  async completePayment(orderId: string, paymentId: string, days: number) {
+  async openOrder(
+    userId: string,
+    amount: number,
+    currency: string,
+    minutes: number,
+  ) {
+    const orderId = await this.redis.get(keys.openOrder(userId));
+    const payment = orderId ? await this.getPayment(orderId) : undefined;
+    return payment?.status === 'created' &&
+      payment.amount === amount &&
+      payment.currency === currency &&
+      Date.now() - Date.parse(payment.createdAt) < minutes * 60_000
+      ? payment
+      : undefined;
+  }
+
+  async recordPayment(capture: Capture, days: number) {
     // Only used without Postgres (local development), so not atomic.
-    const payment = await this.getPayment(orderId);
+    const payment = await this.getPayment(capture.orderId);
     const account = payment && (await this.getAccount(payment.userId));
-    if (!payment || payment.status === 'paid' || !account) return;
-    const paidUntil = extendPass(account.paidUntil, days);
-    await this.createPayment({
-      ...payment,
-      status: 'paid',
-      paymentId,
-      paidAt: new Date().toISOString(),
-    });
-    await this.redis.set(
-      keys.account(account.id),
-      JSON.stringify({ ...account, paidUntil }),
-    );
-    return paidUntil;
+    const { result, paid, paidUntil } = settle(payment, account, capture, days);
+    if (paid && paidUntil && account) {
+      await this.redis.set(keys.payment(paid.orderId), JSON.stringify(paid));
+      await this.redis.set(
+        keys.account(account.id),
+        JSON.stringify({ ...account, paidUntil }),
+      );
+    }
+    return result;
   }
 }
 
@@ -1104,20 +1166,36 @@ export class MemoryStore implements Store {
     return planOf(next);
   }
 
-  async completePayment(orderId: string, paymentId: string, days: number) {
-    const payment = this.payments.get(orderId);
+  async openOrder(
+    userId: string,
+    amount: number,
+    currency: string,
+    minutes: number,
+  ) {
+    const since = Date.now() - minutes * 60_000;
+    return [...this.payments.values()]
+      .filter(
+        (payment) =>
+          payment.userId === userId &&
+          payment.status === 'created' &&
+          payment.amount === amount &&
+          payment.currency === currency &&
+          Date.parse(payment.createdAt) > since,
+      )
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+  }
+
+  async recordPayment(capture: Capture, days: number) {
+    // Nothing awaits between reading and writing, so this is atomic.
+    const payment = this.payments.get(capture.orderId);
     const account = payment && this.accounts.get(payment.userId);
-    if (!payment || payment.status === 'paid' || !account) return;
-    const paidUntil = extendPass(account.paidUntil, days);
-    this.payments.set(orderId, {
-      ...payment,
-      status: 'paid',
-      paymentId,
-      paidAt: new Date().toISOString(),
-    });
-    this.accounts.set(account.id, { ...account, paidUntil });
-    this.scheduleSave();
-    return paidUntil;
+    const { result, paid, paidUntil } = settle(payment, account, capture, days);
+    if (paid && paidUntil && account) {
+      this.payments.set(paid.orderId, paid);
+      this.accounts.set(account.id, { ...account, paidUntil });
+      this.scheduleSave();
+    }
+    return result;
   }
 }
 

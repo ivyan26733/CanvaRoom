@@ -41,6 +41,9 @@ const environmentSchema = z.object({
   // never reach the browser; the key ID is public.
   RAZORPAY_KEY_ID: z.string().optional(),
   RAZORPAY_KEY_SECRET: z.string().optional(),
+  // Secret of the webhook set up in the Razorpay dashboard. Without it the
+  // webhook route refuses every call.
+  RAZORPAY_WEBHOOK_SECRET: z.string().optional(),
   // Premium, per month, in each currency's smallest unit (paise, cents): the
   // price charged and an optional higher "was" price shown struck through.
   // Visitors in India pay in rupees; everyone else in dollars.
@@ -86,6 +89,7 @@ export const config = {
     env.RAZORPAY_KEY_ID && env.RAZORPAY_KEY_SECRET
       ? { keyId: env.RAZORPAY_KEY_ID, keySecret: env.RAZORPAY_KEY_SECRET }
       : undefined,
+  razorpayWebhookSecret: env.RAZORPAY_WEBHOOK_SECRET?.trim() || undefined,
   prices: {
     INR: {
       amount: env.BILLING_INR_PRICE_MINOR,

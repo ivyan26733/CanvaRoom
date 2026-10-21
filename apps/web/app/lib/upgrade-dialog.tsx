@@ -142,9 +142,23 @@ export default function UpgradeDialog({
     setPhase({ step: 'paying' });
     try {
       const [order] = await Promise.all([
-        send<Order>('/billing/create-order', 'POST', {}),
+        send<Order | { already_paid: true; paidUntil?: string }>(
+          '/billing/create-order',
+          'POST',
+          {},
+        ),
         loadCheckout(),
       ]);
+      // An earlier payment that never reported back was found and applied.
+      if ('already_paid' in order) {
+        const me = await api<{ user: User | null }>('/auth/me');
+        setUser(me.user);
+        setPhase({
+          step: 'done',
+          until: order.paidUntil ?? me.user?.plan?.paidUntil ?? '',
+        });
+        return;
+      }
       const checkout = new window.Razorpay!({
         key: order.key_id,
         amount: order.amount,

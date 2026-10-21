@@ -132,6 +132,24 @@ CREATE TABLE IF NOT EXISTS payments (
   paid_at timestamptz
 );
 CREATE INDEX IF NOT EXISTS payments_user_id_idx ON payments (user_id);
+-- Finds a user's recent unpaid order, so opening checkout twice reuses it.
+CREATE INDEX IF NOT EXISTS payments_open_idx
+  ON payments (user_id, created_at DESC) WHERE status = 'created';
+
+-- Every captured payment we have seen, from checkout, the webhook or a
+-- reconcile, once per payment. `applied` is false for an extra payment on an
+-- order that was already paid: those need refunding.
+CREATE TABLE IF NOT EXISTS payment_captures (
+  payment_id text PRIMARY KEY,
+  order_id text NOT NULL REFERENCES payments (order_id),
+  user_id text NOT NULL,
+  amount integer NOT NULL,
+  currency text NOT NULL,
+  source text NOT NULL CHECK (source IN ('checkout', 'webhook', 'reconcile')),
+  applied boolean NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS payment_captures_order_idx ON payment_captures (order_id);
 
 -- The free plan keeps an owner's oldest board, found through this index.
 CREATE INDEX IF NOT EXISTS boards_owner_created_idx ON boards (owner_id, created_at);

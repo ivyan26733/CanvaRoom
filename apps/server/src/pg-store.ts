@@ -11,6 +11,8 @@ import type {
   Account,
   BoardMeta,
   BoardObject,
+  Capture,
+  CaptureResult,
   ChatMessage,
   Member,
   Operation,
@@ -724,21 +726,104 @@ export class PostgresStore implements Store {
     return rows[0] && toPayment(rows[0]);
   }
 
-  async completePayment(orderId: string, paymentId: string, days: number) {
-    // Marking the order paid and extending the pass happen together, and only
-    // once: a second verification of the same order finds it already paid.
-    const { rows } = await this.pool.query<{ paid_until: Date }>(
-      `WITH paid AS (
-         UPDATE payments SET status = 'paid', payment_id = $2, paid_at = now()
-          WHERE order_id = $1 AND status = 'created'
-          RETURNING user_id
-       )
-       UPDATE accounts a
-          SET paid_until = greatest(a.paid_until, now()) + make_interval(days => $3)
-         FROM paid WHERE a.id = paid.user_id
-       RETURNING a.paid_until`,
-      [orderId, paymentId, days],
+  async openOrder(
+    userId: string,
+    amount: number,
+    currency: string,
+    minutes: number,
+  ) {
+    const { rows } = await this.pool.query<PaymentRow>(
+      `SELECT * FROM payments
+        WHERE user_id = $1 AND status = 'created'
+          AND amount = $2 AND currency = $3
+          AND created_at > now() - make_interval(mins => $4)
+        ORDER BY created_at DESC
+        LIMIT 1`,
+      [userId, amount, currency, minutes],
     );
-    return rows[0] ? iso(rows[0].paid_until) : undefined;
+    return rows[0] && toPayment(rows[0]);
+  }
+
+  async recordPayment(capture: Capture, days: number): Promise<CaptureResult> {
+    // One transaction, locking the order and then the account (always in
+    // that order, so two payments can't deadlock). The checkout, the webhook
+    // and a retry of either can arrive together: whichever locks the order
+    // first applies the payment, and the rest find it paid. Two different
+    // orders for one account each wait for the account row, so each extends
+    // the pass from where the other left it.
+    return this.transaction(async (client): Promise<CaptureResult> => {
+      const { rows } = await client.query<PaymentRow>(
+        `SELECT * FROM payments WHERE order_id = $1 FOR UPDATE`,
+        [capture.orderId],
+      );
+      const order = rows[0];
+      if (!order) return { outcome: 'unknown' };
+      const userId = order.user_id;
+      if (
+        capture.amount !== undefined &&
+        (capture.amount !== order.amount || capture.currency !== order.currency)
+      )
+        return { outcome: 'mismatch', userId };
+      if (order.status === 'paid') {
+        if (order.payment_id === capture.paymentId)
+          return { outcome: 'repeat', userId };
+        await this.logCapture(client, capture, order, false);
+        return { outcome: 'extra', userId };
+      }
+      const account = await client.query<{ paid_until: Date }>(
+        `UPDATE accounts
+            SET paid_until = greatest(paid_until, now()) + make_interval(days => $2)
+          WHERE id = $1
+          RETURNING paid_until`,
+        [userId, days],
+      );
+      if (!account.rows[0]) return { outcome: 'unknown' };
+      await client.query(
+        `UPDATE payments SET status = 'paid', payment_id = $2, paid_at = now()
+          WHERE order_id = $1`,
+        [capture.orderId, capture.paymentId],
+      );
+      await this.logCapture(client, capture, order, true);
+      return {
+        outcome: 'applied',
+        userId,
+        paidUntil: iso(account.rows[0].paid_until),
+      };
+    });
+  }
+
+  /**
+   * Keeps every capture in a ledger, including extra payments on an order
+   * that was already paid, which need refunding. Written under a savepoint so
+   * a database that hasn't been migrated yet still records the payment.
+   */
+  private async logCapture(
+    client: pg.PoolClient,
+    capture: Capture,
+    order: PaymentRow,
+    applied: boolean,
+  ) {
+    await client.query('SAVEPOINT capture_log');
+    try {
+      await client.query(
+        `INSERT INTO payment_captures
+           (payment_id, order_id, user_id, amount, currency, source, applied)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         ON CONFLICT (payment_id) DO NOTHING`,
+        [
+          capture.paymentId,
+          capture.orderId,
+          order.user_id,
+          capture.amount ?? order.amount,
+          capture.currency ?? order.currency,
+          capture.source,
+          applied,
+        ],
+      );
+      await client.query('RELEASE SAVEPOINT capture_log');
+    } catch (error) {
+      await client.query('ROLLBACK TO SAVEPOINT capture_log');
+      console.error('Could not log a payment capture', error);
+    }
   }
 }
