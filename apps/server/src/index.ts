@@ -40,6 +40,7 @@ import {
   sendEmailVerification,
   sendFeedback,
   sendPasswordResetCode,
+  sendPremiumWelcome,
   teamMailConfigured,
 } from './mail.js';
 import {
@@ -67,6 +68,7 @@ import {
   saveImage,
   sniffImage,
 } from './images.js';
+import { applyPayment } from './payments.js';
 import { pageIdSchema, pageNameSchema } from './schemas.js';
 import { TEMPLATES, templateObjects } from './templates.js';
 import {
@@ -97,9 +99,13 @@ function sendMailInBackground(
   request: FastifyRequest,
   label: string,
 ) {
-  const delivery = task.catch((error) => request.log.error(error, label));
-  if (process.env.VERCEL) waitUntil(delivery);
-  else void delivery;
+  runInBackground(task.catch((error) => request.log.error(error, label)));
+}
+
+/** Keeps the function alive on Vercel until `task`, which must not reject, ends. */
+function runInBackground(task: Promise<void>) {
+  if (process.env.VERCEL) waitUntil(task);
+  else void task;
 }
 
 attachRealtime(app.server);
@@ -1186,14 +1192,15 @@ async function applyCapture(
   capture: Capture,
   log: FastifyRequest['log'],
 ): Promise<CaptureResult> {
-  const result = await store.recordPayment(capture, config.passDays);
-  const context = { ...capture, outcome: result.outcome };
-  if (result.outcome === 'extra')
-    log.warn(context, 'Extra payment on an order already paid: refund it');
-  else if (result.outcome === 'mismatch')
-    log.error(context, 'Captured amount differs from the order');
-  else if (result.outcome === 'applied') {
-    log.info(context, 'Payment applied');
+  const result = await applyPayment(capture, {
+    store,
+    passDays: config.passDays,
+    appUrl: config.appUrl,
+    log,
+    welcome: mailConfigured() ? sendPremiumWelcome : undefined,
+    background: runInBackground,
+  });
+  if (result.outcome === 'applied') {
     for (const boardId of await store.boardIdsFor(result.userId)) {
       const board = await store.getMeta(boardId);
       if (board?.ownerId === result.userId) broadcastBoard(board);

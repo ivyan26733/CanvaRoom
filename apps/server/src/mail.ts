@@ -152,3 +152,88 @@ export async function sendFeedback(feedback: FeedbackMail) {
 </div>`;
   await send(config.feedbackTo, subject, html, text, feedback.email);
 }
+
+/** Where customers write to us; replies to customer mail land here too. */
+export const SUPPORT_EMAIL = 'canvacollabroom@gmail.com';
+
+const PREMIUM_PERKS = [
+  'Unlimited boards, and unlimited people on each one',
+  'Follow-the-writer, so every screen goes where you write',
+  'Export any page to PNG, SVG or PDF',
+  'Images on the board to write over',
+  'Session recording with voice, up to 4K',
+];
+
+export type PremiumWelcome = {
+  name: string;
+  /** In the currency's smallest unit (cents). */
+  amount: number;
+  currency: string;
+  paymentId: string;
+  paidUntil: string;
+  appUrl: string;
+};
+
+/** The thank-you email for a Premium payment, as subject, HTML and text. */
+export function premiumWelcomeEmail(welcome: PremiumWelcome) {
+  const paid = new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: welcome.currency,
+  }).format(welcome.amount / 100);
+  const until = new Intl.DateTimeFormat('en-GB', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+    timeZone: 'UTC',
+  }).format(new Date(welcome.paidUntil));
+  const dashboard = `${welcome.appUrl}/dashboard`;
+  const feedback = `${welcome.appUrl}/contact#feedback`;
+  const details = [
+    ['Amount paid', `${paid} ${welcome.currency}`],
+    ['Payment ID', welcome.paymentId],
+    ['Premium until', until],
+  ];
+  const subject = 'Welcome to the CanvaRoom family';
+  const text = `Hi ${welcome.name},
+
+Welcome to the CanvaRoom family, and thank you for joining Premium. Your payment went through and Premium is active on your account.
+
+${details.map(([key, value]) => `${key}: ${value}`).join('\n')}
+
+What Premium gives you:
+${PREMIUM_PERKS.map((perk) => `- ${perk}`).join('\n')}
+
+Open your boards: ${dashboard}
+
+Any complaint, or a feature you'd like? Just reply to this email or write to ${SUPPORT_EMAIL}. You can also send feedback here: ${feedback}
+
+Premium doesn't renew on its own. We'll be glad to see you renew when the month is up.
+
+Thanks for being with us,
+The CanvaRoom team`;
+  const html = `<div style="font-family:system-ui,-apple-system,Segoe UI,sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;color:#141413;line-height:1.55">
+  <p style="font-size:20px;font-weight:700;margin:0 0 24px">CanvaRoom</p>
+  <p style="font-size:22px;font-weight:700;margin:0 0 16px">Welcome to the CanvaRoom family</p>
+  <p style="margin:0 0 16px">Hi ${escapeHtml(welcome.name)},</p>
+  <p style="margin:0 0 20px">Thank you for joining Premium. Your payment went through and Premium is active on your account.</p>
+  <table style="border-collapse:collapse;margin:0 0 24px;font-size:14px;width:100%;background:#f6f4ef;border-radius:10px">${details
+    .map(
+      ([key, value]) =>
+        `<tr><td style="padding:10px 16px;color:#57544d">${escapeHtml(key!)}</td><td style="padding:10px 16px;font-weight:600;text-align:right">${escapeHtml(value!)}</td></tr>`,
+    )
+    .join('')}</table>
+  <p style="margin:0 0 8px;font-weight:700">What Premium gives you</p>
+  <ul style="margin:0 0 24px;padding-left:20px">${PREMIUM_PERKS.map((perk) => `<li style="margin:0 0 4px">${escapeHtml(perk)}</li>`).join('')}</ul>
+  <p style="margin:0 0 28px"><a href="${escapeHtml(dashboard)}" style="display:inline-block;background:#ff4f1f;color:#fff;text-decoration:none;font-weight:600;padding:12px 22px;border-radius:999px">Open your boards</a></p>
+  <p style="margin:0 0 16px">Any complaint, or a feature you’d like? Just reply to this email or write to <a href="mailto:${SUPPORT_EMAIL}" style="color:#ff4f1f">${SUPPORT_EMAIL}</a>. You can also <a href="${escapeHtml(feedback)}" style="color:#ff4f1f">send us feedback</a>.</p>
+  <p style="margin:0 0 24px;color:#57544d;font-size:14px">Premium doesn’t renew on its own. We’ll be glad to see you renew when the month is up.</p>
+  <p style="margin:0">Thanks for being with us,<br>The CanvaRoom team</p>
+</div>`;
+  return { subject, html, text };
+}
+
+/** Thanks a customer for a Premium payment. */
+export async function sendPremiumWelcome(to: string, welcome: PremiumWelcome) {
+  const { subject, html, text } = premiumWelcomeEmail(welcome);
+  await send(to, subject, html, text, SUPPORT_EMAIL);
+}
