@@ -1259,19 +1259,23 @@ async function applyRefund(
   return result;
 }
 
-/** Rupees for visitors in India, by the country Vercel's edge sets; dollars elsewhere. */
-const currencyOf = (request: FastifyRequest) =>
-  currencyForCountry(
-    request.headers['x-vercel-ip-country'] as string | undefined,
-  );
+/**
+ * Rupees for visitors in India, by the country Vercel's edge sets; dollars
+ * elsewhere. While PayPal is in sandbox mode its testers get dollars, and so
+ * PayPal, wherever they are, so they can test without a VPN.
+ */
+const currencyOf = (request: FastifyRequest, email?: string) =>
+  config.paypal?.mode === 'sandbox' && paypalAllowedFor(email)
+    ? 'USD'
+    : currencyForCountry(
+        request.headers['x-vercel-ip-country'] as string | undefined,
+      );
 
 app.get('/api/billing/plan', async (request) => {
-  const currency = currencyOf(request);
   const user = await userFromRequest(request.raw).catch(() => undefined);
-  const provider = checkoutFor(
-    currency,
-    user && !user.guest ? user.email : undefined,
-  );
+  const email = user && !user.guest ? user.email : undefined;
+  const currency = currencyOf(request, email);
+  const provider = checkoutFor(currency, email);
   return {
     available: Boolean(provider),
     currency,
@@ -1325,7 +1329,7 @@ app.post('/api/billing/create-order', async (request, reply) => {
     .object({ plan: z.enum(PLAN_IDS).default('quarterly') })
     .safeParse(request.body ?? {});
   if (!body.success) return apiError(reply, 400, 'Choose a plan.');
-  const currency = currencyOf(request);
+  const currency = currencyOf(request, user.email);
   const price = planById(body.data.plan, currency)!;
   const provider = checkoutFor(currency, user.email);
   if (!provider) return apiError(reply, 503, 'Payments aren’t available yet.');
