@@ -3,7 +3,13 @@ import { FooterAccountLinks } from './plan-cta';
 import { SiteHeader } from './site-header';
 import { HOME_FAQ, SITE, USE_CASES, type Faq } from '../lib/site';
 import { Logo } from './icons';
-import { decimal, planBonus, planLength, PLANS } from '../lib/pricing';
+import {
+  decimal,
+  planBonus,
+  planLength,
+  PLANS_BY_CURRENCY,
+  type Currency,
+} from '../lib/pricing';
 import { Pricing } from './pricing';
 import { Story } from './story';
 
@@ -36,22 +42,28 @@ export const appSchema = {
       price: '0',
       priceCurrency: 'USD',
     },
-    ...PLANS.map((plan) => ({
-      '@type': 'Offer',
-      name: `CanvaRoom Premium, ${planLength(plan)}${planBonus(plan) ? ` (${planBonus(plan)})` : ''}`,
-      price: decimal(plan.amount),
-      priceCurrency: 'USD',
-      priceSpecification: {
-        '@type': 'UnitPriceSpecification',
+    // Dollars worldwide; rupees for buyers in India.
+    ...(['USD', 'INR'] as Currency[]).flatMap((currency) =>
+      PLANS_BY_CURRENCY[currency].map((plan) => ({
+        '@type': 'Offer',
+        name: `CanvaRoom Premium, ${planLength(plan)}${planBonus(plan) ? ` (${planBonus(plan)})` : ''}${currency === 'INR' ? ', India' : ''}`,
         price: decimal(plan.amount),
-        priceCurrency: 'USD',
-        referenceQuantity: {
-          '@type': 'QuantitativeValue',
-          value: plan.months,
-          unitCode: 'MON',
+        priceCurrency: currency,
+        ...(currency === 'INR'
+          ? { eligibleRegion: { '@type': 'Country', name: 'IN' } }
+          : {}),
+        priceSpecification: {
+          '@type': 'UnitPriceSpecification',
+          price: decimal(plan.amount),
+          priceCurrency: currency,
+          referenceQuantity: {
+            '@type': 'QuantitativeValue',
+            value: plan.months,
+            unitCode: 'MON',
+          },
         },
-      },
-    })),
+      })),
+    ),
   ],
   featureList: [
     'Real-time collaborative drawing',
@@ -139,11 +151,11 @@ export function MarketingFooter() {
 }
 
 /** Crawlable detail below the sign-in screen on the home page. */
-export function HomeContent() {
+export function HomeContent({ currency }: { currency: Currency }) {
   return (
     <div className="mk mk-home">
       <Story />
-      <Pricing />
+      <Pricing currency={currency} />
 
       <section
         className="mk-uses"

@@ -107,14 +107,38 @@ const paymentEntity = z.object({
   status: z.string(),
 });
 
+const refundEntity = z.object({
+  payment_id: z.string().regex(PAYMENT_ID),
+  amount: z.number().int().positive(),
+  currency: z.string().regex(/^[A-Z]{3}$/),
+  status: z.string(),
+});
+
 const webhookSchema = z.object({
   event: z.string(),
   payload: z
     .object({
       payment: z.object({ entity: paymentEntity }).optional(),
+      refund: z.object({ entity: refundEntity }).optional(),
     })
     .optional(),
 });
+
+/**
+ * The refund a `refund.processed` webhook reports: the payment it took money
+ * back from, and how much. Other events give undefined.
+ */
+export function webhookRefund(body: unknown) {
+  const parsed = webhookSchema.safeParse(body);
+  if (!parsed.success || parsed.data.event !== 'refund.processed') return;
+  const refund = parsed.data.payload?.refund?.entity;
+  if (!refund || refund.status !== 'processed') return;
+  return {
+    paymentId: refund.payment_id,
+    amount: refund.amount,
+    currency: refund.currency,
+  };
+}
 
 /**
  * The captured payment a webhook reports, from `payment.captured` or

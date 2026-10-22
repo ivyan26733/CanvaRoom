@@ -168,7 +168,7 @@ export function PremiumTag() {
 
 /**
  * Listens for the paywall from anywhere on the page and shows the upgrade
- * dialog with Razorpay checkout.
+ * dialog, with Razorpay or PayPal checkout.
  */
 export function BillingProvider({ children }: { children: React.ReactNode }) {
   // Why the dialog opened (empty for a plain upgrade), and the plan to show

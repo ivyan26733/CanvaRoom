@@ -39,7 +39,7 @@ export type Faq = { q: string; a: string };
 /** How the plans read in copy. The prices match the server's plans. */
 export const PLAN_COPY = {
   premium:
-    'a one-time payment of $20 for 3 months, $35 for 6 months plus 15 days free, or $65 for 12 months plus a month free, with nothing renewing on its own',
+    'a one-time payment of $20 for 3 months, $35 for 6 months plus 15 days free, or $65 for 12 months plus a month free (in India: ₹499, ₹849 or ₹1,499), with nothing renewing on its own',
   trial:
     'Every new account gets a free trial of 30 minutes of active use (the clock only runs while CanvaRoom is open in front of you): up to two boards, with two people besides you on each, live drawing, voice, chat, and templates',
   free: 'After the trial, the free plan keeps your first board for you to use on your own',
@@ -49,6 +49,10 @@ export const HOME_FAQ: Faq[] = [
   {
     q: 'Is CanvaRoom free?',
     a: `${PLAN_COPY.trial}. ${PLAN_COPY.free}. Premium is ${PLAN_COPY.premium}, and adds unlimited boards and people, export, images, and HD recording. Scratch boards stay free with no sign-up.`,
+  },
+  {
+    q: 'How can I pay for Premium?',
+    a: 'Outside India you pay in US dollars with PayPal, or with a debit or credit card where PayPal offers it. In India you pay in rupees by UPI, card or netbanking. Either way it is a single payment: nothing renews on its own, and we email you a few days before Premium ends.',
   },
   {
     q: 'Do the people I invite need an account?',

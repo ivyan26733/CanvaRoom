@@ -4418,6 +4418,19 @@ kbd {
   color: var(--ink-2);
   font-size: 12.5px;
 }
+/* PayPal's buttons draw in their own frame; this only sizes and spaces it. */
+.upgrade-paypal-label {
+  margin: 16px 0 10px;
+  font-weight: 600;
+  font-size: 14px;
+}
+.upgrade-paypal {
+  min-height: 52px;
+  margin: 0 0 6px;
+  /* PayPal's frames sit on white; this keeps them readable in dark mode. */
+  border-radius: 14px;
+  color-scheme: light;
+}
 @media (max-width: 520px) {
   .upgrade-plans {
     grid-template-columns: minmax(0, 1fr);

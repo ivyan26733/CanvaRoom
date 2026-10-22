@@ -177,7 +177,7 @@ export type PremiumWelcome = {
   name: string;
   /** What was bought, like "6 months + 15 days free". */
   term: string;
-  /** In the currency's smallest unit (cents). */
+  /** In the currency's smallest unit (cents, paise). */
   amount: number;
   currency: string;
   paymentId: string;
@@ -187,10 +187,11 @@ export type PremiumWelcome = {
 
 /** The thank-you email for a Premium payment, as subject, HTML and text. */
 export function premiumWelcomeEmail(welcome: PremiumWelcome) {
-  const paid = new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: welcome.currency,
-  }).format(welcome.amount / 100);
+  // Rupees read as ₹1,499.00, dollars as $65.00.
+  const paid = new Intl.NumberFormat(
+    welcome.currency === 'INR' ? 'en-IN' : 'en-US',
+    { style: 'currency', currency: welcome.currency },
+  ).format(welcome.amount / 100);
   const until = longDate(welcome.paidUntil);
   const dashboard = `${welcome.appUrl}/dashboard`;
   const feedback = `${welcome.appUrl}/contact#feedback`;

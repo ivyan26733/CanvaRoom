@@ -236,9 +236,12 @@ export type Feedback = {
   createdAt: string;
 };
 
-/** A Razorpay order this server created, and whether it has been paid. */
+/** An order this server created with Razorpay or PayPal, and whether it has been paid. */
 export type Payment = {
   orderId: string;
+  /** Who took the payment. Missing on orders from before PayPal, and before
+   * the database stores it: those are Razorpay's (IDs start `order_`). */
+  provider?: PaymentProvider;
   userId: string;
   amount: number;
   currency: string;
@@ -251,7 +254,16 @@ export type Payment = {
   paymentId?: string;
   createdAt: string;
   paidAt?: string;
+  /** When a full refund took the order's Premium time back. */
+  refundedAt?: string;
 };
+
+export type PaymentProvider = 'razorpay' | 'paypal';
+
+/** Who took an order: as stored, or else from the shape of its ID. */
+export const providerOf = (payment: Pick<Payment, 'orderId' | 'provider'>) =>
+  payment.provider ??
+  (payment.orderId.startsWith('order_') ? 'razorpay' : 'paypal');
 
 /** An account whose Premium ends soon, to remind once per end date. */
 export type PremiumReminder = {
@@ -262,9 +274,9 @@ export type PremiumReminder = {
 };
 
 /**
- * A captured Razorpay payment for one of our orders. The same payment can be
- * reported by the browser after checkout, by Razorpay's webhook, and by
- * reconciling an order, in any order and more than once.
+ * A captured payment (Razorpay or PayPal) for one of our orders. The same
+ * payment can be reported by the browser after checkout, by the provider's
+ * webhook, and by reconciling an order, in any order and more than once.
  */
 export type Capture = {
   orderId: string;
@@ -286,6 +298,18 @@ export type CaptureResult =
   | { outcome: 'mismatch'; userId: string }
   /** Not one of our orders. */
   | { outcome: 'unknown' };
+
+export type RefundResult =
+  /** A full refund: the order's Premium time was taken back. */
+  | { outcome: 'refunded'; userId: string; paidUntil?: string }
+  /** This refund was handled before. */
+  | { outcome: 'repeat'; userId: string }
+  /** Less than the whole order was refunded; Premium is left alone. */
+  | { outcome: 'partial'; userId: string }
+  /** No paid order of ours has this payment. */
+  | { outcome: 'unknown' }
+  /** The database can't record refunds until it is migrated. */
+  | { outcome: 'unmigrated' };
 
 export type Account = {
   id: string;

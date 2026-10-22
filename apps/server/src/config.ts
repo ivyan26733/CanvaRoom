@@ -44,6 +44,20 @@ const environmentSchema = z.object({
   // Secret of the webhook set up in the Razorpay dashboard. Without it the
   // webhook route refuses every call.
   RAZORPAY_WEBHOOK_SECRET: z.string().optional(),
+  // PayPal Checkout for buyers outside India. PAYPAL_MODE picks the keys:
+  // 'sandbox' (the default) uses the sandbox app and lets only the emails in
+  // PAYPAL_SANDBOX_TESTERS pay; 'live' takes real money from everyone.
+  PAYPAL_MODE: z.enum(['sandbox', 'live']).default('sandbox'),
+  PAYPAL_CLIENT_ID: z.string().optional(),
+  PAYPAL_CLIENT_SECRET: z.string().optional(),
+  PAYPAL_SANDBOX_CLIENT_ID: z.string().optional(),
+  PAYPAL_SANDBOX_CLIENT_SECRET: z.string().optional(),
+  PAYPAL_SANDBOX_TESTERS: z.string().optional(),
+  // The ID of the webhook registered for the current mode. Without it the
+  // PayPal webhook refuses every call.
+  PAYPAL_WEBHOOK_ID: z.string().optional(),
+  // PayPal's API, replaceable with a local stand-in in tests.
+  PAYPAL_API_URL: z.url().optional(),
   // Days a one-month order from before the 3/6/12-month plans still buys.
   // The plans themselves are in src/plans.ts.
   BILLING_PASS_DAYS: z.coerce.number().int().min(1).max(366).default(30),
@@ -64,6 +78,31 @@ if (!parsed.success) {
 }
 
 const env = parsed.data;
+
+/** The PayPal app for the current mode, when both its keys are set. */
+function paypalConfig() {
+  const live = env.PAYPAL_MODE === 'live';
+  const clientId = (
+    live ? env.PAYPAL_CLIENT_ID : env.PAYPAL_SANDBOX_CLIENT_ID
+  )?.trim();
+  const clientSecret = (
+    live ? env.PAYPAL_CLIENT_SECRET : env.PAYPAL_SANDBOX_CLIENT_SECRET
+  )?.trim();
+  if (!clientId || !clientSecret) return undefined;
+  return {
+    mode: env.PAYPAL_MODE,
+    clientId,
+    clientSecret,
+    webhookId: env.PAYPAL_WEBHOOK_ID?.trim() || undefined,
+    apiUrl: env.PAYPAL_API_URL?.replace(/\/$/, ''),
+    testers: new Set(
+      (env.PAYPAL_SANDBOX_TESTERS ?? '')
+        .split(',')
+        .map((email) => email.trim().toLowerCase())
+        .filter(Boolean),
+    ),
+  };
+}
 
 export const config = {
   serverHost: env.SERVER_HOST,
@@ -87,6 +126,7 @@ export const config = {
     env.RAZORPAY_KEY_ID && env.RAZORPAY_KEY_SECRET
       ? { keyId: env.RAZORPAY_KEY_ID, keySecret: env.RAZORPAY_KEY_SECRET }
       : undefined,
+  paypal: paypalConfig(),
   razorpayWebhookSecret: env.RAZORPAY_WEBHOOK_SECRET?.trim() || undefined,
   passDays: env.BILLING_PASS_DAYS,
   cronSecret: env.CRON_SECRET?.trim() || undefined,

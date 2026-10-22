@@ -9,11 +9,13 @@ import {
   MAX_SNAPSHOTS,
   accruedTrial,
   planOf,
+  providerOf,
 } from './models.js';
 import { PostgresStore } from './pg-store.js';
 import {
   extendBy,
   planOfOrder,
+  shortenBy,
   termOfOrder,
   type PremiumPlan,
 } from './plans.js';
@@ -29,7 +31,9 @@ import type {
   Page,
   Feedback,
   Payment,
+  PaymentProvider,
   PremiumReminder,
+  RefundResult,
   Plan,
   Presence,
   SessionRecord,
@@ -146,11 +150,15 @@ export interface Store {
    * Returns the account's plan after counting.
    */
   accrueTrial(userId: string): Promise<Plan | undefined>;
-  /** The user's newest unpaid order for this plan, made in the last `minutes`. */
+  /**
+   * The user's newest unpaid order for this plan with this provider, made in
+   * the last `minutes`.
+   */
   openOrder(
     userId: string,
     plan: PremiumPlan,
     minutes: number,
+    provider: PaymentProvider,
   ): Promise<Payment | undefined>;
   /**
    * Applies a captured payment exactly once: the order is marked paid and its
@@ -160,6 +168,14 @@ export interface Store {
    * that is already paid, change nothing.
    */
   recordPayment(capture: Capture, legacyDays: number): Promise<CaptureResult>;
+  /**
+   * Takes back the Premium time a fully refunded payment bought (never past
+   * now), once. A partial refund is reported and changes nothing.
+   */
+  refundPayment(
+    refund: { paymentId: string; amount: number; currency: string },
+    legacyDays: number,
+  ): Promise<RefundResult>;
   /**
    * Marks, and returns, up to `limit` accounts whose Premium ends within
    * `withinDays` and that haven't been reminded about that end date. Paying
@@ -186,8 +202,14 @@ const firstBoardOf = (
     )[0]?.id;
 
 /** Whether an unpaid order is a recent one for `plan`, so it can be reused. */
-const reusable = (payment: Payment, plan: PremiumPlan, since: number) =>
+const reusable = (
+  payment: Payment,
+  plan: PremiumPlan,
+  since: number,
+  provider: PaymentProvider,
+) =>
   payment.status === 'created' &&
+  providerOf(payment) === provider &&
   payment.amount === plan.amount &&
   payment.currency === plan.currency &&
   planOfOrder(payment)?.id === plan.id &&
@@ -763,10 +785,16 @@ export class RedisStore implements Store {
     return planOf(next);
   }
 
-  async openOrder(userId: string, plan: PremiumPlan, minutes: number) {
+  async openOrder(
+    userId: string,
+    plan: PremiumPlan,
+    minutes: number,
+    provider: PaymentProvider,
+  ) {
     const orderId = await this.redis.get(keys.openOrder(userId));
     const payment = orderId ? await this.getPayment(orderId) : undefined;
-    return payment && reusable(payment, plan, Date.now() - minutes * 60_000)
+    return payment &&
+      reusable(payment, plan, Date.now() - minutes * 60_000, provider)
       ? payment
       : undefined;
   }
@@ -789,6 +817,11 @@ export class RedisStore implements Store {
       );
     }
     return result;
+  }
+
+  async refundPayment(): Promise<RefundResult> {
+    // Only Postgres handles refunds; Redis can't find an order by payment.
+    return { outcome: 'unknown' };
   }
 
   async claimPremiumReminders(): Promise<PremiumReminder[]> {
@@ -1192,12 +1225,17 @@ export class MemoryStore implements Store {
     return planOf(next);
   }
 
-  async openOrder(userId: string, plan: PremiumPlan, minutes: number) {
+  async openOrder(
+    userId: string,
+    plan: PremiumPlan,
+    minutes: number,
+    provider: PaymentProvider,
+  ) {
     const since = Date.now() - minutes * 60_000;
     return [...this.payments.values()]
       .filter(
         (payment) =>
-          payment.userId === userId && reusable(payment, plan, since),
+          payment.userId === userId && reusable(payment, plan, since, provider),
       )
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
   }
@@ -1218,6 +1256,32 @@ export class MemoryStore implements Store {
       this.scheduleSave();
     }
     return result;
+  }
+
+  async refundPayment(
+    refund: { paymentId: string; amount: number; currency: string },
+    legacyDays: number,
+  ): Promise<RefundResult> {
+    // Nothing awaits between reading and writing, so this is atomic.
+    const payment = [...this.payments.values()].find(
+      (item) => item.paymentId === refund.paymentId && item.status === 'paid',
+    );
+    const account = payment && this.accounts.get(payment.userId);
+    if (!payment || !account) return { outcome: 'unknown' };
+    const { userId } = payment;
+    if (payment.refundedAt) return { outcome: 'repeat', userId };
+    if (refund.currency !== payment.currency || refund.amount < payment.amount)
+      return { outcome: 'partial', userId };
+    const paidUntil = account.paidUntil
+      ? shortenBy(account.paidUntil, termOfOrder(payment, legacyDays))
+      : undefined;
+    this.payments.set(payment.orderId, {
+      ...payment,
+      refundedAt: new Date().toISOString(),
+    });
+    if (paidUntil) this.accounts.set(userId, { ...account, paidUntil });
+    this.scheduleSave();
+    return { outcome: 'refunded', userId, ...(paidUntil ? { paidUntil } : {}) };
   }
 
   async claimPremiumReminders(withinDays: number, limit: number) {

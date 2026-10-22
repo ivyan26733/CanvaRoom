@@ -107,16 +107,27 @@ describe('plans', () => {
     );
   });
 
-  test('match what the web app shows', () => {
-    // The web app's table has every field but the receipt name and currency.
-    const fields = Object.keys(
-      web.PLANS[0]!,
-    ) as (keyof (typeof web.PLANS)[0])[];
-    assert.deepEqual(
-      plans.PLANS.map((plan) =>
-        Object.fromEntries(fields.map((field) => [field, plan[field]])),
-      ),
-      web.PLANS,
-    );
-  });
+  for (const currency of plans.CURRENCIES)
+    test(`match what the web app shows, in ${currency}`, () => {
+      // The web app's table has every field but the receipt name.
+      const fields = Object.keys(
+        web.PLANS[0]!,
+      ) as (keyof (typeof web.PLANS)[0])[];
+      assert.deepEqual(
+        plans
+          .plansFor(currency)
+          .map((plan) =>
+            Object.fromEntries(fields.map((field) => [field, plan[field]])),
+          ),
+        web.PLANS_BY_CURRENCY[currency],
+      );
+      assert.equal(
+        web.currencyForCountry('IN'),
+        plans.currencyForCountry('IN'),
+      );
+      assert.equal(
+        web.currencyForCountry('NO'),
+        plans.currencyForCountry('NO'),
+      );
+    });
 });

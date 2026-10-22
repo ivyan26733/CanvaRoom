@@ -1,4 +1,4 @@
-import { cookies } from 'next/headers';
+import { cookies, headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import {
   appSchema,
@@ -8,6 +8,7 @@ import {
 } from './components/marketing';
 import { HomeClient } from './home-client';
 import { HOME_FAQ, SITE } from './lib/site';
+import { currencyForCountry } from './lib/pricing';
 
 export default async function HomePage({
   searchParams,
@@ -23,6 +24,10 @@ export default async function HomePage({
   }
   // Set by the API on sign-in; its value is checked there, not here.
   const hasSession = (await cookies()).has('cb_session');
+  // Vercel's edge sets the visitor's country: prices show in rupees in India.
+  const currency = currencyForCountry(
+    (await headers()).get('x-vercel-ip-country'),
+  );
   return (
     <>
       <JsonLd
@@ -38,7 +43,7 @@ export default async function HomePage({
         ]}
       />
       <HomeClient hasSession={hasSession}>
-        <HomeContent />
+        <HomeContent currency={currency} />
       </HomeClient>
     </>
   );

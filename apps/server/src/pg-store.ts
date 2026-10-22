@@ -5,6 +5,7 @@ import {
   MAX_SNAPSHOTS,
   ACTIVE_GAP_MS,
   planOf,
+  providerOf,
   TRIAL_SECONDS,
 } from './models.js';
 import type {
@@ -19,8 +20,10 @@ import type {
   Page,
   Feedback,
   Payment,
+  PaymentProvider,
   PremiumReminder,
   Presence,
+  RefundResult,
   SessionRecord,
   Snapshot,
 } from './models.js';
@@ -112,6 +115,9 @@ type PaymentRow = {
   payment_id: string | null;
   created_at: Date;
   paid_at: Date | null;
+  // Missing until the database is migrated for PayPal.
+  provider?: string | null;
+  refunded_at?: Date | null;
 };
 
 /** Postgres's "undefined column": the database isn't migrated yet. */
@@ -130,6 +136,10 @@ const toPayment = (row: PaymentRow): Payment => ({
   createdAt: iso(row.created_at),
   ...(row.payment_id ? { paymentId: row.payment_id } : {}),
   ...(row.paid_at ? { paidAt: iso(row.paid_at) } : {}),
+  ...(row.provider === 'razorpay' || row.provider === 'paypal'
+    ? { provider: row.provider }
+    : {}),
+  ...(row.refunded_at ? { refundedAt: iso(row.refunded_at) } : {}),
 });
 
 /** Builds `SET a = $2, b = $3` from the fields that are present. */
@@ -705,25 +715,38 @@ export class PostgresStore implements Store {
       payment.status,
       payment.createdAt,
     ];
-    try {
-      await this.pool.query(
+    const plan = [
+      payment.plan ?? null,
+      payment.months ?? null,
+      payment.days ?? null,
+    ];
+    // Each step back drops columns a database not yet migrated lacks. The
+    // provider can still be told from the order ID, and the plan from the
+    // amount.
+    const attempts: [string, unknown[]][] = [
+      [
+        `INSERT INTO payments (order_id, user_id, amount, currency, status, created_at, plan, months, days, provider)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+        [...values, ...plan, providerOf(payment)],
+      ],
+      [
         `INSERT INTO payments (order_id, user_id, amount, currency, status, created_at, plan, months, days)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-        [
-          ...values,
-          payment.plan ?? null,
-          payment.months ?? null,
-          payment.days ?? null,
-        ],
-      );
-    } catch (error) {
-      if (!missingColumn(error)) throw error;
-      // Not migrated yet: the order's amount still tells which plan it is.
-      await this.pool.query(
+        [...values, ...plan],
+      ],
+      [
         `INSERT INTO payments (order_id, user_id, amount, currency, status, created_at)
          VALUES ($1, $2, $3, $4, $5, $6)`,
         values,
-      );
+      ],
+    ];
+    for (const [index, [sql, params]] of attempts.entries()) {
+      try {
+        await this.pool.query(sql, params);
+        return;
+      } catch (error) {
+        if (!missingColumn(error) || index === attempts.length - 1) throw error;
+      }
     }
   }
 
@@ -760,7 +783,12 @@ export class PostgresStore implements Store {
     return rows[0] && toPayment(rows[0]);
   }
 
-  async openOrder(userId: string, plan: PremiumPlan, minutes: number) {
+  async openOrder(
+    userId: string,
+    plan: PremiumPlan,
+    minutes: number,
+    provider: PaymentProvider,
+  ) {
     const { rows } = await this.pool.query<PaymentRow>(
       `SELECT * FROM payments
         WHERE user_id = $1 AND status = 'created'
@@ -779,7 +807,11 @@ export class PostgresStore implements Store {
     );
     return rows
       .map(toPayment)
-      .find((payment) => planOfOrder(payment)?.id === plan.id);
+      .find(
+        (payment) =>
+          providerOf(payment) === provider &&
+          planOfOrder(payment)?.id === plan.id,
+      );
   }
 
   async recordPayment(
@@ -833,6 +865,51 @@ export class PostgresStore implements Store {
         outcome: 'applied',
         userId,
         paidUntil: iso(account.rows[0].paid_until),
+      };
+    });
+  }
+
+  async refundPayment(
+    refund: { paymentId: string; amount: number; currency: string },
+    legacyDays: number,
+  ): Promise<RefundResult> {
+    // Locks the order, then the account, like recordPayment, so a refund and
+    // a payment for one account can't deadlock.
+    return this.transaction(async (client): Promise<RefundResult> => {
+      const { rows } = await client.query<PaymentRow>(
+        `SELECT * FROM payments
+          WHERE payment_id = $1 AND status = 'paid'
+          FOR UPDATE`,
+        [refund.paymentId],
+      );
+      const order = rows[0];
+      if (!order) return { outcome: 'unknown' };
+      // Without the column there is nowhere to remember the refund.
+      if (!('refunded_at' in order)) return { outcome: 'unmigrated' };
+      const userId = order.user_id;
+      if (order.refunded_at) return { outcome: 'repeat', userId };
+      if (refund.currency !== order.currency || refund.amount < order.amount)
+        return { outcome: 'partial', userId };
+      const term = termOfOrder(toPayment(order), legacyDays);
+      const account = await client.query<{ paid_until: Date | null }>(
+        `UPDATE accounts
+            SET paid_until = greatest(now(),
+                  -- The reverse of adding months then days: days come off first.
+                  paid_until - make_interval(days => $3)
+                    - make_interval(months => $2))
+          WHERE id = $1 AND paid_until IS NOT NULL
+          RETURNING paid_until`,
+        [userId, term.months, term.days],
+      );
+      await client.query(
+        `UPDATE payments SET refunded_at = now() WHERE order_id = $1`,
+        [order.order_id],
+      );
+      const paidUntil = account.rows[0]?.paid_until;
+      return {
+        outcome: 'refunded',
+        userId,
+        ...(paidUntil ? { paidUntil: iso(paidUntil) } : {}),
       };
     });
   }

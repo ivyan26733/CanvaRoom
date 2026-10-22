@@ -193,15 +193,21 @@ function paymentSuite(name: string, make: () => Store | undefined) {
       const userId = await account(store());
       const orderId = await order(store(), userId, 'quarterly');
       assert.equal(
-        (await store().openOrder(userId, quarterly, 20))?.orderId,
+        (await store().openOrder(userId, quarterly, 20, 'razorpay'))?.orderId,
         orderId,
       );
-      assert.equal(await store().openOrder(userId, halfYear, 20), undefined);
+      assert.equal(
+        await store().openOrder(userId, halfYear, 20, 'razorpay'),
+        undefined,
+      );
       await store().recordPayment(
         { orderId, paymentId: unique('pay_'), source: 'checkout' },
         30,
       );
-      assert.equal(await store().openOrder(userId, quarterly, 20), undefined);
+      assert.equal(
+        await store().openOrder(userId, quarterly, 20, 'razorpay'),
+        undefined,
+      );
     });
 
     test('a one-month order from before the plans is never reused', async (t) => {
@@ -213,6 +219,7 @@ function paymentSuite(name: string, make: () => Store | undefined) {
           userId,
           plans.planById('quarterly')!,
           60 * 24 * 365,
+          'razorpay',
         ),
         undefined,
       );
@@ -435,11 +442,16 @@ test('postgres sells plans before the plan columns exist', async (t) => {
     const orderId = await order(postgres, userId, 'half-year');
     const halfYear = plans.planById('half-year')!;
     assert.equal(
-      (await postgres.openOrder(userId, halfYear, 20))?.orderId,
+      (await postgres.openOrder(userId, halfYear, 20, 'razorpay'))?.orderId,
       orderId,
     );
     assert.equal(
-      await postgres.openOrder(userId, plans.planById('yearly')!, 20),
+      await postgres.openOrder(
+        userId,
+        plans.planById('yearly')!,
+        20,
+        'razorpay',
+      ),
       undefined,
     );
     const result = await postgres.recordPayment(

@@ -30,7 +30,6 @@ import {
   publicBoard,
 } from './boards.js';
 import {
-  billingConfigured,
   createOrder,
   ORDER_ID,
   orderCapture,
@@ -39,7 +38,19 @@ import {
   validPaymentSignature,
   validWebhookSignature,
   webhookCapture,
+  webhookRefund,
 } from './billing.js';
+import {
+  captureOfOrder,
+  capturePayPalOrder,
+  createPayPalOrder,
+  getPayPalOrder,
+  PAYPAL_ID,
+  paypalAllowedFor,
+  PayPalError,
+  readPayPalEvent,
+  verifyPayPalWebhook,
+} from './paypal.js';
 import {
   mailConfigured,
   sendEmailVerification,
@@ -75,13 +86,22 @@ import {
   sniffImage,
 } from './images.js';
 import { applyPayment, sendRenewalReminders } from './payments.js';
-import { PLAN_IDS, PLANS, planById, termOfPlan } from './plans.js';
+import { checkoutFor } from './checkout.js';
+import {
+  currencyForCountry,
+  PLAN_IDS,
+  planById,
+  plansFor,
+  termOfPlan,
+  type PremiumPlan,
+} from './plans.js';
 import { pageIdSchema, pageNameSchema } from './schemas.js';
 import { TEMPLATES, templateObjects } from './templates.js';
 import {
   DEFAULT_PAGES,
   FREE_BOARDS,
   pageOf,
+  providerOf,
   tierOf,
   TRIAL_BOARDS,
   TRIAL_GUESTS,
@@ -1216,11 +1236,59 @@ async function applyCapture(
   return result;
 }
 
-app.get('/api/billing/plan', async () => ({
-  available: billingConfigured(),
-  plans: PLANS,
-  limits: { trialBoards: TRIAL_BOARDS, trialGuests: TRIAL_GUESTS },
-}));
+/**
+ * Takes back the Premium time a fully refunded payment bought, and updates
+ * the owner's open boards when that ends Premium.
+ */
+async function applyRefund(
+  refund: { paymentId: string; amount: number; currency: string },
+  log: FastifyRequest['log'],
+) {
+  const result = await store.refundPayment(refund, config.passDays);
+  const context = { ...refund, outcome: result.outcome };
+  if (result.outcome === 'refunded') {
+    log.info(context, 'Refund took Premium time back');
+    for (const boardId of await store.boardIdsFor(result.userId)) {
+      const board = await store.getMeta(boardId);
+      if (board?.ownerId === result.userId) broadcastBoard(board);
+    }
+  } else if (result.outcome === 'partial')
+    log.warn(context, 'Partial refund: Premium left as it was');
+  else if (result.outcome === 'unmigrated')
+    log.error(context, 'Refund not applied: the database needs migrating');
+  return result;
+}
+
+/** Rupees for visitors in India, by the country Vercel's edge sets; dollars elsewhere. */
+const currencyOf = (request: FastifyRequest) =>
+  currencyForCountry(
+    request.headers['x-vercel-ip-country'] as string | undefined,
+  );
+
+app.get('/api/billing/plan', async (request) => {
+  const currency = currencyOf(request);
+  const user = await userFromRequest(request.raw).catch(() => undefined);
+  const provider = checkoutFor(
+    currency,
+    user && !user.guest ? user.email : undefined,
+  );
+  return {
+    available: Boolean(provider),
+    currency,
+    provider: provider ?? null,
+    plans: plansFor(currency),
+    // The client ID is public: PayPal's buttons load with it.
+    ...(provider === 'paypal' && config.paypal
+      ? {
+          paypal: {
+            clientId: config.paypal.clientId,
+            mode: config.paypal.mode,
+          },
+        }
+      : {}),
+    limits: { trialBoards: TRIAL_BOARDS, trialGuests: TRIAL_GUESTS },
+  };
+});
 
 // While the app is open in a visible tab, the page beats every ~20 seconds;
 // only that time counts towards the 30-minute trial. The server measures the
@@ -1257,7 +1325,12 @@ app.post('/api/billing/create-order', async (request, reply) => {
     .object({ plan: z.enum(PLAN_IDS).default('quarterly') })
     .safeParse(request.body ?? {});
   if (!body.success) return apiError(reply, 400, 'Choose a plan.');
-  const price = planById(body.data.plan)!;
+  const currency = currencyOf(request);
+  const price = planById(body.data.plan, currency)!;
+  const provider = checkoutFor(currency, user.email);
+  if (!provider) return apiError(reply, 503, 'Payments aren’t available yet.');
+  if (provider === 'paypal')
+    return paypalCheckout(request, reply, user.id, price);
   const checkout = (order: {
     orderId: string;
     amount: number;
@@ -1268,8 +1341,14 @@ app.post('/api/billing/create-order', async (request, reply) => {
     currency: order.currency,
     key_id: config.razorpay!.keyId,
     name: price.name,
+    provider: 'razorpay' as const,
   });
-  const open = await store.openOrder(user.id, price, ORDER_REUSE_MINUTES);
+  const open = await store.openOrder(
+    user.id,
+    price,
+    ORDER_REUSE_MINUTES,
+    'razorpay',
+  );
   if (open) {
     // Reuse it only while Razorpay says it is unpaid. If it was paid but we
     // never heard (the tab closed before checkout reported back), apply that
@@ -1294,6 +1373,7 @@ app.post('/api/billing/create-order', async (request, reply) => {
     await store.createPayment({
       ...order,
       userId: user.id,
+      provider: 'razorpay',
       plan: price.id,
       ...termOfPlan(price),
       status: 'created',
@@ -1317,6 +1397,174 @@ app.post('/api/billing/create-order', async (request, reply) => {
       'We couldn’t start the payment. Please try again in a moment.',
     );
   }
+});
+
+/** What the browser needs to open PayPal's buttons on an order. */
+const paypalOrderReply = (
+  order: { orderId: string; amount: number; currency: string },
+  plan: PremiumPlan,
+) => ({
+  provider: 'paypal' as const,
+  order_id: order.orderId,
+  amount: order.amount,
+  currency: order.currency,
+  name: plan.name,
+});
+
+/** The account's Premium end after a payment was found already made. */
+async function alreadyPaid(userId: string) {
+  const account = await store.getAccount(userId);
+  return { already_paid: true, paidUntil: account?.paidUntil };
+}
+
+/**
+ * Creates (or reuses) a PayPal order for a plan. An open order is reused while
+ * PayPal still waits on the buyer; one they approved but we never captured is
+ * captured now, and one already paid is applied, so a second click never
+ * charges twice.
+ */
+async function paypalCheckout(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  userId: string,
+  plan: PremiumPlan,
+) {
+  try {
+    const open = await store.openOrder(
+      userId,
+      plan,
+      ORDER_REUSE_MINUTES,
+      'paypal',
+    );
+    if (open) {
+      const state = await getPayPalOrder(open.orderId).catch(
+        (error: unknown) => {
+          request.log.warn(error, 'Could not check an open PayPal order');
+          return undefined;
+        },
+      );
+      if (
+        state?.status === 'CREATED' ||
+        state?.status === 'PAYER_ACTION_REQUIRED'
+      )
+        return paypalOrderReply(open, plan);
+      if (state?.status === 'APPROVED' || state?.status === 'COMPLETED') {
+        const done =
+          state.status === 'APPROVED'
+            ? await capturePayPalOrder(open.orderId)
+            : state;
+        const found = captureOfOrder(done, 'reconcile');
+        if (found?.status === 'COMPLETED') {
+          await applyCapture(found.capture, request.log);
+          return alreadyPaid(userId);
+        }
+      }
+    }
+    const order = await createPayPalOrder(plan, userId);
+    await store.createPayment({
+      ...order,
+      userId,
+      provider: 'paypal',
+      plan: plan.id,
+      ...termOfPlan(plan),
+      status: 'created',
+      createdAt: new Date().toISOString(),
+    });
+    return paypalOrderReply(order, plan);
+  } catch (error) {
+    request.log.error(error, 'Could not create a PayPal order');
+    if (error instanceof PayPalError && error.status === 401)
+      return apiError(
+        reply,
+        401,
+        'Payments are misconfigured: PayPal rejected our keys.',
+        'payment_provider_auth',
+      );
+    return apiError(
+      reply,
+      500,
+      'We couldn’t start the payment. Please try again in a moment.',
+    );
+  }
+}
+
+/** Replies to checkout once a payment was applied, or explains why not. */
+async function paymentReply(
+  reply: FastifyReply,
+  userId: string,
+  result: CaptureResult,
+) {
+  if (result.outcome === 'extra')
+    return apiError(
+      reply,
+      409,
+      'That order was already paid, so this second payment wasn’t used.',
+      'already_paid',
+    );
+  if (result.outcome !== 'applied' && result.outcome !== 'repeat')
+    return apiError(reply, 400, 'We don’t recognise that payment.');
+  const paidUntil =
+    result.outcome === 'applied'
+      ? result.paidUntil
+      : (await store.getAccount(userId))?.paidUntil;
+  return { ok: true, paidUntil };
+}
+
+// PayPal's buttons call this once the buyer approves: the server captures
+// the order (so the money moves only through our keys), checks the amount
+// against the order, and applies it like any other payment.
+app.post('/api/billing/paypal/capture', async (request, reply) => {
+  const user = await currentUser(request, reply);
+  if (!user) return;
+  const body = z
+    .object({ order_id: z.string().regex(PAYPAL_ID) })
+    .safeParse(request.body);
+  if (!body.success)
+    return apiError(reply, 400, 'The payment details are incomplete.');
+  if (!(await allow(reply, `verify:${user.id}`, 30, 3600))) return;
+  const orderId = body.data.order_id;
+  const payment = await store.getPayment(orderId);
+  // Orders belong to whoever created them; someone else's is "not found".
+  if (
+    !payment ||
+    payment.userId !== user.id ||
+    providerOf(payment) !== 'paypal'
+  )
+    return apiError(reply, 400, 'We don’t recognise that payment.');
+  if (user.guest || !paypalAllowedFor(user.email))
+    return apiError(reply, 403, 'PayPal isn’t available for this account.');
+  let order;
+  try {
+    order = await capturePayPalOrder(orderId);
+  } catch (error) {
+    request.log.warn(error, 'PayPal capture failed');
+    // The buyer's card or balance was declined: PayPal's window can offer
+    // another way to pay on the same order.
+    if (error instanceof PayPalError && error.issue === 'INSTRUMENT_DECLINED')
+      return apiError(
+        reply,
+        402,
+        'PayPal declined that payment method. Please choose another.',
+        'instrument_declined',
+      );
+    return apiError(
+      reply,
+      502,
+      'We couldn’t complete the PayPal payment. You haven’t been charged; please try again.',
+    );
+  }
+  const found = captureOfOrder(order, 'checkout');
+  // PayPal sometimes holds a payment for review; its webhook applies it once
+  // it clears.
+  if (found?.status === 'PENDING') return { ok: true, pending: true };
+  if (!found || found.status !== 'COMPLETED')
+    return apiError(
+      reply,
+      402,
+      'PayPal didn’t complete the payment. You haven’t been charged.',
+    );
+  const result = await applyCapture(found.capture, request.log);
+  return paymentReply(reply, user.id, result);
 });
 
 app.post('/api/billing/verify-payment', async (request, reply) => {
@@ -1349,20 +1597,7 @@ app.post('/api/billing/verify-payment', async (request, reply) => {
     { orderId, paymentId, source: 'checkout' },
     request.log,
   );
-  if (result.outcome === 'extra')
-    return apiError(
-      reply,
-      409,
-      'That order was already paid, so this second payment wasn’t used.',
-      'already_paid',
-    );
-  if (result.outcome !== 'applied' && result.outcome !== 'repeat')
-    return apiError(reply, 400, 'We don’t recognise that payment.');
-  const paidUntil =
-    result.outcome === 'applied'
-      ? result.paidUntil
-      : (await store.getAccount(user.id))?.paidUntil;
-  return { ok: true, paidUntil };
+  return paymentReply(reply, user.id, result);
 });
 
 // Razorpay calls this when a payment is captured, so a pass is granted even
@@ -1394,9 +1629,40 @@ app.register(async (webhook) => {
       return apiError(reply, 400, 'Invalid body.');
     }
     const capture = webhookCapture(event);
+    const refund = webhookRefund(event);
     // Other events, and orders that aren't ours, are acknowledged and
     // ignored. A database error answers 500, so Razorpay retries later.
     if (capture) await applyCapture(capture, request.log);
+    if (refund) await applyRefund(refund, request.log);
+    return { ok: true };
+  });
+
+  // PayPal calls this for captures, refunds and reversals. Registered for the
+  // current mode (scripts/paypal-webhook.ts), with its ID in
+  // PAYPAL_WEBHOOK_ID; PayPal itself confirms each call is genuine.
+  webhook.post('/api/billing/paypal/webhook', async (request, reply) => {
+    if (!config.paypal?.webhookId)
+      return apiError(reply, 503, 'The PayPal webhook is not set up.');
+    if (!Buffer.isBuffer(request.body))
+      return apiError(reply, 400, 'Invalid body.');
+    let event: unknown;
+    try {
+      event = JSON.parse(request.body.toString('utf8'));
+    } catch {
+      return apiError(reply, 400, 'Invalid body.');
+    }
+    let genuine: boolean;
+    try {
+      genuine = await verifyPayPalWebhook(request.headers, event);
+    } catch (error) {
+      // PayPal couldn't be asked; a 500 makes it retry later.
+      request.log.error(error, 'Could not verify a PayPal webhook');
+      return apiError(reply, 500, 'Could not verify the webhook.');
+    }
+    if (!genuine) return apiError(reply, 400, 'Invalid signature.');
+    const read = readPayPalEvent(event);
+    if (read.kind === 'capture') await applyCapture(read.capture, request.log);
+    else if (read.kind === 'refund') await applyRefund(read, request.log);
     return { ok: true };
   });
 });

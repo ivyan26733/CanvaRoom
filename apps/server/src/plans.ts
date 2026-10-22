@@ -1,12 +1,21 @@
 /**
  * Premium passes: one payment unlocks a fixed stretch, and nothing renews on
- * its own. Prices are in US cents and always come from here, never from the
- * browser. The web app shows the same table (apps/web/app/lib/pricing.ts);
- * a test keeps the two in step.
+ * its own. Visitors in India pay in rupees (through Razorpay), everyone else
+ * in US dollars. Prices are in the currency's smallest unit (paise, cents)
+ * and always come from here, never from the browser. The web app shows the
+ * same table (apps/web/app/lib/pricing.ts); a test keeps the two in step.
  */
 
 export const PLAN_IDS = ['quarterly', 'half-year', 'yearly'] as const;
 export type PlanId = (typeof PLAN_IDS)[number];
+
+export const CURRENCIES = ['USD', 'INR'] as const;
+export type Currency = (typeof CURRENCIES)[number];
+
+/** Rupees in India, going by the country Vercel's edge sets; dollars elsewhere. */
+export const currencyForCountry = (
+  country: string | null | undefined,
+): Currency => (country?.trim().toUpperCase() === 'IN' ? 'INR' : 'USD');
 
 /** How far a payment extends Premium: calendar months, then extra days. */
 export type Term = { months: number; days: number };
@@ -14,7 +23,7 @@ export type Term = { months: number; days: number };
 export type PremiumPlan = {
   id: PlanId;
   name: string;
-  currency: 'USD';
+  currency: Currency;
   amount: number;
   /** The same time at the 3-month rate; above `amount` when it is a saving. */
   compareAt: number;
@@ -28,19 +37,20 @@ export type PremiumPlan = {
 };
 
 const plan = (
+  currency: Currency,
   id: PlanId,
   months: number,
   amount: number,
   bonus: { months?: number; days?: number } = {},
 ): PremiumPlan => {
   // The 3-month plan sets the base rate the longer plans are compared with.
-  const compareAt = Math.round((2000 / 3) * months);
+  const compareAt = Math.round((BASE_PRICE[currency] / 3) * months);
   const bonusMonths = bonus.months ?? 0;
   const bonusDays = bonus.days ?? 0;
   return {
     id,
     name: `CanvaRoom Premium · ${months} months`,
-    currency: 'USD',
+    currency,
     amount,
     compareAt,
     // Rounded, with an exact half going down so the saving is never overstated.
@@ -56,14 +66,35 @@ const plan = (
   };
 };
 
-export const PLANS: readonly PremiumPlan[] = [
-  plan('quarterly', 3, 2000),
-  plan('half-year', 6, 3500, { days: 15 }),
-  plan('yearly', 12, 6500, { months: 1 }),
+/** What the 3-month plan costs, the base rate for the savings shown. */
+const BASE_PRICE: Record<Currency, number> = { USD: 2000, INR: 49900 };
+
+const plansIn = (
+  currency: Currency,
+  [quarterly, halfYear, yearly]: [number, number, number],
+): readonly PremiumPlan[] => [
+  plan(currency, 'quarterly', 3, quarterly),
+  plan(currency, 'half-year', 6, halfYear, { days: 15 }),
+  plan(currency, 'yearly', 12, yearly, { months: 1 }),
 ];
 
-export const planById = (id: string | null | undefined) =>
-  PLANS.find((item) => item.id === id);
+export const PLANS_BY_CURRENCY: Record<Currency, readonly PremiumPlan[]> = {
+  USD: plansIn('USD', [2000, 3500, 6500]),
+  INR: plansIn('INR', [49900, 84900, 149900]),
+};
+
+/** The dollar plans, which most of the world sees. */
+export const PLANS = PLANS_BY_CURRENCY.USD;
+
+export const isCurrency = (value: unknown): value is Currency =>
+  CURRENCIES.includes(value as Currency);
+
+export const plansFor = (currency: Currency) => PLANS_BY_CURRENCY[currency];
+
+export const planById = (
+  id: string | null | undefined,
+  currency: Currency = 'USD',
+) => plansFor(currency).find((item) => item.id === id);
 
 export const termOfPlan = (item: PremiumPlan): Term => ({
   months: item.months + item.bonusMonths,
@@ -92,14 +123,16 @@ export type OrderTerms = {
   months?: number | null;
   days?: number | null;
   amount: number;
+  currency?: string;
   createdAt: string;
 };
 
 /** The plan an order was for, if it was for one of the plans. */
 export function planOfOrder(order: OrderTerms) {
-  if (order.plan) return planById(order.plan);
+  const currency = isCurrency(order.currency) ? order.currency : 'USD';
+  if (order.plan) return planById(order.plan, currency);
   if (Date.parse(order.createdAt) < PLANS_SINCE) return undefined;
-  return PLANS.find((item) => item.amount === order.amount);
+  return plansFor(currency).find((item) => item.amount === order.amount);
 }
 
 /** How much Premium an order buys; legacy one-month orders buy `legacyDays`. */
@@ -129,4 +162,21 @@ export function extendBy(
   ).getUTCDate();
   shifted.setUTCDate(Math.min(day, lastDay));
   return new Date(shifted.getTime() + term.days * 86_400_000).toISOString();
+}
+
+/**
+ * Takes a term back off an end date, for a refund: calendar months the way
+ * Postgres counts them, then days, and never earlier than now.
+ */
+export function shortenBy(until: string, term: Term, now = Date.now()) {
+  const end = new Date(Date.parse(until) - term.days * 86_400_000);
+  const day = end.getUTCDate();
+  const shifted = new Date(end);
+  shifted.setUTCDate(1);
+  shifted.setUTCMonth(shifted.getUTCMonth() - term.months);
+  const lastDay = new Date(
+    Date.UTC(shifted.getUTCFullYear(), shifted.getUTCMonth() + 1, 0),
+  ).getUTCDate();
+  shifted.setUTCDate(Math.min(day, lastDay));
+  return new Date(Math.max(shifted.getTime(), now)).toISOString();
 }

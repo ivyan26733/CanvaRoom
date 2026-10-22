@@ -186,13 +186,13 @@ A fresh page shows a quiet guide to every tool and shortcut. It fades away the m
 | Images on the board             |          —           |        —        |        ✅         |
 | Session recording, up to 4K     |          —           |        —        |        ✅         |
 
-**Premium is paid once, in US dollars, for 3, 6 or 12 months.** Nothing renews on its own; a reminder email goes out a few days before it ends.
+**Premium is paid once, for 3, 6 or 12 months.** Outside India it is priced in US dollars and paid with PayPal (or a card through PayPal); in India it is priced in rupees and paid by UPI, card or netbanking through Razorpay. Nothing renews on its own; a reminder email goes out a few days before it ends.
 
-| Plan      | Price | Saving | Bonus         | Works out to |
-| --------- | :---: | :----: | ------------- | :----------: |
-| 3 months  |  $20  |   —    | —             | $6.67/month  |
-| 6 months  |  $35  |  12%   | +15 days free | $5.38/month  |
-| 12 months |  $65  |  19%   | +1 month free | $5.00/month  |
+| Plan      | Price | In India | Saving (USD / INR) | Bonus         |    Works out to    |
+| --------- | :---: | :------: | :----------------: | ------------- | :----------------: |
+| 3 months  |  $20  |   ₹499   |         —          | —             | $6.67 · ₹166/month |
+| 6 months  |  $35  |   ₹849   |     12% / 15%      | +15 days free | $5.38 · ₹131/month |
+| 12 months |  $65  |  ₹1,499  |     19% / 25%      | +1 month free | $5.00 · ₹115/month |
 
 The trial clock only runs while CanvaRoom is open in front of you; it pauses when you switch away. Scratch boards, used without an account, are always free.
 

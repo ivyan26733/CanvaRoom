@@ -157,6 +157,14 @@ ALTER TABLE payments ADD COLUMN IF NOT EXISTS plan text;
 ALTER TABLE payments ADD COLUMN IF NOT EXISTS months integer CHECK (months >= 0);
 ALTER TABLE payments ADD COLUMN IF NOT EXISTS days integer CHECK (days >= 0);
 
+-- PayPal Checkout beside Razorpay: which provider took each order (older
+-- rows are Razorpay's), and when a full refund took its Premium time back.
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS provider text NOT NULL DEFAULT 'razorpay';
+-- PayPal orders taken before this column existed: Razorpay's IDs start order_.
+UPDATE payments SET provider = 'paypal'
+ WHERE provider = 'razorpay' AND order_id NOT LIKE 'order\_%';
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS refunded_at timestamptz;
+
 -- The Premium end date a renewal reminder was sent for. Paying again moves
 -- paid_until, so the new end date gets its own reminder.
 ALTER TABLE accounts ADD COLUMN IF NOT EXISTS premium_reminded_for timestamptz;

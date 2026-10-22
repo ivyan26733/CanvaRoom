@@ -9,6 +9,7 @@
     "start": "node --import tsx src/index.ts",
     "db:migrate": "node --import tsx scripts/migrate.ts",
     "db:import-redis": "node --import tsx scripts/import-redis.ts",
+    "paypal:webhook": "node --import tsx scripts/paypal-webhook.ts",
     "test": "node --import tsx --test --test-concurrency=1 test/*.test.ts"
   },
   "dependencies": {

@@ -3,7 +3,8 @@ import {
   formatRate,
   planBonus,
   planLength,
-  PLANS as PREMIUM_PLANS,
+  PLANS_BY_CURRENCY,
+  type Currency,
 } from '../lib/pricing';
 import { PlanButton, PricingCta } from './plan-cta';
 import { Icon, type IconName } from './icons';
@@ -75,11 +76,12 @@ function Mark({ value }: { value: Cell }) {
   );
 }
 
-/** The lowest monthly rate, for "from $5.00 / month". */
-const FROM_RATE = Math.min(...PREMIUM_PLANS.map((plan) => plan.perMonth));
-
-/** Plans and Premium perks, priced in US dollars. */
-export function Pricing() {
+/** Plans and Premium perks, in rupees in India and US dollars elsewhere. */
+export function Pricing({ currency }: { currency: Currency }) {
+  const premiumPlans = PLANS_BY_CURRENCY[currency];
+  // The lowest monthly rate, for "from $5.00 / month".
+  const fromRate = Math.min(...premiumPlans.map((plan) => plan.perMonth));
+  const money = (amount: number) => formatMoney(amount, currency);
   return (
     <section className="pr" id="pricing" aria-labelledby="pricing-heading">
       <div className="pr-head">
@@ -115,7 +117,7 @@ export function Pricing() {
               <small>
                 {index === 2 ? (
                   <>
-                    From {formatRate(FROM_RATE)} <span>/ month</span>
+                    From {formatRate(fromRate, currency)} <span>/ month</span>
                   </>
                 ) : (
                   plan.note
@@ -144,7 +146,7 @@ export function Pricing() {
       </div>
 
       <div className="pr-plan-cards" id="premium-plans">
-        {PREMIUM_PLANS.map((plan) => {
+        {premiumPlans.map((plan) => {
           const bonus = planBonus(plan);
           return (
             <article
@@ -158,11 +160,11 @@ export function Pricing() {
               <h3>{planLength(plan)}</h3>
               <p className="pr-plan-price">
                 {plan.compareAt > plan.amount && (
-                  <s aria-label={`Was ${formatMoney(plan.compareAt)}`}>
-                    {formatMoney(plan.compareAt)}
+                  <s aria-label={`Was ${money(plan.compareAt)}`}>
+                    {money(plan.compareAt)}
                   </s>
                 )}
-                <strong>{formatMoney(plan.amount)}</strong>
+                <strong>{money(plan.amount)}</strong>
               </p>
               <p className="pr-plan-tags">
                 {plan.savePercent > 0 && (
@@ -174,7 +176,7 @@ export function Pricing() {
                 )}
               </p>
               <p className="pr-plan-rate">
-                {formatRate(plan.perMonth)} a month
+                {formatRate(plan.perMonth, currency)} a month
                 {bonus ? ', counting the free time' : ''}
               </p>
               <PlanButton
@@ -192,9 +194,11 @@ export function Pricing() {
           <p className="st-eyebrow">CanvaRoom Premium</p>
           <p className="pr-card-title">Every plan unlocks everything.</p>
           <p className="pr-fine">
-            Billed once in US dollars. Nothing renews on its own: we’ll email
-            you a few days before Premium ends. Paying again adds the new time
-            after your current end date.
+            {currency === 'INR'
+              ? 'Billed once in rupees: pay by UPI, card or netbanking. '
+              : 'Billed once in US dollars: pay with PayPal or a card. '}
+            Nothing renews on its own: we’ll email you a few days before Premium
+            ends. Paying again adds the new time after your current end date.
           </p>
           <PricingCta />
         </aside>
