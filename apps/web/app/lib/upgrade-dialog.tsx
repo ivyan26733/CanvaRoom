@@ -90,11 +90,21 @@ function loadPayPal(clientId: string) {
     script.onerror = () => {
       paypalScript = undefined;
       script.remove();
-      reject(
-        new Error(
-          'PayPal couldn’t load. Check your connection or any ad blocker, then try again.',
-        ),
-      );
+      // PayPal answers a bad setup (such as an unknown client ID) with an
+      // error message; read it so the dialog can say what went wrong.
+      void fetch(script.src)
+        .then((response) => (response.ok ? '' : response.text()))
+        .catch(() => '')
+        .then((body) => {
+          const reason = /SDK Validation error: '([^']{1,200})/.exec(body)?.[1];
+          reject(
+            new Error(
+              reason
+                ? `PayPal refused to load: ${reason.trim()}`
+                : 'PayPal couldn’t load. Check your connection or any ad blocker, then try again.',
+            ),
+          );
+        });
     };
     document.head.appendChild(script);
   });
