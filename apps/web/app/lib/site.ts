@@ -39,7 +39,7 @@ export type Faq = { q: string; a: string };
 /** How the plans read in copy. The prices match the server's defaults. */
 export const PLAN_COPY = {
   premium:
-    '₹499 a month in India, or $11.99 a month elsewhere (launch offer, normally $15.99)',
+    '$20 a month (launch offer, normally $24)',
   trial:
     'Every new account gets a free trial of 30 minutes of active use (the clock only runs while CanvaRoom is open in front of you): up to two boards, with two people besides you on each, live drawing, voice, chat, and templates',
   free: 'After the trial, the free plan keeps your first board for you to use on your own',

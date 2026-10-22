@@ -3,7 +3,7 @@ import { FooterAccountLinks } from './plan-cta';
 import { SiteHeader } from './site-header';
 import { HOME_FAQ, SITE, USE_CASES, type Faq } from '../lib/site';
 import { Logo } from './icons';
-import { decimal, PRICES, type Currency } from '../lib/pricing';
+import { decimal, PRICE } from '../lib/pricing';
 import { Pricing } from './pricing';
 import { Story } from './story';
 
@@ -36,18 +36,15 @@ export const appSchema = {
       price: '0',
       priceCurrency: 'USD',
     },
-    ...(['INR', 'USD'] as const).map((currency) => ({
+    {
       '@type': 'Offer',
-      name: `CanvaRoom Premium, monthly${currency === 'INR' ? ' (India)' : ''}`,
-      price: decimal(PRICES[currency].amount),
-      priceCurrency: currency,
-      ...(currency === 'INR'
-        ? { eligibleRegion: { '@type': 'Country', name: 'IN' } }
-        : {}),
+      name: 'CanvaRoom Premium, monthly',
+      price: decimal(PRICE.amount),
+      priceCurrency: 'USD',
       priceSpecification: {
         '@type': 'UnitPriceSpecification',
-        price: decimal(PRICES[currency].amount),
-        priceCurrency: currency,
+        price: decimal(PRICE.amount),
+        priceCurrency: 'USD',
         unitCode: 'MON',
         referenceQuantity: {
           '@type': 'QuantitativeValue',
@@ -55,7 +52,7 @@ export const appSchema = {
           unitCode: 'MON',
         },
       },
-    })),
+    },
   ],
   featureList: [
     'Real-time collaborative drawing',
@@ -143,11 +140,11 @@ export function MarketingFooter() {
 }
 
 /** Crawlable detail below the sign-in screen on the home page. */
-export function HomeContent({ currency }: { currency: Currency }) {
+export function HomeContent() {
   return (
     <div className="mk mk-home">
       <Story />
-      <Pricing currency={currency} />
+      <Pricing />
 
       <section
         className="mk-uses"

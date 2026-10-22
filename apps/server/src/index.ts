@@ -29,7 +29,7 @@ import {
   ORDER_ID,
   orderCapture,
   PAYMENT_ID,
-  priceFor,
+  premiumPrice,
   RazorpayError,
   validPaymentSignature,
   validWebhookSignature,
@@ -1202,13 +1202,9 @@ async function applyCapture(
   return result;
 }
 
-/** Vercel's edge sets the visitor's country; locally it is missing. */
-const countryOf = (request: FastifyRequest) =>
-  request.headers['x-vercel-ip-country'] as string | undefined;
-
-app.get('/api/billing/plan', async (request) => ({
+app.get('/api/billing/plan', async () => ({
   available: billingConfigured(),
-  pass: priceFor(countryOf(request)),
+  pass: premiumPrice(),
   limits: { trialBoards: TRIAL_BOARDS, trialGuests: TRIAL_GUESTS },
 }));
 
@@ -1241,7 +1237,7 @@ app.post('/api/billing/create-order', async (request, reply) => {
       'email_unverified',
     );
   if (!(await allow(reply, `order:${user.id}`, 20, 3600))) return;
-  const price = priceFor(countryOf(request));
+  const price = premiumPrice();
   if (price.amount < 100)
     return apiError(reply, 500, 'The Premium price is set too low.');
   const checkout = (order: {

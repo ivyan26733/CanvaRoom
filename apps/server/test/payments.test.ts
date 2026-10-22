@@ -35,13 +35,13 @@ async function account(store: Store) {
   return id;
 }
 
-async function order(store: Store, userId: string, amount = 49_900) {
+async function order(store: Store, userId: string, amount = 2000) {
   const orderId = unique('order_');
   await store.createPayment({
     orderId,
     userId,
     amount,
-    currency: 'INR',
+    currency: 'USD',
     status: 'created',
     createdAt: new Date().toISOString(),
   });
@@ -79,7 +79,7 @@ function paymentSuite(name: string, make: () => Store | undefined) {
           store().recordPayment(
             source === 'checkout'
               ? { orderId, paymentId, source }
-              : { orderId, paymentId, source, amount: 49_900, currency: 'INR' },
+              : { orderId, paymentId, source, amount: 2000, currency: 'USD' },
             30,
           ),
         ),
@@ -149,7 +149,7 @@ function paymentSuite(name: string, make: () => Store | undefined) {
           paymentId: unique('pay_'),
           source: 'webhook',
           amount: 100,
-          currency: 'INR',
+          currency: 'USD',
         },
         30,
       );
@@ -172,16 +172,17 @@ function paymentSuite(name: string, make: () => Store | undefined) {
       const userId = await account(store());
       const orderId = await order(store(), userId);
       assert.equal(
-        (await store().openOrder(userId, 49_900, 'INR', 20))?.orderId,
+        (await store().openOrder(userId, 2000, 'USD', 20))?.orderId,
         orderId,
       );
+      // An order at an older price is never reused.
       assert.equal(await store().openOrder(userId, 1199, 'USD', 20), undefined);
       await store().recordPayment(
         { orderId, paymentId: unique('pay_'), source: 'checkout' },
         30,
       );
       assert.equal(
-        await store().openOrder(userId, 49_900, 'INR', 20),
+        await store().openOrder(userId, 2000, 'USD', 20),
         undefined,
       );
     });
@@ -271,8 +272,8 @@ describe('razorpay signatures', () => {
           entity: {
             id: 'pay_abc123',
             order_id: 'order_abc123',
-            amount: 49_900,
-            currency: 'INR',
+            amount: 2000,
+            currency: 'USD',
             status,
           },
         },
@@ -284,8 +285,8 @@ describe('razorpay signatures', () => {
         orderId: 'order_abc123',
         paymentId: 'pay_abc123',
         source: 'webhook',
-        amount: 49_900,
-        currency: 'INR',
+        amount: 2000,
+        currency: 'USD',
       },
     );
     assert.equal(

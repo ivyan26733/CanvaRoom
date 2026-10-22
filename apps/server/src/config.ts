@@ -44,13 +44,10 @@ const environmentSchema = z.object({
   // Secret of the webhook set up in the Razorpay dashboard. Without it the
   // webhook route refuses every call.
   RAZORPAY_WEBHOOK_SECRET: z.string().optional(),
-  // Premium, per month, in each currency's smallest unit (paise, cents): the
-  // price charged and an optional higher "was" price shown struck through.
-  // Visitors in India pay in rupees; everyone else in dollars.
-  BILLING_INR_PRICE_MINOR: z.coerce.number().int().min(100).default(49900),
-  BILLING_INR_LIST_PRICE_MINOR: z.coerce.number().int().min(0).default(0),
-  BILLING_USD_PRICE_MINOR: z.coerce.number().int().min(100).default(1199),
-  BILLING_USD_LIST_PRICE_MINOR: z.coerce.number().int().min(0).default(1599),
+  // Premium, per month, in US cents: the price charged and an optional higher
+  // "was" price shown struck through. Everyone pays in dollars.
+  BILLING_USD_PRICE_MINOR: z.coerce.number().int().min(100).default(2000),
+  BILLING_USD_LIST_PRICE_MINOR: z.coerce.number().int().min(0).default(2400),
   BILLING_PASS_DAYS: z.coerce.number().int().min(1).max(366).default(30),
   // Resend's API, replaceable with a local stand-in in tests.
   RESEND_API_URL: z.url().default('https://api.resend.com'),
@@ -90,15 +87,9 @@ export const config = {
       ? { keyId: env.RAZORPAY_KEY_ID, keySecret: env.RAZORPAY_KEY_SECRET }
       : undefined,
   razorpayWebhookSecret: env.RAZORPAY_WEBHOOK_SECRET?.trim() || undefined,
-  prices: {
-    INR: {
-      amount: env.BILLING_INR_PRICE_MINOR,
-      listAmount: env.BILLING_INR_LIST_PRICE_MINOR,
-    },
-    USD: {
-      amount: env.BILLING_USD_PRICE_MINOR,
-      listAmount: env.BILLING_USD_LIST_PRICE_MINOR,
-    },
+  price: {
+    amount: env.BILLING_USD_PRICE_MINOR,
+    listAmount: env.BILLING_USD_LIST_PRICE_MINOR,
   },
   passDays: env.BILLING_PASS_DAYS,
   sfu:

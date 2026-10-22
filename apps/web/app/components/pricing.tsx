@@ -1,4 +1,4 @@
-import { formatMoney, PRICES, type Currency } from '../lib/pricing';
+import { formatMoney, PRICE } from '../lib/pricing';
 import { PricingCta } from './plan-cta';
 import { Icon, type IconName } from './icons';
 import './pricing.css';
@@ -69,11 +69,10 @@ function Mark({ value }: { value: Cell }) {
   );
 }
 
-/** Plans and Premium perks, priced in the visitor's currency. */
-export function Pricing({ currency }: { currency: Currency }) {
-  const price = PRICES[currency];
-  const other: Currency = currency === 'INR' ? 'USD' : 'INR';
-  const premium = formatMoney(price.amount, currency);
+/** Plans and Premium perks, priced in US dollars. */
+export function Pricing() {
+  const price = PRICE;
+  const premium = formatMoney(price.amount);
   return (
     <section className="pr" id="pricing" aria-labelledby="pricing-heading">
       <div className="pr-head">
@@ -141,8 +140,8 @@ export function Pricing({ currency }: { currency: Currency }) {
           <p className="st-eyebrow">CanvaRoom Premium</p>
           <p className="pr-price">
             {price.listAmount > price.amount && (
-              <s aria-label={`Was ${formatMoney(price.listAmount, currency)}`}>
-                {formatMoney(price.listAmount, currency)}
+              <s aria-label={`Was ${formatMoney(price.listAmount)}`}>
+                {formatMoney(price.listAmount)}
               </s>
             )}
             <strong>{premium}</strong>
@@ -152,10 +151,8 @@ export function Pricing({ currency }: { currency: Currency }) {
             <p className="pr-offer">Launch offer</p>
           )}
           <p className="pr-fine">
-            {currency === 'INR' ? 'For India. ' : ''}
-            {formatMoney(PRICES[other].amount, other)} a month{' '}
-            {other === 'INR' ? 'in India' : 'outside India'}. Each payment
-            unlocks a month; nothing renews on its own.
+            Billed in US dollars. Each payment unlocks a month; nothing renews
+            on its own.
           </p>
           <PricingCta />
         </aside>

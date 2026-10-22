@@ -186,7 +186,7 @@ A fresh page shows a quiet guide to every tool and shortcut. It fades away the m
 | Images on the board             |          —           |        —        |     ✅      |
 | Session recording, up to 4K     |          —           |        —        |     ✅      |
 
-**Premium is ₹499 a month in India, or $11.99 a month everywhere else** (launch offer, normally $15.99). Each payment unlocks a month, and nothing renews on its own.
+**Premium is $20 a month** (launch offer, normally $24), billed in US dollars. Each payment unlocks a month, and nothing renews on its own.
 
 The trial clock only runs while CanvaRoom is open in front of you; it pauses when you switch away. Scratch boards, used without an account, are always free.
 

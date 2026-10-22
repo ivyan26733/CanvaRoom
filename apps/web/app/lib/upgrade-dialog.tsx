@@ -68,7 +68,7 @@ function loadCheckout() {
 }
 
 const money = (minor: number, currency: string) =>
-  new Intl.NumberFormat(currency === 'INR' ? 'en-IN' : 'en-US', {
+  new Intl.NumberFormat('en-US', {
     style: 'currency',
     currency,
     maximumFractionDigits: minor % 100 ? 2 : 0,

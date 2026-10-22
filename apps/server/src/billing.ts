@@ -12,23 +12,19 @@ export const billingConfigured = () => Boolean(config.razorpay);
 
 export type Price = {
   name: string;
-  currency: 'INR' | 'USD';
+  currency: 'USD';
   amount: number;
   listAmount: number;
   days: number;
   interval: 'month';
 };
 
-/**
- * Premium for one month. Visitors in India pay in rupees and everyone else in
- * dollars, going by the country Vercel's edge sets on each request.
- */
-export function priceFor(country: string | undefined): Price {
-  const currency = country?.toUpperCase() === 'IN' ? 'INR' : 'USD';
+/** Premium for one month: one price in US dollars, wherever the visitor is. */
+export function premiumPrice(): Price {
   return {
     name: 'CanvaRoom Premium · 1 month',
-    currency,
-    ...config.prices[currency],
+    currency: 'USD',
+    ...config.price,
     days: config.passDays,
     interval: 'month',
   };
