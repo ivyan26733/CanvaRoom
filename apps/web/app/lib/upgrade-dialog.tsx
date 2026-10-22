@@ -6,15 +6,17 @@ import { Modal } from '../components/modal';
 import { api, send, type User } from './api';
 import { useAuth } from './auth';
 import { longDate, planState } from './billing';
+import {
+  formatMoney,
+  formatRate,
+  planBonus,
+  planLength,
+  type PlanId,
+  type PremiumPlan,
+} from './pricing';
 
-type Pass = {
-  name: string;
-  amount: number;
-  listAmount: number;
-  currency: string;
-  days: number;
-  interval: 'month';
-};
+/** A plan as the server charges it. */
+type Plan = PremiumPlan & { name: string; currency: string };
 
 type Order = {
   order_id: string;
@@ -67,13 +69,6 @@ function loadCheckout() {
   }));
 }
 
-const money = (minor: number, currency: string) =>
-  new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency,
-    maximumFractionDigits: minor % 100 ? 2 : 0,
-  }).format(minor / 100);
-
 const INCLUDED = [
   'Unlimited boards, and as many people on each as you like',
   'Export to PNG, SVG and PDF',
@@ -90,22 +85,27 @@ type Phase =
 
 export default function UpgradeDialog({
   reason,
+  plan: initialPlan = 'yearly',
   onClose,
 }: {
   /** What the person just tried that needs Premium, if anything. */
   reason: string;
+  /** The plan chosen when the dialog opens. */
+  plan?: PlanId;
   onClose: () => void;
 }) {
   const { user, setUser } = useAuth();
-  const [pass, setPass] = useState<Pass | null>(null);
+  const [plans, setPlans] = useState<Plan[] | null>(null);
+  const [chosen, setChosen] = useState<PlanId>(initialPlan);
   const [available, setAvailable] = useState(true);
   const [phase, setPhase] = useState<Phase>({ step: 'idle' });
   const state = planState(user);
+  const pass = plans?.find((item) => item.id === chosen) ?? null;
 
   useEffect(() => {
-    api<{ available: boolean; pass: Pass }>('/billing/plan')
+    api<{ available: boolean; plans: Plan[] }>('/billing/plan')
       .then((result) => {
-        setPass(result.pass);
+        setPlans(result.plans);
         setAvailable(result.available);
       })
       .catch(() => setAvailable(false));
@@ -145,7 +145,7 @@ export default function UpgradeDialog({
         send<Order | { already_paid: true; paidUntil?: string }>(
           '/billing/create-order',
           'POST',
-          {},
+          { plan: chosen },
         ),
         loadCheckout(),
       ]);
@@ -231,7 +231,7 @@ export default function UpgradeDialog({
       </p>
       <h2>
         {state?.kind === 'premium'
-          ? 'Renew Premium for another month'
+          ? 'Add more Premium time'
           : 'Teach without limits'}
       </h2>
       {reason && (
@@ -243,31 +243,60 @@ export default function UpgradeDialog({
         {user?.guest
           ? 'Create an account first, then upgrade to Premium for your own boards.'
           : state?.kind === 'premium'
-            ? 'Paying again adds a month after your current one ends.'
+            ? 'The time you buy starts after your current Premium ends, so you don’t lose a day.'
             : 'Your boards stay yours either way. The free plan keeps your first board for you to use on your own.'}
       </p>
-      {pass && (
-        <div className="upgrade-price">
-          {pass.listAmount > pass.amount && (
-            <span className="upgrade-offer">Launch offer</span>
-          )}
-          <p>
-            {pass.listAmount > pass.amount && (
-              <s aria-label={`Was ${money(pass.listAmount, pass.currency)}`}>
-                {money(pass.listAmount, pass.currency)}
-              </s>
-            )}
-            <strong>{money(pass.amount, pass.currency)}</strong>
-            <span>/ month</span>
-          </p>
-          <small>
-            {pass.listAmount > pass.amount
-              ? `We’re now offering it for ${money(pass.amount, pass.currency)} ${pass.currency} a month. `
-              : ''}
-            Billed monthly: each payment unlocks {pass.days} days, with no
-            automatic renewal.
-          </small>
+      {plans && (
+        <div
+          className="upgrade-plans"
+          role="radiogroup"
+          aria-label="Choose how long"
+        >
+          {plans.map((item) => {
+            const bonus = planBonus(item);
+            return (
+              <button
+                key={item.id}
+                type="button"
+                role="radio"
+                aria-checked={item.id === chosen}
+                className={`upgrade-plan ${item.id === chosen ? 'is-chosen' : ''}`}
+                disabled={busy}
+                onClick={() => setChosen(item.id)}
+              >
+                <span className="upgrade-plan-length">
+                  {planLength(item)}
+                  {item.bestValue && (
+                    <span className="upgrade-plan-best">Best value</span>
+                  )}
+                </span>
+                <span className="upgrade-plan-price">
+                  {item.compareAt > item.amount && (
+                    <s aria-label={`Was ${formatMoney(item.compareAt)}`}>
+                      {formatMoney(item.compareAt)}
+                    </s>
+                  )}
+                  <strong>{formatMoney(item.amount)}</strong>
+                </span>
+                <span className="upgrade-plan-tags">
+                  {item.savePercent > 0 && (
+                    <span className="upgrade-save">
+                      Save {item.savePercent}%
+                    </span>
+                  )}
+                  {bonus && <span className="upgrade-bonus">{bonus}</span>}
+                </span>
+                <small>{formatRate(item.perMonth)} a month</small>
+              </button>
+            );
+          })}
         </div>
+      )}
+      {pass && (
+        <p className="upgrade-fine">
+          Paid once in US dollars, with no automatic renewal. We’ll email you a
+          few days before Premium ends.
+        </p>
       )}
       <ul className="upgrade-list">
         {INCLUDED.map((item) => (
@@ -300,7 +329,7 @@ export default function UpgradeDialog({
               : !available
                 ? 'Payments unavailable'
                 : pass
-                  ? `Pay ${money(pass.amount, pass.currency)}`
+                  ? `Pay ${formatMoney(pass.amount)} for ${planLength(pass)}`
                   : 'Loading…'}
         </button>
       </div>

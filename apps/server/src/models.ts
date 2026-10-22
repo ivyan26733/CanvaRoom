@@ -243,9 +243,22 @@ export type Payment = {
   amount: number;
   currency: string;
   status: 'created' | 'paid';
+  /** The plan bought, and the months and extra days it adds. Missing on
+   * one-month orders from before the plans. */
+  plan?: string;
+  months?: number;
+  days?: number;
   paymentId?: string;
   createdAt: string;
   paidAt?: string;
+};
+
+/** An account whose Premium ends soon, to remind once per end date. */
+export type PremiumReminder = {
+  userId: string;
+  email: string;
+  name: string;
+  paidUntil: string;
 };
 
 /**
@@ -293,6 +306,8 @@ export type Account = {
   trialUsedSeconds?: number;
   trialBeatAt?: string;
   paidUntil?: string;
+  /** The Premium end date the renewal reminder was sent for. */
+  premiumRemindedFor?: string;
 };
 
 /** Server-side session, stored under a hash of the cookie token. */

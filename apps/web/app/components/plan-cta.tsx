@@ -4,6 +4,40 @@ import Link from 'next/link';
 import { useAuth } from '../lib/auth';
 import { openUpgrade, planState } from '../lib/billing';
 import { DASHBOARD } from '../lib/next-url';
+import type { PlanId } from '../lib/pricing';
+
+/**
+ * A plan card's button: members open checkout on that plan, visitors sign
+ * in first and land on it. The server render is the visitor version.
+ */
+export function PlanButton({
+  plan,
+  label,
+  primary,
+}: {
+  plan: PlanId;
+  label: string;
+  primary: boolean;
+}) {
+  const { user } = useAuth();
+  const className = `button ${primary ? 'primary' : 'ghost'}`;
+  if (user && !user.guest)
+    return (
+      <button className={className} onClick={() => openUpgrade('', plan)}>
+        {planState(user)?.kind === 'premium'
+          ? `Add ${label}`
+          : `Choose ${label}`}
+      </button>
+    );
+  return (
+    <Link
+      href={`/login?next=${encodeURIComponent(`${DASHBOARD}?upgrade=${plan}`)}`}
+      className={className}
+    >
+      Choose {label}
+    </Link>
+  );
+}
 
 /**
  * The buttons under the price. Visitors start the trial; members see their

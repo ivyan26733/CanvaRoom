@@ -36,10 +36,10 @@ export const CONTACT = {
 
 export type Faq = { q: string; a: string };
 
-/** How the plans read in copy. The prices match the server's defaults. */
+/** How the plans read in copy. The prices match the server's plans. */
 export const PLAN_COPY = {
   premium:
-    '$20 a month (launch offer, normally $24)',
+    'a one-time payment of $20 for 3 months, $35 for 6 months plus 15 days free, or $65 for 12 months plus a month free, with nothing renewing on its own',
   trial:
     'Every new account gets a free trial of 30 minutes of active use (the clock only runs while CanvaRoom is open in front of you): up to two boards, with two people besides you on each, live drawing, voice, chat, and templates',
   free: 'After the trial, the free plan keeps your first board for you to use on your own',

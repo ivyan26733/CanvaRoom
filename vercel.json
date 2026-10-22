@@ -25,5 +25,11 @@
         "service": "web"
       }
     }
+  ],
+  "crons": [
+    {
+      "path": "/api/cron/premium-reminders",
+      "schedule": "30 3 * * *"
+    }
   ]
 }

@@ -2,6 +2,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import { config } from './config.js';
 import type { Capture } from './models.js';
+import type { PremiumPlan } from './plans.js';
 
 const ORDERS_URL = 'https://api.razorpay.com/v1/orders';
 
@@ -9,26 +10,6 @@ const basicAuth = (keys: { keyId: string; keySecret: string }) =>
   `Basic ${Buffer.from(`${keys.keyId}:${keys.keySecret}`).toString('base64')}`;
 
 export const billingConfigured = () => Boolean(config.razorpay);
-
-export type Price = {
-  name: string;
-  currency: 'USD';
-  amount: number;
-  listAmount: number;
-  days: number;
-  interval: 'month';
-};
-
-/** Premium for one month: one price in US dollars, wherever the visitor is. */
-export function premiumPrice(): Price {
-  return {
-    name: 'CanvaRoom Premium · 1 month',
-    currency: 'USD',
-    ...config.price,
-    days: config.passDays,
-    interval: 'month',
-  };
-}
 
 /** Razorpay refused the request; `status` is its HTTP status. */
 export class RazorpayError extends Error {
@@ -41,24 +22,29 @@ export class RazorpayError extends Error {
 }
 
 /**
- * Creates an order for the pass. The amount always comes from server config,
- * never from the browser.
+ * Creates an order for a plan. The amount always comes from the server's
+ * plan table, never from the browser.
  */
 export async function createOrder(
   receipt: string,
   userId: string,
-  price: Price,
+  plan: PremiumPlan,
 ) {
   const keys = config.razorpay;
   if (!keys) throw new RazorpayError('Payments are not configured.', 503);
-  const { amount, currency } = price;
+  const { amount, currency } = plan;
   const response = await fetch(ORDERS_URL, {
     method: 'POST',
     headers: {
       Authorization: basicAuth(keys),
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ amount, currency, receipt, notes: { userId } }),
+    body: JSON.stringify({
+      amount,
+      currency,
+      receipt,
+      notes: { userId, plan: plan.id },
+    }),
     signal: AbortSignal.timeout(15_000),
   });
   const body = (await response.json().catch(() => ({}))) as {

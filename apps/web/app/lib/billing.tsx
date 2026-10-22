@@ -14,6 +14,7 @@ import { Icon } from '../components/icons';
 import { PAYWALL_EVENT, send, type Board, type User } from './api';
 import { useAuth } from './auth';
 import { DASHBOARD } from './next-url';
+import type { PlanId } from './pricing';
 
 // The dialog and its checkout code load only when someone opens it.
 const UpgradeDialog = dynamic(() => import('./upgrade-dialog'), {
@@ -97,13 +98,13 @@ export function canRecord(user: User | null | undefined, now = Date.now()) {
 
 /**
  * Opens the upgrade dialog from anywhere on the page, optionally saying what
- * the person just tried to do.
+ * the person just tried to do, and with a plan already chosen.
  */
-export function openUpgrade(reason?: unknown) {
+export function openUpgrade(reason?: unknown, plan?: PlanId) {
   // Used directly as a click handler too, when `reason` is the click event.
   window.dispatchEvent(
     new CustomEvent(PAYWALL_EVENT, {
-      detail: typeof reason === 'string' ? reason : '',
+      detail: { reason: typeof reason === 'string' ? reason : '', plan },
     }),
   );
 }
@@ -111,7 +112,7 @@ export function openUpgrade(reason?: unknown) {
 const daysLeft = (until: string, now: number) =>
   Math.max(1, Math.ceil((Date.parse(until) - now) / 86_400_000));
 
-/** Premium months this close to their end show a renew prompt. */
+/** Premium this close to its end shows a renew prompt. */
 export const RENEW_WITHIN_DAYS = 3;
 
 export const longDate = (iso: string) =>
@@ -123,7 +124,7 @@ export const longDate = (iso: string) =>
 
 /**
  * "Free trial · 23 min left", "Premium until 18 Nov", a renew prompt near the
- * end of a month, or an upgrade button on the free plan.
+ * end of Premium, or an upgrade button on the free plan.
  */
 export function PlanChip({ className = '' }: { className?: string }) {
   const { user } = useAuth();
@@ -170,20 +171,35 @@ export function PremiumTag() {
  * dialog with Razorpay checkout.
  */
 export function BillingProvider({ children }: { children: React.ReactNode }) {
-  // The reason the dialog opened, or an empty string for a plain upgrade.
-  const [reason, setReason] = useState<string | null>(null);
+  // Why the dialog opened (empty for a plain upgrade), and the plan to show
+  // chosen; null while it is closed.
+  const [open, setOpen] = useState<{ reason: string; plan?: PlanId } | null>(
+    null,
+  );
   const trial = useTrialClock();
   useEffect(() => {
-    const show = (event: Event) =>
-      setReason(((event as CustomEvent).detail as string | undefined) ?? '');
+    // API errors send the reason as a string; openUpgrade sends an object.
+    const show = (event: Event) => {
+      const detail = (event as CustomEvent).detail as
+        string | { reason: string; plan?: PlanId } | undefined;
+      setOpen(
+        typeof detail === 'object' && detail
+          ? detail
+          : { reason: detail ?? '' },
+      );
+    };
     window.addEventListener(PAYWALL_EVENT, show);
     return () => window.removeEventListener(PAYWALL_EVENT, show);
   }, []);
   return (
     <TrialContext.Provider value={trial}>
       {children}
-      {reason !== null && (
-        <UpgradeDialog reason={reason} onClose={() => setReason(null)} />
+      {open && (
+        <UpgradeDialog
+          reason={open.reason}
+          {...(open.plan ? { plan: open.plan } : {})}
+          onClose={() => setOpen(null)}
+        />
       )}
     </TrialContext.Provider>
   );

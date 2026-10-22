@@ -44,11 +44,12 @@ const environmentSchema = z.object({
   // Secret of the webhook set up in the Razorpay dashboard. Without it the
   // webhook route refuses every call.
   RAZORPAY_WEBHOOK_SECRET: z.string().optional(),
-  // Premium, per month, in US cents: the price charged and an optional higher
-  // "was" price shown struck through. Everyone pays in dollars.
-  BILLING_USD_PRICE_MINOR: z.coerce.number().int().min(100).default(2000),
-  BILLING_USD_LIST_PRICE_MINOR: z.coerce.number().int().min(0).default(2400),
+  // Days a one-month order from before the 3/6/12-month plans still buys.
+  // The plans themselves are in src/plans.ts.
   BILLING_PASS_DAYS: z.coerce.number().int().min(1).max(366).default(30),
+  // Vercel sends it as a bearer token on cron requests. Without it the cron
+  // routes refuse every call.
+  CRON_SECRET: z.string().optional(),
   // Resend's API, replaceable with a local stand-in in tests.
   RESEND_API_URL: z.url().default('https://api.resend.com'),
   // Where feedback from the site is emailed.
@@ -87,11 +88,8 @@ export const config = {
       ? { keyId: env.RAZORPAY_KEY_ID, keySecret: env.RAZORPAY_KEY_SECRET }
       : undefined,
   razorpayWebhookSecret: env.RAZORPAY_WEBHOOK_SECRET?.trim() || undefined,
-  price: {
-    amount: env.BILLING_USD_PRICE_MINOR,
-    listAmount: env.BILLING_USD_LIST_PRICE_MINOR,
-  },
   passDays: env.BILLING_PASS_DAYS,
+  cronSecret: env.CRON_SECRET?.trim() || undefined,
   sfu:
     env.CF_REALTIME_APP_ID && env.CF_REALTIME_APP_TOKEN
       ? { appId: env.CF_REALTIME_APP_ID, token: env.CF_REALTIME_APP_TOKEN }

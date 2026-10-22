@@ -1,5 +1,6 @@
 import type { Capture, CaptureResult } from './models.js';
-import type { PremiumWelcome } from './mail.js';
+import type { PremiumReminderMail, PremiumWelcome } from './mail.js';
+import { planOfOrder, termLabel } from './plans.js';
 import type { Store } from './store.js';
 
 type Log = {
@@ -10,6 +11,7 @@ type Log = {
 
 export type ApplyDeps = {
   store: Store;
+  /** Days a one-month order from before the plans buys. */
   passDays: number;
   appUrl: string;
   log: Log;
@@ -47,8 +49,10 @@ export async function applyPayment(
             store.getPayment(capture.orderId),
           ]);
           if (!account?.email || !order) return;
+          const plan = planOfOrder(order);
           await send(account.email, {
             name: account.name,
+            term: plan ? termLabel(plan) : '1 month',
             amount: order.amount,
             currency: order.currency,
             paymentId: capture.paymentId,
@@ -61,4 +65,56 @@ export async function applyPayment(
       );
   }
   return result;
+}
+
+/** Days before Premium ends that the renewal reminder goes out. */
+export const REMIND_WITHIN_DAYS = 5;
+
+export type ReminderDeps = {
+  store: Store;
+  appUrl: string;
+  log: Log;
+  remind: (to: string, reminder: PremiumReminderMail) => Promise<void>;
+  /** Most reminders one run sends; the next run picks up the rest. */
+  limit?: number;
+};
+
+/**
+ * Emails everyone whose Premium ends within `REMIND_WITHIN_DAYS`, once per
+ * end date. Each account is marked before its email goes out, so overlapping
+ * runs never send twice; a failed send is unmarked to retry on the next run.
+ */
+export async function sendRenewalReminders(deps: ReminderDeps) {
+  const { store, log } = deps;
+  const due = await store.claimPremiumReminders(
+    REMIND_WITHIN_DAYS,
+    deps.limit ?? 100,
+  );
+  let sent = 0;
+  let failed = 0;
+  for (const reminder of due) {
+    try {
+      await deps.remind(reminder.email, {
+        name: reminder.name,
+        paidUntil: reminder.paidUntil,
+        appUrl: deps.appUrl,
+      });
+      sent++;
+    } catch (error) {
+      failed++;
+      log.error(
+        { userId: reminder.userId, error },
+        'Premium reminder email failed',
+      );
+      await store
+        .releasePremiumReminder(reminder.userId, reminder.paidUntil)
+        .catch((releaseError: unknown) =>
+          log.error(
+            { userId: reminder.userId, error: releaseError },
+            'Could not unmark a failed Premium reminder',
+          ),
+        );
+    }
+  }
+  return { due: due.length, sent, failed };
 }

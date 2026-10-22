@@ -1,6 +1,12 @@
 import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
 import { waitUntil } from '@vercel/functions';
-import { createHash, randomBytes, randomInt, randomUUID } from 'node:crypto';
+import {
+  createHash,
+  randomBytes,
+  randomInt,
+  randomUUID,
+  timingSafeEqual,
+} from 'node:crypto';
 import { z } from 'zod';
 import { config } from './config.js';
 import {
@@ -29,7 +35,6 @@ import {
   ORDER_ID,
   orderCapture,
   PAYMENT_ID,
-  premiumPrice,
   RazorpayError,
   validPaymentSignature,
   validWebhookSignature,
@@ -40,6 +45,7 @@ import {
   sendEmailVerification,
   sendFeedback,
   sendPasswordResetCode,
+  sendPremiumReminder,
   sendPremiumWelcome,
   teamMailConfigured,
 } from './mail.js';
@@ -68,7 +74,8 @@ import {
   saveImage,
   sniffImage,
 } from './images.js';
-import { applyPayment } from './payments.js';
+import { applyPayment, sendRenewalReminders } from './payments.js';
+import { PLAN_IDS, PLANS, planById, termOfPlan } from './plans.js';
 import { pageIdSchema, pageNameSchema } from './schemas.js';
 import { TEMPLATES, templateObjects } from './templates.js';
 import {
@@ -1211,7 +1218,7 @@ async function applyCapture(
 
 app.get('/api/billing/plan', async () => ({
   available: billingConfigured(),
-  pass: premiumPrice(),
+  plans: PLANS,
   limits: { trialBoards: TRIAL_BOARDS, trialGuests: TRIAL_GUESTS },
 }));
 
@@ -1244,9 +1251,13 @@ app.post('/api/billing/create-order', async (request, reply) => {
       'email_unverified',
     );
   if (!(await allow(reply, `order:${user.id}`, 20, 3600))) return;
-  const price = premiumPrice();
-  if (price.amount < 100)
-    return apiError(reply, 500, 'The Premium price is set too low.');
+  // A page loaded before the plans sends no plan; it gets the 3-month one,
+  // which costs what that page showed.
+  const body = z
+    .object({ plan: z.enum(PLAN_IDS).default('quarterly') })
+    .safeParse(request.body ?? {});
+  if (!body.success) return apiError(reply, 400, 'Choose a plan.');
+  const price = planById(body.data.plan)!;
   const checkout = (order: {
     orderId: string;
     amount: number;
@@ -1258,12 +1269,7 @@ app.post('/api/billing/create-order', async (request, reply) => {
     key_id: config.razorpay!.keyId,
     name: price.name,
   });
-  const open = await store.openOrder(
-    user.id,
-    price.amount,
-    price.currency,
-    ORDER_REUSE_MINUTES,
-  );
+  const open = await store.openOrder(user.id, price, ORDER_REUSE_MINUTES);
   if (open) {
     // Reuse it only while Razorpay says it is unpaid. If it was paid but we
     // never heard (the tab closed before checkout reported back), apply that
@@ -1288,6 +1294,8 @@ app.post('/api/billing/create-order', async (request, reply) => {
     await store.createPayment({
       ...order,
       userId: user.id,
+      plan: price.id,
+      ...termOfPlan(price),
       status: 'created',
       createdAt: new Date().toISOString(),
     });
@@ -1391,6 +1399,46 @@ app.register(async (webhook) => {
     if (capture) await applyCapture(capture, request.log);
     return { ok: true };
   });
+});
+
+// ---- Scheduled jobs ----
+
+/** Whether a request carries Vercel's cron secret as its bearer token. */
+function fromCron(request: FastifyRequest) {
+  const secret = config.cronSecret;
+  const header = request.headers.authorization;
+  if (!secret || typeof header !== 'string') return false;
+  const given = Buffer.from(header);
+  const expected = Buffer.from(`Bearer ${secret}`);
+  return given.length === expected.length && timingSafeEqual(given, expected);
+}
+
+// Daily, from the cron in vercel.json: emails everyone whose Premium ends in
+// the next few days, once per end date.
+app.get('/api/cron/premium-reminders', async (request, reply) => {
+  if (!config.cronSecret)
+    return apiError(reply, 503, 'Scheduled jobs are not set up.');
+  if (!fromCron(request)) return apiError(reply, 401, 'Not allowed.');
+  if (!mailConfigured())
+    return apiError(
+      reply,
+      503,
+      'Email is not set up, so no reminders went out.',
+    );
+  try {
+    const result = await sendRenewalReminders({
+      store,
+      appUrl: config.appUrl,
+      log: request.log,
+      remind: sendPremiumReminder,
+    });
+    request.log.info(result, 'Premium reminders sent');
+    return result;
+  } catch (error) {
+    // Before the database is migrated the reminder column doesn't exist.
+    request.log.error(error, 'Premium reminders failed');
+    return apiError(reply, 500, 'Premium reminders failed.');
+  }
 });
 
 // ---- Library ----

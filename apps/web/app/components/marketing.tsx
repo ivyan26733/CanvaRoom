@@ -3,7 +3,7 @@ import { FooterAccountLinks } from './plan-cta';
 import { SiteHeader } from './site-header';
 import { HOME_FAQ, SITE, USE_CASES, type Faq } from '../lib/site';
 import { Logo } from './icons';
-import { decimal, PRICE } from '../lib/pricing';
+import { decimal, planBonus, planLength, PLANS } from '../lib/pricing';
 import { Pricing } from './pricing';
 import { Story } from './story';
 
@@ -36,23 +36,22 @@ export const appSchema = {
       price: '0',
       priceCurrency: 'USD',
     },
-    {
+    ...PLANS.map((plan) => ({
       '@type': 'Offer',
-      name: 'CanvaRoom Premium, monthly',
-      price: decimal(PRICE.amount),
+      name: `CanvaRoom Premium, ${planLength(plan)}${planBonus(plan) ? ` (${planBonus(plan)})` : ''}`,
+      price: decimal(plan.amount),
       priceCurrency: 'USD',
       priceSpecification: {
         '@type': 'UnitPriceSpecification',
-        price: decimal(PRICE.amount),
+        price: decimal(plan.amount),
         priceCurrency: 'USD',
-        unitCode: 'MON',
         referenceQuantity: {
           '@type': 'QuantitativeValue',
-          value: 1,
+          value: plan.months,
           unitCode: 'MON',
         },
       },
-    },
+    })),
   ],
   featureList: [
     'Real-time collaborative drawing',

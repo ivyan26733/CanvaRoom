@@ -151,6 +151,18 @@ CREATE TABLE IF NOT EXISTS payment_captures (
 );
 CREATE INDEX IF NOT EXISTS payment_captures_order_idx ON payment_captures (order_id);
 
+-- The 3, 6 and 12-month plans: which plan an order is for, and the calendar
+-- months and extra days it adds. Empty on one-month orders from before them.
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS plan text;
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS months integer CHECK (months >= 0);
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS days integer CHECK (days >= 0);
+
+-- The Premium end date a renewal reminder was sent for. Paying again moves
+-- paid_until, so the new end date gets its own reminder.
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS premium_reminded_for timestamptz;
+CREATE INDEX IF NOT EXISTS accounts_paid_until_idx
+  ON accounts (paid_until) WHERE paid_until IS NOT NULL;
+
 -- The free plan keeps an owner's oldest board, found through this index.
 CREATE INDEX IF NOT EXISTS boards_owner_created_idx ON boards (owner_id, created_at);
 

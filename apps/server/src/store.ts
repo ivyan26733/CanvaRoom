@@ -11,6 +11,12 @@ import {
   planOf,
 } from './models.js';
 import { PostgresStore } from './pg-store.js';
+import {
+  extendBy,
+  planOfOrder,
+  termOfOrder,
+  type PremiumPlan,
+} from './plans.js';
 import type {
   Account,
   BoardMeta,
@@ -23,6 +29,7 @@ import type {
   Page,
   Feedback,
   Payment,
+  PremiumReminder,
   Plan,
   Presence,
   SessionRecord,
@@ -139,20 +146,31 @@ export interface Store {
    * Returns the account's plan after counting.
    */
   accrueTrial(userId: string): Promise<Plan | undefined>;
-  /** The user's newest unpaid order for this price, made in the last `minutes`. */
+  /** The user's newest unpaid order for this plan, made in the last `minutes`. */
   openOrder(
     userId: string,
-    amount: number,
-    currency: string,
+    plan: PremiumPlan,
     minutes: number,
   ): Promise<Payment | undefined>;
   /**
    * Applies a captured payment exactly once: the order is marked paid and its
-   * user's pass extended by `days` from the later of now and the current pass
-   * end. Repeats of the same payment, and further payments on an order that
-   * is already paid, change nothing.
+   * user's pass extended by the order's plan from the later of now and the
+   * current pass end (by `legacyDays` for one-month orders from before the
+   * plans). Repeats of the same payment, and further payments on an order
+   * that is already paid, change nothing.
    */
-  recordPayment(capture: Capture, days: number): Promise<CaptureResult>;
+  recordPayment(capture: Capture, legacyDays: number): Promise<CaptureResult>;
+  /**
+   * Marks, and returns, up to `limit` accounts whose Premium ends within
+   * `withinDays` and that haven't been reminded about that end date. Paying
+   * again moves the end date, so the next end gets its own reminder.
+   */
+  claimPremiumReminders(
+    withinDays: number,
+    limit: number,
+  ): Promise<PremiumReminder[]>;
+  /** Unmarks a reminder that couldn't be sent, so the next run retries it. */
+  releasePremiumReminder(userId: string, paidUntil: string): Promise<void>;
 }
 
 /** The oldest of an owner's boards, given each board's owner and creation. */
@@ -167,12 +185,13 @@ const firstBoardOf = (
         a!.createdAt.localeCompare(b!.createdAt) || a!.id.localeCompare(b!.id),
     )[0]?.id;
 
-/** The later of `from` (or now, if sooner) and now, plus `days`. */
-const extendPass = (from: string | undefined, days: number) =>
-  new Date(
-    Math.max(from ? new Date(from).getTime() : 0, Date.now()) +
-      days * 86_400_000,
-  ).toISOString();
+/** Whether an unpaid order is a recent one for `plan`, so it can be reused. */
+const reusable = (payment: Payment, plan: PremiumPlan, since: number) =>
+  payment.status === 'created' &&
+  payment.amount === plan.amount &&
+  payment.currency === plan.currency &&
+  planOfOrder(payment)?.id === plan.id &&
+  Date.parse(payment.createdAt) > since;
 
 /**
  * What a capture does to an order, for the stores without Postgres (local
@@ -182,7 +201,7 @@ function settle(
   payment: Payment | undefined,
   account: Account | undefined,
   capture: Capture,
-  days: number,
+  legacyDays: number,
 ): { result: CaptureResult; paid?: Payment; paidUntil?: string } {
   if (!payment || !account) return { result: { outcome: 'unknown' } };
   const { userId } = payment;
@@ -198,7 +217,10 @@ function settle(
         userId,
       },
     };
-  const paidUntil = extendPass(account.paidUntil, days);
+  const paidUntil = extendBy(
+    account.paidUntil,
+    termOfOrder(payment, legacyDays),
+  );
   return {
     result: { outcome: 'applied', userId, paidUntil },
     paid: {
@@ -741,27 +763,24 @@ export class RedisStore implements Store {
     return planOf(next);
   }
 
-  async openOrder(
-    userId: string,
-    amount: number,
-    currency: string,
-    minutes: number,
-  ) {
+  async openOrder(userId: string, plan: PremiumPlan, minutes: number) {
     const orderId = await this.redis.get(keys.openOrder(userId));
     const payment = orderId ? await this.getPayment(orderId) : undefined;
-    return payment?.status === 'created' &&
-      payment.amount === amount &&
-      payment.currency === currency &&
-      Date.now() - Date.parse(payment.createdAt) < minutes * 60_000
+    return payment && reusable(payment, plan, Date.now() - minutes * 60_000)
       ? payment
       : undefined;
   }
 
-  async recordPayment(capture: Capture, days: number) {
+  async recordPayment(capture: Capture, legacyDays: number) {
     // Only used without Postgres (local development), so not atomic.
     const payment = await this.getPayment(capture.orderId);
     const account = payment && (await this.getAccount(payment.userId));
-    const { result, paid, paidUntil } = settle(payment, account, capture, days);
+    const { result, paid, paidUntil } = settle(
+      payment,
+      account,
+      capture,
+      legacyDays,
+    );
     if (paid && paidUntil && account) {
       await this.redis.set(keys.payment(paid.orderId), JSON.stringify(paid));
       await this.redis.set(
@@ -771,6 +790,13 @@ export class RedisStore implements Store {
     }
     return result;
   }
+
+  async claimPremiumReminders(): Promise<PremiumReminder[]> {
+    // Only Postgres sends renewal reminders; Redis can't list accounts by date.
+    return [];
+  }
+
+  async releasePremiumReminder() {}
 }
 
 type MemoryBoard = {
@@ -1166,36 +1192,71 @@ export class MemoryStore implements Store {
     return planOf(next);
   }
 
-  async openOrder(
-    userId: string,
-    amount: number,
-    currency: string,
-    minutes: number,
-  ) {
+  async openOrder(userId: string, plan: PremiumPlan, minutes: number) {
     const since = Date.now() - minutes * 60_000;
     return [...this.payments.values()]
       .filter(
         (payment) =>
-          payment.userId === userId &&
-          payment.status === 'created' &&
-          payment.amount === amount &&
-          payment.currency === currency &&
-          Date.parse(payment.createdAt) > since,
+          payment.userId === userId && reusable(payment, plan, since),
       )
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
   }
 
-  async recordPayment(capture: Capture, days: number) {
+  async recordPayment(capture: Capture, legacyDays: number) {
     // Nothing awaits between reading and writing, so this is atomic.
     const payment = this.payments.get(capture.orderId);
     const account = payment && this.accounts.get(payment.userId);
-    const { result, paid, paidUntil } = settle(payment, account, capture, days);
+    const { result, paid, paidUntil } = settle(
+      payment,
+      account,
+      capture,
+      legacyDays,
+    );
     if (paid && paidUntil && account) {
       this.payments.set(paid.orderId, paid);
       this.accounts.set(account.id, { ...account, paidUntil });
       this.scheduleSave();
     }
     return result;
+  }
+
+  async claimPremiumReminders(withinDays: number, limit: number) {
+    const now = Date.now();
+    const due: PremiumReminder[] = [];
+    for (const account of this.accounts.values()) {
+      if (due.length >= limit) break;
+      const { paidUntil } = account;
+      const end = paidUntil ? Date.parse(paidUntil) : 0;
+      if (
+        !paidUntil ||
+        !account.email ||
+        end <= now ||
+        end > now + withinDays * 86_400_000 ||
+        account.premiumRemindedFor === paidUntil
+      )
+        continue;
+      this.accounts.set(account.id, {
+        ...account,
+        premiumRemindedFor: paidUntil,
+      });
+      due.push({
+        userId: account.id,
+        email: account.email,
+        name: account.name,
+        paidUntil,
+      });
+    }
+    if (due.length) this.scheduleSave();
+    return due;
+  }
+
+  async releasePremiumReminder(userId: string, paidUntil: string) {
+    const account = this.accounts.get(userId);
+    if (account?.premiumRemindedFor !== paidUntil) return;
+    const unmarked = { ...account };
+    delete unmarked.premiumRemindedFor;
+    this.accounts.set(userId, unmarked);
+    this.scheduleSave();
   }
 }
 

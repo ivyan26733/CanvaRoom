@@ -40,7 +40,7 @@ const PAGES: Result[] = (
       href: '/#pricing',
       icon: 'sparkle',
       words:
-        'plans premium upgrade price cost trial free monthly dollars usd',
+        'plans premium upgrade price cost trial free months yearly annual quarterly dollars usd',
     },
     {
       title: 'Library',

@@ -1,5 +1,11 @@
-import { formatMoney, PRICE } from '../lib/pricing';
-import { PricingCta } from './plan-cta';
+import {
+  formatMoney,
+  formatRate,
+  planBonus,
+  planLength,
+  PLANS as PREMIUM_PLANS,
+} from '../lib/pricing';
+import { PlanButton, PricingCta } from './plan-cta';
 import { Icon, type IconName } from './icons';
 import './pricing.css';
 
@@ -55,7 +61,7 @@ const PERKS: { icon: IconName; title: string; body: string }[] = [
 const PLANS = [
   { name: 'Free trial', note: '30 minutes of use' },
   { name: 'Free', note: 'After the trial' },
-  { name: 'Premium', note: 'Per month' },
+  { name: 'Premium', note: '3, 6 or 12 months' },
 ];
 
 function Mark({ value }: { value: Cell }) {
@@ -69,10 +75,11 @@ function Mark({ value }: { value: Cell }) {
   );
 }
 
+/** The lowest monthly rate, for "from $5.00 / month". */
+const FROM_RATE = Math.min(...PREMIUM_PLANS.map((plan) => plan.perMonth));
+
 /** Plans and Premium perks, priced in US dollars. */
 export function Pricing() {
-  const price = PRICE;
-  const premium = formatMoney(price.amount);
   return (
     <section className="pr" id="pricing" aria-labelledby="pricing-heading">
       <div className="pr-head">
@@ -84,7 +91,8 @@ export function Pricing() {
           Every account starts with a free trial of 30 minutes of active use;
           the clock pauses whenever CanvaRoom isn’t open in front of you. After
           it, the free plan keeps your first board for you to use on your own.
-          Premium opens everything up, billed monthly.
+          Premium opens everything up: pay once for 3, 6 or 12 months, and the
+          longer plans come with free time on top.
         </p>
       </div>
 
@@ -107,7 +115,7 @@ export function Pricing() {
               <small>
                 {index === 2 ? (
                   <>
-                    {premium} <span>/ month</span>
+                    From {formatRate(FROM_RATE)} <span>/ month</span>
                   </>
                 ) : (
                   plan.note
@@ -135,24 +143,58 @@ export function Pricing() {
         ))}
       </div>
 
+      <div className="pr-plan-cards" id="premium-plans">
+        {PREMIUM_PLANS.map((plan) => {
+          const bonus = planBonus(plan);
+          return (
+            <article
+              key={plan.id}
+              className={`pr-plan ${plan.bestValue ? 'is-best' : ''}`}
+              aria-label={`Premium for ${planLength(plan)}`}
+            >
+              {plan.bestValue && (
+                <span className="pr-plan-badge">Best value</span>
+              )}
+              <h3>{planLength(plan)}</h3>
+              <p className="pr-plan-price">
+                {plan.compareAt > plan.amount && (
+                  <s aria-label={`Was ${formatMoney(plan.compareAt)}`}>
+                    {formatMoney(plan.compareAt)}
+                  </s>
+                )}
+                <strong>{formatMoney(plan.amount)}</strong>
+              </p>
+              <p className="pr-plan-tags">
+                {plan.savePercent > 0 && (
+                  <span className="pr-save">Save {plan.savePercent}%</span>
+                )}
+                {bonus && <span className="pr-bonus">{bonus}</span>}
+                {!plan.savePercent && !bonus && (
+                  <span className="pr-plain">Pay once</span>
+                )}
+              </p>
+              <p className="pr-plan-rate">
+                {formatRate(plan.perMonth)} a month
+                {bonus ? ', counting the free time' : ''}
+              </p>
+              <PlanButton
+                plan={plan.id}
+                label={planLength(plan)}
+                primary={plan.bestValue}
+              />
+            </article>
+          );
+        })}
+      </div>
+
       <div className="pr-premium">
-        <aside className="pr-card" aria-label="Premium price">
+        <aside className="pr-card" aria-label="About Premium">
           <p className="st-eyebrow">CanvaRoom Premium</p>
-          <p className="pr-price">
-            {price.listAmount > price.amount && (
-              <s aria-label={`Was ${formatMoney(price.listAmount)}`}>
-                {formatMoney(price.listAmount)}
-              </s>
-            )}
-            <strong>{premium}</strong>
-            <span>/ month</span>
-          </p>
-          {price.listAmount > price.amount && (
-            <p className="pr-offer">Launch offer</p>
-          )}
+          <p className="pr-card-title">Every plan unlocks everything.</p>
           <p className="pr-fine">
-            Billed in US dollars. Each payment unlocks a month; nothing renews
-            on its own.
+            Billed once in US dollars. Nothing renews on its own: we’ll email
+            you a few days before Premium ends. Paying again adds the new time
+            after your current end date.
           </p>
           <PricingCta />
         </aside>

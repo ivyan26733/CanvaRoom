@@ -164,8 +164,19 @@ const PREMIUM_PERKS = [
   'Session recording with voice, up to 4K',
 ];
 
+/** "18 November 2026", in UTC like the stored end date. */
+const longDate = (value: string) =>
+  new Intl.DateTimeFormat('en-GB', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+    timeZone: 'UTC',
+  }).format(new Date(value));
+
 export type PremiumWelcome = {
   name: string;
+  /** What was bought, like "6 months + 15 days free". */
+  term: string;
   /** In the currency's smallest unit (cents). */
   amount: number;
   currency: string;
@@ -180,15 +191,11 @@ export function premiumWelcomeEmail(welcome: PremiumWelcome) {
     style: 'currency',
     currency: welcome.currency,
   }).format(welcome.amount / 100);
-  const until = new Intl.DateTimeFormat('en-GB', {
-    day: 'numeric',
-    month: 'long',
-    year: 'numeric',
-    timeZone: 'UTC',
-  }).format(new Date(welcome.paidUntil));
+  const until = longDate(welcome.paidUntil);
   const dashboard = `${welcome.appUrl}/dashboard`;
   const feedback = `${welcome.appUrl}/contact#feedback`;
   const details = [
+    ['Plan', `Premium, ${welcome.term}`],
     ['Amount paid', `${paid} ${welcome.currency}`],
     ['Payment ID', welcome.paymentId],
     ['Premium until', until],
@@ -207,7 +214,7 @@ Open your boards: ${dashboard}
 
 Any complaint, or a feature you'd like? Just reply to this email or write to ${SUPPORT_EMAIL}. You can also send feedback here: ${feedback}
 
-Premium doesn't renew on its own. We'll be glad to see you renew when the month is up.
+Premium doesn't renew on its own. We'll email you a few days before it ends, so you can renew if you'd like.
 
 Thanks for being with us,
 The CanvaRoom team`;
@@ -226,7 +233,7 @@ The CanvaRoom team`;
   <ul style="margin:0 0 24px;padding-left:20px">${PREMIUM_PERKS.map((perk) => `<li style="margin:0 0 4px">${escapeHtml(perk)}</li>`).join('')}</ul>
   <p style="margin:0 0 28px"><a href="${escapeHtml(dashboard)}" style="display:inline-block;background:#ff4f1f;color:#fff;text-decoration:none;font-weight:600;padding:12px 22px;border-radius:999px">Open your boards</a></p>
   <p style="margin:0 0 16px">Any complaint, or a feature you’d like? Just reply to this email or write to <a href="mailto:${SUPPORT_EMAIL}" style="color:#ff4f1f">${SUPPORT_EMAIL}</a>. You can also <a href="${escapeHtml(feedback)}" style="color:#ff4f1f">send us feedback</a>.</p>
-  <p style="margin:0 0 24px;color:#57544d;font-size:14px">Premium doesn’t renew on its own. We’ll be glad to see you renew when the month is up.</p>
+  <p style="margin:0 0 24px;color:#57544d;font-size:14px">Premium doesn’t renew on its own. We’ll email you a few days before it ends, so you can renew if you’d like.</p>
   <p style="margin:0">Thanks for being with us,<br>The CanvaRoom team</p>
 </div>`;
   return { subject, html, text };
@@ -235,5 +242,50 @@ The CanvaRoom team`;
 /** Thanks a customer for a Premium payment. */
 export async function sendPremiumWelcome(to: string, welcome: PremiumWelcome) {
   const { subject, html, text } = premiumWelcomeEmail(welcome);
+  await send(to, subject, html, text, SUPPORT_EMAIL);
+}
+
+export type PremiumReminderMail = {
+  name: string;
+  paidUntil: string;
+  appUrl: string;
+};
+
+/** The heads-up a few days before Premium ends, as subject, HTML and text. */
+export function premiumReminderEmail(reminder: PremiumReminderMail) {
+  const until = longDate(reminder.paidUntil);
+  const renew = `${reminder.appUrl}/#pricing`;
+  const subject = `Your CanvaRoom Premium ends on ${until}`;
+  const text = `Hi ${reminder.name},
+
+Your CanvaRoom Premium ends on ${until}. Premium doesn't renew on its own, so nothing will be charged.
+
+To keep unlimited boards, people, exports, images and recording, renew for 3, 6 or 12 months here: ${renew}
+Renewing adds the new time after your current end date, so you don't lose a day.
+
+Your boards stay yours either way. After Premium ends, the free plan keeps your first board for you to use on your own.
+
+Any question? Just reply to this email or write to ${SUPPORT_EMAIL}.
+
+The CanvaRoom team`;
+  const html = `<div style="font-family:system-ui,-apple-system,Segoe UI,sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;color:#141413;line-height:1.55">
+  <p style="font-size:20px;font-weight:700;margin:0 0 24px">CanvaRoom</p>
+  <p style="font-size:22px;font-weight:700;margin:0 0 16px">Your Premium ends on ${escapeHtml(until)}</p>
+  <p style="margin:0 0 16px">Hi ${escapeHtml(reminder.name)},</p>
+  <p style="margin:0 0 16px">Premium doesn’t renew on its own, so nothing will be charged. To keep unlimited boards, people, exports, images and recording, renew for 3, 6 or 12 months. The new time starts after your current end date, so you don’t lose a day.</p>
+  <p style="margin:0 0 28px"><a href="${escapeHtml(renew)}" style="display:inline-block;background:#ff4f1f;color:#fff;text-decoration:none;font-weight:600;padding:12px 22px;border-radius:999px">Renew Premium</a></p>
+  <p style="margin:0 0 16px;color:#57544d;font-size:14px">Your boards stay yours either way. After Premium ends, the free plan keeps your first board for you to use on your own.</p>
+  <p style="margin:0 0 24px">Any question? Just reply to this email or write to <a href="mailto:${SUPPORT_EMAIL}" style="color:#ff4f1f">${SUPPORT_EMAIL}</a>.</p>
+  <p style="margin:0">The CanvaRoom team</p>
+</div>`;
+  return { subject, html, text };
+}
+
+/** Reminds a customer that Premium ends soon. */
+export async function sendPremiumReminder(
+  to: string,
+  reminder: PremiumReminderMail,
+) {
+  const { subject, html, text } = premiumReminderEmail(reminder);
   await send(to, subject, html, text, SUPPORT_EMAIL);
 }

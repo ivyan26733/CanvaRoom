@@ -174,19 +174,25 @@ A fresh page shows a quiet guide to every tool and shortcut. It fades away the m
 
 ## 💳 Plans
 
-|                                 |    **Free trial**    |    **Free**     | **Premium** |
-| ------------------------------- | :------------------: | :-------------: | :---------: |
-| When                            | 30 min of active use | After the trial |   Monthly   |
-| Boards                          |          2           |        1        |  Unlimited  |
-| People on a board               |       You + 2        |    Just you     |  Unlimited  |
-| Live drawing, voice and chat    |          ✅          |       ✅        |     ✅      |
-| Pages, templates, zoom, history |          ✅          |       ✅        |     ✅      |
-| Follow-the-writer               |          ✅          |        —        |     ✅      |
-| Export to PNG, SVG and PDF      |          —           |        —        |     ✅      |
-| Images on the board             |          —           |        —        |     ✅      |
-| Session recording, up to 4K     |          —           |        —        |     ✅      |
+|                                 |    **Free trial**    |    **Free**     |    **Premium**    |
+| ------------------------------- | :------------------: | :-------------: | :---------------: |
+| When                            | 30 min of active use | After the trial | 3, 6 or 12 months |
+| Boards                          |          2           |        1        |     Unlimited     |
+| People on a board               |       You + 2        |    Just you     |     Unlimited     |
+| Live drawing, voice and chat    |          ✅          |       ✅        |        ✅         |
+| Pages, templates, zoom, history |          ✅          |       ✅        |        ✅         |
+| Follow-the-writer               |          ✅          |        —        |        ✅         |
+| Export to PNG, SVG and PDF      |          —           |        —        |        ✅         |
+| Images on the board             |          —           |        —        |        ✅         |
+| Session recording, up to 4K     |          —           |        —        |        ✅         |
 
-**Premium is $20 a month** (launch offer, normally $24), billed in US dollars. Each payment unlocks a month, and nothing renews on its own.
+**Premium is paid once, in US dollars, for 3, 6 or 12 months.** Nothing renews on its own; a reminder email goes out a few days before it ends.
+
+| Plan      | Price | Saving | Bonus         | Works out to |
+| --------- | :---: | :----: | ------------- | :----------: |
+| 3 months  |  $20  |   —    | —             | $6.67/month  |
+| 6 months  |  $35  |  12%   | +15 days free | $5.38/month  |
+| 12 months |  $65  |  19%   | +1 month free | $5.00/month  |
 
 The trial clock only runs while CanvaRoom is open in front of you; it pauses when you switch away. Scratch boards, used without an account, are always free.
 

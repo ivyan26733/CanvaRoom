@@ -24,6 +24,7 @@ import { api, send, type ApiError, type BoardListItem } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { openUpgrade, planState, TRIAL_BOARDS, useNow } from '../lib/billing';
 import { BOARD_NAV } from '../lib/navigation';
+import { isPlanId } from '../lib/pricing';
 import { DASHBOARD, NEW_BOARD_EVENT } from '../lib/next-url';
 
 type Sort = 'recent' | 'name';
@@ -71,8 +72,10 @@ function Boards() {
     const requested = params.get('view');
     if (requested === 'mine' || requested === 'shared') setView(requested);
     if (params.get('mode') === 'signup') setUpgrade(true);
-    // "Upgrade to Premium" on the pricing section links here.
-    if (params.get('upgrade')) openUpgrade();
+    // "Upgrade to Premium" on the pricing section links here: ?upgrade=yearly
+    // opens checkout on that plan, ?upgrade=1 on the default one.
+    const plan = params.get('upgrade');
+    if (plan) openUpgrade('', isPlanId(plan) ? plan : undefined);
     if (params.get('new')) setPendingNew(true);
     try {
       const saved = localStorage.getItem('canvasroom.layout');

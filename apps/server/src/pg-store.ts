@@ -19,11 +19,18 @@ import type {
   Page,
   Feedback,
   Payment,
+  PremiumReminder,
   Presence,
   SessionRecord,
   Snapshot,
 } from './models.js';
 import type { BoardListItem, LiveStore, Store } from './store.js';
+import {
+  PLANS_SINCE,
+  planOfOrder,
+  termOfOrder,
+  type PremiumPlan,
+} from './plans.js';
 
 const iso = (value: Date | string) => new Date(value).toISOString();
 
@@ -98,10 +105,18 @@ type PaymentRow = {
   amount: number;
   currency: string;
   status: Payment['status'];
+  // Missing until the database is migrated for the 3/6/12-month plans.
+  plan?: string | null;
+  months?: number | null;
+  days?: number | null;
   payment_id: string | null;
   created_at: Date;
   paid_at: Date | null;
 };
+
+/** Postgres's "undefined column": the database isn't migrated yet. */
+const missingColumn = (error: unknown) =>
+  (error as { code?: string } | null)?.code === '42703';
 
 const toPayment = (row: PaymentRow): Payment => ({
   orderId: row.order_id,
@@ -109,6 +124,9 @@ const toPayment = (row: PaymentRow): Payment => ({
   amount: row.amount,
   currency: row.currency,
   status: row.status,
+  ...(row.plan ? { plan: row.plan } : {}),
+  ...(row.months != null ? { months: row.months } : {}),
+  ...(row.days != null ? { days: row.days } : {}),
   createdAt: iso(row.created_at),
   ...(row.payment_id ? { paymentId: row.payment_id } : {}),
   ...(row.paid_at ? { paidAt: iso(row.paid_at) } : {}),
@@ -679,18 +697,34 @@ export class PostgresStore implements Store {
   }
 
   async createPayment(payment: Payment) {
-    await this.pool.query(
-      `INSERT INTO payments (order_id, user_id, amount, currency, status, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
-      [
-        payment.orderId,
-        payment.userId,
-        payment.amount,
-        payment.currency,
-        payment.status,
-        payment.createdAt,
-      ],
-    );
+    const values = [
+      payment.orderId,
+      payment.userId,
+      payment.amount,
+      payment.currency,
+      payment.status,
+      payment.createdAt,
+    ];
+    try {
+      await this.pool.query(
+        `INSERT INTO payments (order_id, user_id, amount, currency, status, created_at, plan, months, days)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        [
+          ...values,
+          payment.plan ?? null,
+          payment.months ?? null,
+          payment.days ?? null,
+        ],
+      );
+    } catch (error) {
+      if (!missingColumn(error)) throw error;
+      // Not migrated yet: the order's amount still tells which plan it is.
+      await this.pool.query(
+        `INSERT INTO payments (order_id, user_id, amount, currency, status, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        values,
+      );
+    }
   }
 
   async accrueTrial(userId: string) {
@@ -726,25 +760,32 @@ export class PostgresStore implements Store {
     return rows[0] && toPayment(rows[0]);
   }
 
-  async openOrder(
-    userId: string,
-    amount: number,
-    currency: string,
-    minutes: number,
-  ) {
+  async openOrder(userId: string, plan: PremiumPlan, minutes: number) {
     const { rows } = await this.pool.query<PaymentRow>(
       `SELECT * FROM payments
         WHERE user_id = $1 AND status = 'created'
           AND amount = $2 AND currency = $3
           AND created_at > now() - make_interval(mins => $4)
+          AND created_at >= $5
         ORDER BY created_at DESC
-        LIMIT 1`,
-      [userId, amount, currency, minutes],
+        LIMIT 5`,
+      [
+        userId,
+        plan.amount,
+        plan.currency,
+        minutes,
+        new Date(PLANS_SINCE).toISOString(),
+      ],
     );
-    return rows[0] && toPayment(rows[0]);
+    return rows
+      .map(toPayment)
+      .find((payment) => planOfOrder(payment)?.id === plan.id);
   }
 
-  async recordPayment(capture: Capture, days: number): Promise<CaptureResult> {
+  async recordPayment(
+    capture: Capture,
+    legacyDays: number,
+  ): Promise<CaptureResult> {
     // One transaction, locking the order and then the account (always in
     // that order, so two payments can't deadlock). The checkout, the webhook
     // and a retry of either can arrive together: whichever locks the order
@@ -770,12 +811,16 @@ export class PostgresStore implements Store {
         await this.logCapture(client, capture, order, false);
         return { outcome: 'extra', userId };
       }
+      // The plan stored on the order decides the time, in calendar months
+      // and then days, from the later of now and the current end.
+      const term = termOfOrder(toPayment(order), legacyDays);
       const account = await client.query<{ paid_until: Date }>(
         `UPDATE accounts
-            SET paid_until = greatest(paid_until, now()) + make_interval(days => $2)
+            SET paid_until = greatest(paid_until, now())
+                  + make_interval(months => $2, days => $3)
           WHERE id = $1
           RETURNING paid_until`,
-        [userId, days],
+        [userId, term.months, term.days],
       );
       if (!account.rows[0]) return { outcome: 'unknown' };
       await client.query(
@@ -790,6 +835,44 @@ export class PostgresStore implements Store {
         paidUntil: iso(account.rows[0].paid_until),
       };
     });
+  }
+
+  async claimPremiumReminders(withinDays: number, limit: number) {
+    // Marking and returning in one statement means two overlapping runs
+    // can't both remind the same account.
+    const { rows } = await this.pool.query<{
+      id: string;
+      email: string;
+      name: string;
+      paid_until: Date;
+    }>(
+      `UPDATE accounts SET premium_reminded_for = paid_until
+        WHERE id IN (
+          SELECT id FROM accounts
+           WHERE paid_until > now()
+             AND paid_until <= now() + make_interval(days => $1)
+             AND premium_reminded_for IS DISTINCT FROM paid_until
+             AND email <> ''
+           ORDER BY paid_until
+           LIMIT $2
+           FOR UPDATE SKIP LOCKED)
+        RETURNING id, email, name, paid_until`,
+      [withinDays, limit],
+    );
+    return rows.map((row): PremiumReminder => ({
+      userId: row.id,
+      email: row.email,
+      name: row.name,
+      paidUntil: iso(row.paid_until),
+    }));
+  }
+
+  async releasePremiumReminder(userId: string, paidUntil: string) {
+    await this.pool.query(
+      `UPDATE accounts SET premium_reminded_for = NULL
+        WHERE id = $1 AND premium_reminded_for = $2`,
+      [userId, paidUntil],
+    );
   }
 
   /**
