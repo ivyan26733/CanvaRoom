@@ -732,6 +732,23 @@ kbd {
     #121211;
   --demo-ink: #f1eee7;
 }
+/* Members reach their boards from the header, so the hero takes the row. */
+.landing-member {
+  grid-template-columns: minmax(0, 1fr);
+}
+.landing-member .live-demo,
+.landing-member .landing-copy {
+  width: 100%;
+  max-width: 1240px;
+  margin-inline: auto;
+}
+.landing-member .live-demo {
+  inset-inline: 0;
+  padding-inline: clamp(16px, 4vw, 64px);
+}
+.landing-member .landing-points {
+  max-width: none;
+}
 .landing-stage::after {
   content: '';
   position: absolute;
@@ -1048,9 +1065,6 @@ kbd {
 }
 .landing-cta .button {
   text-decoration: none;
-}
-.landing-cta-wait {
-  min-height: 440px;
 }
 .landing-cta h2,
 .landing-cta .auth-lede {
@@ -3959,11 +3973,11 @@ kbd {
    ========================================================================== */
 
 @media (max-width: 1180px) {
-  .landing-points {
+  .landing:not(.landing-member) .landing-points {
     grid-template-columns: 1fr;
     gap: 12px;
   }
-  .landing-points li:nth-child(n + 3) {
+  .landing:not(.landing-member) .landing-points li:nth-child(n + 3) {
     display: none;
   }
 }
@@ -4001,6 +4015,9 @@ kbd {
   }
   .landing-stage {
     min-height: 52vh;
+  }
+  .landing-member .landing-stage {
+    padding-inline: 16px;
   }
   .landing-brand {
     display: none;
