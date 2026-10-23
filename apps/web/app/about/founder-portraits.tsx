@@ -64,7 +64,7 @@ function Eye({ cx, look }: { cx: number; look: Look }) {
   );
 }
 
-/** A small live-cursor tag, the way people appear on a CanvaRoom board. */
+/** A small live-cursor tag, the way people appear on an Avenor board. */
 function CursorTag({
   x,
   y,

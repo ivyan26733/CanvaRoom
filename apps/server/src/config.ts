@@ -118,7 +118,7 @@ export const config = {
           port: env.SMTP_PORT,
           user: env.SMTP_USER,
           pass: env.SMTP_PASS,
-          from: env.SMTP_FROM || `CanvaRoom <${env.SMTP_USER}>`,
+          from: env.SMTP_FROM || `Avenor <${env.SMTP_USER}>`,
         }
       : undefined,
   resendApiUrl: env.RESEND_API_URL.replace(/\/$/, ''),
@@ -135,7 +135,7 @@ export const config = {
       ? { appId: env.CF_REALTIME_APP_ID, token: env.CF_REALTIME_APP_TOKEN }
       : undefined,
   feedbackTo: env.FEEDBACK_TO,
-  mailFrom: env.MAIL_FROM || 'CanvaRoom <onboarding@resend.dev>',
+  mailFrom: env.MAIL_FROM || 'Avenor <onboarding@resend.dev>',
   // Resend's shared sender only delivers to the Resend account's own address,
   // so mail to customers (password reset) waits for a verified domain.
   mailDomainVerified: Boolean(env.MAIL_FROM),

@@ -1,20 +1,20 @@
 <div align="center">
 
-<img src="apps/web/app/icon.svg" width="72" alt="CanvaRoom logo" />
+<img src="apps/web/app/icon.svg" width="72" alt="Avenor logo" />
 
-# CanvaRoom
+# Avenor
 
 ### The whiteboard where everyone draws, talks, and follows along — live.
 
 One link. One board. Your whole class or team on the same page, with no lag.
 
-<a href="https://canva-room-blush.vercel.app"><img src="https://img.shields.io/badge/Open_CanvaRoom-ff4f1f?style=for-the-badge&logoColor=white" alt="Open CanvaRoom" /></a>
+<a href="https://canva-room-blush.vercel.app"><img src="https://img.shields.io/badge/Open_Avenor-ff4f1f?style=for-the-badge&logoColor=white" alt="Open Avenor" /></a>
 <a href="https://canva-room-blush.vercel.app/?mode=signup"><img src="https://img.shields.io/badge/Start_free_trial-1a1a1a?style=for-the-badge" alt="Start free trial" /></a>
 <a href="https://canva-room-blush.vercel.app/contact"><img src="https://img.shields.io/badge/Contact_us-f3f1ec?style=for-the-badge&labelColor=f3f1ec&color=f3f1ec" alt="Contact us" /></a>
 
 <br /><br />
 
-<img src="docs/screenshots/board.webp" alt="A CanvaRoom board mid-lesson: a right triangle, sticky notes with a² + b² = c², a student's answer and three people's cursors" width="100%" />
+<img src="docs/screenshots/board.webp" alt="An Avenor board mid-lesson: a right triangle, sticky notes with a² + b² = c², a student's answer and three people's cursors" width="100%" />
 
 <sub>A real lesson on a real board: the teacher writes, Arjun answers, Meera points — all at the same moment.</sub>
 
@@ -26,9 +26,9 @@ One link. One board. Your whole class or team on the same page, with no lag.
 
 > **Tuesday, 7:00 pm.** A tutor opens a video call, shares a slow whiteboard in another tab, and pastes links into a third app for chat. They start drawing a triangle. Their students see it two seconds later, in pieces. Someone asks _"where are you writing?"_ Someone else is still scrolling around the board looking for it.
 
-That evening is the reason CanvaRoom exists. Three apps for one lesson, ink that lags, and a board only one person can really use.
+That evening is the reason Avenor exists. Three apps for one lesson, ink that lags, and a board only one person can really use.
 
-**CanvaRoom puts it all in one room:**
+**Avenor puts it all in one room:**
 
 - ✏️ **Ink arrives while you draw**, not after you lift the pen.
 - 🎯 **Everyone's screen follows the writer**, so nobody gets lost on a big board.
@@ -101,7 +101,7 @@ Share a link, or put the QR code on a slide and let the class scan it. Guests jo
 
 ### Record the lesson
 
-Hit record, choose **720p, 1080p, 1440p or 4K**, and CanvaRoom captures the board exactly as you see it, along with your voice and the call. When you stop, the video downloads straight to your computer. Nothing is uploaded.
+Hit record, choose **720p, 1080p, 1440p or 4K**, and Avenor captures the board exactly as you see it, along with your voice and the call. When you stop, the video downloads straight to your computer. Nothing is uploaded.
 
 <table>
   <tr>
@@ -123,17 +123,17 @@ Export any page as a **PNG** for the group chat, an **SVG** for slides, or a **P
 Easy on the eyes at night, and fully usable on a phone, whether you're joining a class or drawing on the go.
 
 <details>
-<summary><b>📱 See CanvaRoom on a phone and in dark mode</b></summary>
+<summary><b>📱 See Avenor on a phone and in dark mode</b></summary>
 <br />
 <table>
   <tr>
-    <td width="33%"><img src="docs/screenshots/mobile-home.webp" alt="CanvaRoom home page on a phone" /></td>
+    <td width="33%"><img src="docs/screenshots/mobile-home.webp" alt="Avenor home page on a phone" /></td>
     <td width="33%"><img src="docs/screenshots/mobile-story.webp" alt="The landing page story on a phone" /></td>
     <td width="33%"><img src="docs/screenshots/mobile-board.webp" alt="A board on a phone with the drawing toolbar" /></td>
   </tr>
 </table>
 <img src="docs/screenshots/dark-mode.webp" alt="The lesson board in dark mode" width="100%" />
-<img src="docs/screenshots/landing-dark.webp" alt="The CanvaRoom sign-in page in dark mode" width="100%" />
+<img src="docs/screenshots/landing-dark.webp" alt="The Avenor sign-in page in dark mode" width="100%" />
 </details>
 
 <details>
@@ -194,7 +194,7 @@ A fresh page shows a quiet guide to every tool and shortcut. It fades away the m
 | 6 months  |  $35  |   ₹849   |     12% / 15%      | +15 days free | $5.38 · ₹131/month |
 | 12 months |  $65  |  ₹1,499  |     19% / 25%      | +1 month free | $5.00 · ₹115/month |
 
-The trial clock only runs while CanvaRoom is open in front of you; it pauses when you switch away. Scratch boards, used without an account, are always free.
+The trial clock only runs while Avenor is open in front of you; it pauses when you switch away. Scratch boards, used without an account, are always free.
 
 <details>
 <summary><b>See the plans and what Premium adds</b></summary>
@@ -234,13 +234,13 @@ Yes. Open a scratch board from the home page. It lives only in your browser tab;
 <details>
 <summary><b>Where do my recordings go?</b></summary>
 <br />
-Straight to your own computer as a video file. Recordings are never uploaded or stored by CanvaRoom.
+Straight to your own computer as a video file. Recordings are never uploaded or stored by Avenor.
 </details>
 
 <details>
 <summary><b>Do I need to install anything?</b></summary>
 <br />
-No. CanvaRoom runs in any modern browser, on a laptop, tablet or phone.
+No. Avenor runs in any modern browser, on a laptop, tablet or phone.
 </details>
 
 ---

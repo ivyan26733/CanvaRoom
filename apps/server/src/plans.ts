@@ -49,7 +49,7 @@ const plan = (
   const bonusDays = bonus.days ?? 0;
   return {
     id,
-    name: `CanvaRoom Premium · ${months} months`,
+    name: `Avenor Premium · ${months} months`,
     currency,
     amount,
     compareAt,

@@ -91,7 +91,7 @@ export function Pricing({ currency }: { currency: Currency }) {
         </h2>
         <p className="pr-lede">
           Every account starts with a free trial of 30 minutes of active use;
-          the clock pauses whenever CanvaRoom isn’t open in front of you. After
+          the clock pauses whenever Avenor isn’t open in front of you. After
           it, the free plan keeps your first board for you to use on your own.
           Premium opens everything up: pay once for 3, 6 or 12 months, and the
           longer plans come with free time on top.
@@ -191,7 +191,7 @@ export function Pricing({ currency }: { currency: Currency }) {
 
       <div className="pr-premium">
         <aside className="pr-card" aria-label="About Premium">
-          <p className="st-eyebrow">CanvaRoom Premium</p>
+          <p className="st-eyebrow">Avenor Premium</p>
           <p className="pr-card-title">Every plan unlocks everything.</p>
           <p className="pr-fine">
             {currency === 'INR'

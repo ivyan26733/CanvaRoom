@@ -183,7 +183,7 @@ export async function createPayPalOrder(plan: PremiumPlan, reference: string) {
         // Applies whichever button the buyer picks (PayPal or a card),
         // unlike payment_source.paypal.experience_context.
         application_context: {
-          brand_name: 'CanvaRoom',
+          brand_name: 'Avenor',
           shipping_preference: 'NO_SHIPPING',
           user_action: 'PAY_NOW',
         },

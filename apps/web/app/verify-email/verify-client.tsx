@@ -119,7 +119,7 @@ export function VerifyClient() {
       <>
         <h1>Verification is coming soon</h1>
         <p className="auth-lede">
-          We can’t email codes just yet. You can use CanvaRoom normally, and
+          We can’t email codes just yet. You can use Avenor normally, and
           we’ll ask you to confirm {user.email} later.
         </p>
         <button

@@ -467,7 +467,7 @@ export function SearchArt() {
           strokeLinecap="round"
         />
         <text x="122" y="236" className="st-strong">
-          CanvaRoom — live whiteboard
+          Avenor — live whiteboard
         </text>
         <text x="122" y="253" className="st-small">
           Voice + chat built in · free · no install

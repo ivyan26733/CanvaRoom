@@ -39,7 +39,7 @@ function Landing({ hasSession }: { hasSession: boolean }) {
       <section className="landing-stage">
         <LiveDemo />
         <div className="landing-copy">
-          <p className="kicker">Online whiteboard · voice · chat</p>
+          <p className="kicker">Where ideas move forward.</p>
           <h1>
             Think out loud,
             <br />

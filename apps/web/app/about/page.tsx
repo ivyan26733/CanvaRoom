@@ -7,10 +7,10 @@ import { FounderPortrait } from './founder-portraits';
 import './about.css';
 
 const DESCRIPTION =
-  'CanvaRoom was founded by two people who were tired of lag and app-juggling in online classes, so they built a whiteboard where ink, voice, and chat share one live room.';
+  'Avenor was founded by two people who were tired of lag and app-juggling in online classes, so they built a whiteboard where ink, voice, and chat share one live room.';
 
 export const metadata: Metadata = {
-  title: 'About us — the story behind CanvaRoom',
+  title: 'About us — the story behind Avenor',
   description: DESCRIPTION,
   alternates: { canonical: '/about' },
   openGraph: {
@@ -30,7 +30,7 @@ const FOUNDERS = [
     headline: 'Counts milliseconds so you don’t have to',
     bio: [
       'The Builder is the one who notices when a line arrives a beat after the voice explaining it — and can’t let it go. Late nights went into making every stroke travel the moment it is drawn, keeping voice steady when Wi-Fi isn’t, and making sure nothing on the board is ever lost.',
-      'Ask what CanvaRoom should feel like and the answer is always the same: like the whole class is leaning over one desk. If it feels slower than a marker on a real board, it isn’t finished yet.',
+      'Ask what Avenor should feel like and the answer is always the same: like the whole class is leaning over one desk. If it feels slower than a marker on a real board, it isn’t finished yet.',
     ],
     skills: [
       'Real-time sync',
@@ -46,7 +46,7 @@ const FOUNDERS = [
     role: 'Co-founder',
     headline: 'Turns “what if” into a plan, and a plan into a product',
     bio: [
-      'The Strategist has spent years guiding teams from a rough idea to something real, one tested step at a time. At CanvaRoom that means sitting with students and teachers, listening for the moment a class gets stuck, and deciding what to build next — and, just as often, what not to.',
+      'The Strategist has spent years guiding teams from a rough idea to something real, one tested step at a time. At Avenor that means sitting with students and teachers, listening for the moment a class gets stuck, and deciding what to build next — and, just as often, what not to.',
       'The Strategist keeps the product honest: simple enough to start in seconds, and focused on the people in the room rather than on features for their own sake.',
     ],
     skills: [
@@ -93,7 +93,7 @@ const ANSWERS = [
   },
   {
     title: 'Survives bad Wi-Fi',
-    body: 'If a connection drops, CanvaRoom reconnects on its own and catches up — no lost work and no rejoining the call.',
+    body: 'If a connection drops, Avenor reconnects on its own and catches up — no lost work and no rejoining the call.',
   },
   {
     title: 'Free to start',

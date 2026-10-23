@@ -46,7 +46,7 @@ export const appSchema = {
     ...(['USD', 'INR'] as Currency[]).flatMap((currency) =>
       PLANS_BY_CURRENCY[currency].map((plan) => ({
         '@type': 'Offer',
-        name: `CanvaRoom Premium, ${planLength(plan)}${planBonus(plan) ? ` (${planBonus(plan)})` : ''}${currency === 'INR' ? ', India' : ''}`,
+        name: `Avenor Premium, ${planLength(plan)}${planBonus(plan) ? ` (${planBonus(plan)})` : ''}${currency === 'INR' ? ', India' : ''}`,
         price: decimal(plan.amount),
         priceCurrency: currency,
         ...(currency === 'INR'
@@ -111,7 +111,7 @@ export function MarketingFooter() {
         </p>
       </div>
       <nav aria-label="Use cases">
-        <h2>Use CanvaRoom as a</h2>
+        <h2>Use Avenor as a</h2>
         <ul>
           {USE_CASES.map((useCase) => (
             <li key={useCase.slug}>
@@ -241,7 +241,7 @@ export function UseCaseView({ slug }: { slug: string }) {
         </section>
 
         <section className="mk-section" aria-labelledby="more-heading">
-          <h2 id="more-heading">More ways to use CanvaRoom</h2>
+          <h2 id="more-heading">More ways to use Avenor</h2>
           <div className="mk-grid">
             {others.map((item) => (
               <Link

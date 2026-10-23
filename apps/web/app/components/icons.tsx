@@ -386,7 +386,7 @@ export function Icon({
   );
 }
 
-/** The CanvaRoom mark: a stroke crossing a frame. */
+/** The Avenor mark: a stroke crossing a frame. */
 export function Logo({ size = 28 }: { size?: number }) {
   return (
     <svg

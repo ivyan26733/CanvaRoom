@@ -51,7 +51,7 @@ const PAGES: Result[] = (
     },
     {
       title: 'About us',
-      hint: 'Why CanvaRoom exists',
+      hint: 'Why Avenor exists',
       href: '/about',
       icon: 'users',
     },
@@ -289,7 +289,7 @@ export function SiteSearch({
         aria-activedescendant={
           showList && results[active] ? `${id}-r${active}` : undefined
         }
-        aria-label="Search CanvaRoom"
+        aria-label="Search Avenor"
         placeholder="Search pages, formulas, your boards…"
         value={query}
         autoFocus={autoFocus}

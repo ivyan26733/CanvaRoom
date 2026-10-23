@@ -73,7 +73,7 @@ const ACTS: Act[] = [
       },
       {
         time: '11:32 pm',
-        title: 'Landing on CanvaRoom',
+        title: 'Landing on Avenor',
         body: 'Two minutes later Sam has a board for next week’s lesson. Students won’t need to download anything or make an account: they open one invite link and join as a guest with their name.',
         thought: 'That was… it?',
         Art: LandArt,
@@ -95,7 +95,7 @@ const ACTS: Act[] = [
       {
         time: '7:40 pm',
         title: 'The Wi-Fi drops again. Nothing is lost.',
-        body: 'Sam’s connection blinks, just like last week. CanvaRoom reconnects by itself and catches up, every stroke is still there, and the call keeps going because voice runs directly between the people in it.',
+        body: 'Sam’s connection blinks, just like last week. Avenor reconnects by itself and catches up, every stroke is still there, and the call keeps going because voice runs directly between the people in it.',
         thought: 'Nobody even noticed.',
         Art: RecoverArt,
       },
@@ -110,7 +110,7 @@ const ACTS: Act[] = [
   },
 ];
 
-/** The home page story: one tutor’s class, before and after CanvaRoom. */
+/** The home page story: one tutor’s class, before and after Avenor. */
 export function Story() {
   let index = 0;
   return (

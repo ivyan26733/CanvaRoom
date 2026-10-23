@@ -115,7 +115,7 @@ export function FeedbackForm({ onSent }: { onSent?: () => void }) {
       </label>
 
       <fieldset className="feedback-rating">
-        <legend>How’s CanvaRoom so far? (optional)</legend>
+        <legend>How’s Avenor so far? (optional)</legend>
         <div>
           {[1, 2, 3, 4, 5].map((value) => (
             <button
@@ -178,7 +178,7 @@ function FeedbackDialog({ onClose }: { onClose: () => void }) {
       <p className="kicker">Feedback</p>
       <h2>Tell us how it’s going</h2>
       <p className="modal-copy">
-        It goes straight to the people building CanvaRoom.
+        It goes straight to the people building Avenor.
       </p>
       <FeedbackForm />
     </Modal>
