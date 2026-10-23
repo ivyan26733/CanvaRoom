@@ -245,6 +245,17 @@ No. CanvaRoom runs in any modern browser, on a laptop, tablet or phone.
 
 ---
 
+## 🔐 Admin console
+
+The private user-management console is available at `/admin`. Accounts with the
+`admin` role sign in with their registered email and password. The Postgres
+schema must be migrated first. The console shows registered accounts, email
+verification, current access, recent activity, and payment records. Offline
+Premium access is recorded with its duration, method, reference, and admin note;
+it does not create a payment-provider capture.
+
+---
+
 ## 💬 Contact and feedback
 
 We read every message.

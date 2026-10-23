@@ -126,6 +126,12 @@ export function AppShell({
               <span>Profile &amp; settings</span>
             </Link>
           )}
+          {user?.role === 'admin' && (
+            <Link className="nav-item" href="/admin">
+              <Icon name="sliders" />
+              <span>Admin panel</span>
+            </Link>
+          )}
           <button className="nav-item" type="button" onClick={openFeedback}>
             <Icon name="chat" />
             <span>Send feedback</span>

@@ -96,6 +96,7 @@ export type User = {
   color: string;
   guest: boolean;
   email?: string;
+  role?: 'user' | 'admin';
   /**
    * Account holders only: active trial time used (the trial is 30 minutes of
    * use, counted only while the app is open in a visible tab) and when a paid

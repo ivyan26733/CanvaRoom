@@ -10,6 +10,19 @@ CREATE TABLE IF NOT EXISTS accounts (
   created_at timestamptz NOT NULL
 );
 
+-- Admin access is granted per registered account, not by email alone.
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS role text NOT NULL DEFAULT 'user';
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conname = 'accounts_role_check'
+       AND conrelid = 'accounts'::regclass
+  ) THEN
+    ALTER TABLE accounts ADD CONSTRAINT accounts_role_check
+      CHECK (role IN ('user', 'admin'));
+  END IF;
+END $$;
+
 -- Pre-existing accounts stay usable; new accounts default to unverified.
 DO $$ BEGIN
   IF NOT EXISTS (
@@ -103,6 +116,7 @@ CREATE INDEX IF NOT EXISTS board_snapshots_board_idx ON board_snapshots (board_i
 -- 30-minute trial from the first migration; new accounts set it on sign-up.
 ALTER TABLE accounts ADD COLUMN IF NOT EXISTS trial_ends_at timestamptz;
 ALTER TABLE accounts ADD COLUMN IF NOT EXISTS paid_until timestamptz;
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS last_seen_at timestamptz;
 UPDATE accounts SET trial_ends_at = now() + interval '30 minutes'
  WHERE trial_ends_at IS NULL;
 
@@ -170,6 +184,32 @@ ALTER TABLE payments ADD COLUMN IF NOT EXISTS refunded_at timestamptz;
 ALTER TABLE accounts ADD COLUMN IF NOT EXISTS premium_reminded_for timestamptz;
 CREATE INDEX IF NOT EXISTS accounts_paid_until_idx
   ON accounts (paid_until) WHERE paid_until IS NOT NULL;
+
+-- Admin credentials live in deployment secrets. These tables hold only
+-- opaque admin sessions and the audit trail for offline Premium grants.
+CREATE TABLE IF NOT EXISTS admin_sessions (
+  key text PRIMARY KEY,
+  username text NOT NULL,
+  expires_at timestamptz NOT NULL
+);
+CREATE INDEX IF NOT EXISTS admin_sessions_expiry_idx ON admin_sessions (expires_at);
+
+CREATE TABLE IF NOT EXISTS admin_access_grants (
+  id text PRIMARY KEY,
+  admin_username text NOT NULL,
+  user_id text NOT NULL,
+  months integer NOT NULL CHECK (months >= 0),
+  days integer NOT NULL CHECK (days >= 0),
+  method text NOT NULL,
+  reference text,
+  note text,
+  previous_paid_until timestamptz,
+  paid_until timestamptz NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (months > 0 OR days > 0)
+);
+CREATE INDEX IF NOT EXISTS admin_access_grants_user_idx
+  ON admin_access_grants (user_id, created_at DESC);
 
 -- The free plan keeps an owner's oldest board, found through this index.
 CREATE INDEX IF NOT EXISTS boards_owner_created_idx ON boards (owner_id, created_at);

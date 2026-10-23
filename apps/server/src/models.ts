@@ -115,6 +115,7 @@ export type User = {
   color: string;
   guest: boolean;
   email?: string;
+  role?: 'user' | 'admin';
   /** Account holders only, and only ever sent to that person. */
   plan?: Plan;
   emailVerified?: boolean;
@@ -311,9 +312,12 @@ export type RefundResult =
   /** The database can't record refunds until it is migrated. */
   | { outcome: 'unmigrated' };
 
+export type AccountRole = 'user' | 'admin';
+
 export type Account = {
   id: string;
   email: string;
+  role?: AccountRole;
   /** Existing accounts are migrated as verified; newly registered accounts must verify first. */
   emailVerified?: boolean;
   name: string;

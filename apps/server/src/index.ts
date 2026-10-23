@@ -87,6 +87,7 @@ import {
 } from './images.js';
 import { applyPayment, sendRenewalReminders } from './payments.js';
 import { checkoutFor } from './checkout.js';
+import { PostgresStore } from './pg-store.js';
 import {
   currencyForCountry,
   PLAN_IDS,
@@ -102,6 +103,7 @@ import {
   FREE_BOARDS,
   pageOf,
   providerOf,
+  planOf,
   tierOf,
   TRIAL_BOARDS,
   TRIAL_GUESTS,
@@ -222,6 +224,41 @@ const getAccess = async (boardId: string, userId: string) => {
   return board && membership ? { board, role: membership.role } : undefined;
 };
 const inviteId = () => randomBytes(24).toString('base64url');
+const ADMIN_COOKIE = 'cb_admin_session';
+const ADMIN_SESSION_TTL = 60 * 60 * 8;
+const adminStore = store instanceof PostgresStore ? store : undefined;
+const adminSessionKey = (token: string) =>
+  createHash('sha256').update(`admin:${token}`).digest('base64url');
+const readAdminCookie = (header: string | undefined) => {
+  for (const part of header?.split(';') ?? []) {
+    const [name, ...value] = part.trim().split('=');
+    if (name === ADMIN_COOKIE) return value.join('=');
+  }
+};
+async function adminFromRequest(request: FastifyRequest) {
+  const token = readAdminCookie(request.headers.cookie);
+  if (!adminStore) return undefined;
+  if (token) {
+    const username = await adminStore.getAdminSession(adminSessionKey(token));
+    if (username) {
+      const account = await store.findAccountByEmail(username);
+      if (account?.role === 'admin') return account.email;
+    }
+  }
+
+  // The site's regular account session already proves the person signed in.
+  // Let admin accounts use that session in the console too, so opening the
+  // Admin panel from the dashboard does not ask for a second set of creds.
+  const user = await userFromRequest(request.raw);
+  return user && !user.guest && user.role === 'admin'
+    ? user.email
+    : undefined;
+}
+const requireAdmin = async (request: FastifyRequest, reply: FastifyReply) => {
+  const username = await adminFromRequest(request);
+  if (username) return username;
+  apiError(reply, 401, 'Admin sign-in required.');
+};
 /**
  * The signed-in user and their access to the board in the URL. The board is
  * read alongside the session rather than after it, saving a database round
@@ -257,6 +294,143 @@ app.addHook('onRequest', async (request, reply) => {
     !sameOrigin(request.raw)
   )
     return apiError(reply, 403, 'Cross-site request blocked.');
+});
+
+// ---- Admin console ----
+
+app.get('/api/admin/me', async (request) => {
+  const username = await adminFromRequest(request);
+  return {
+    authenticated: Boolean(username),
+    username,
+    configured: Boolean(adminStore),
+  };
+});
+
+app.post('/api/admin/login', async (request, reply) => {
+  if (!adminStore)
+    return apiError(
+      reply,
+      503,
+      'Admin sign-in requires the Postgres database.',
+    );
+  if (!(await allow(reply, `admin-login:${clientIp(request)}`, 8, 900))) return;
+  const body = z
+    .object({
+      username: emailSchema,
+      password: z.string().min(1).max(256),
+    })
+    .safeParse(request.body);
+  if (!body.success)
+    return apiError(reply, 400, 'Enter the admin email and password.');
+  const account = await store.findAccountByEmail(body.data.username);
+  const valid = await verifyPassword(
+    body.data.password,
+    account?.passwordHash ?? (await decoyPasswordHash()),
+  );
+  if (!account || account.role !== 'admin' || !valid)
+    return apiError(
+      reply,
+      401,
+      'That admin email and password do not match.',
+    );
+  const username = account.email;
+  const token = randomBytes(32).toString('base64url');
+  await adminStore.createAdminSession(
+    adminSessionKey(token),
+    username,
+    ADMIN_SESSION_TTL,
+  );
+  const forwarded = request.headers['x-forwarded-proto'];
+  const secure =
+    (Array.isArray(forwarded) ? forwarded[0] : forwarded)?.split(',')[0] ===
+      'https' ||
+    Boolean((request.raw.socket as { encrypted?: boolean }).encrypted);
+  reply.header(
+    'Set-Cookie',
+    [
+      `${ADMIN_COOKIE}=${encodeURIComponent(token)}`,
+      'Path=/',
+      'HttpOnly',
+      'SameSite=Strict',
+      `Max-Age=${ADMIN_SESSION_TTL}`,
+      ...(secure ? ['Secure'] : []),
+    ].join('; '),
+  );
+  return { authenticated: true, username };
+});
+
+app.post('/api/admin/logout', async (request, reply) => {
+  const token = readAdminCookie(request.headers.cookie);
+  if (token && adminStore)
+    await adminStore.deleteAdminSession(adminSessionKey(token));
+  reply.header(
+    'Set-Cookie',
+    `${ADMIN_COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0`,
+  );
+  return { authenticated: false };
+});
+
+app.get('/api/admin/users', async (request, reply) => {
+  const username = await requireAdmin(request, reply);
+  if (!username || !adminStore) return;
+  const query = z
+    .object({
+      q: z.string().trim().max(200).default(''),
+      page: z.coerce.number().int().min(1).default(1),
+      limit: z.coerce.number().int().min(1).max(100).default(50),
+    })
+    .safeParse(request.query);
+  if (!query.success) return apiError(reply, 400, 'Invalid user-list request.');
+  return adminStore.listAdminAccounts(
+    query.data.q,
+    query.data.limit,
+    (query.data.page - 1) * query.data.limit,
+  );
+});
+
+app.post('/api/admin/users/:userId/grants', async (request, reply) => {
+  const username = await requireAdmin(request, reply);
+  if (!username || !adminStore) return;
+  const { userId } = request.params as { userId: string };
+  const body = z
+    .object({
+      months: z.number().int().min(0).max(120),
+      days: z.number().int().min(0).max(365),
+      method: z.enum(['cash', 'bank_transfer', 'complimentary', 'other']),
+      reference: z
+        .string()
+        .trim()
+        .max(120)
+        .optional()
+        .transform((value) => value || undefined),
+      note: z
+        .string()
+        .trim()
+        .max(500)
+        .optional()
+        .transform((value) => value || undefined),
+    })
+    .refine((value) => value.months > 0 || value.days > 0, {
+      message: 'Choose a Premium duration greater than zero.',
+    })
+    .safeParse(request.body);
+  if (!body.success) return apiError(reply, 400, firstIssue(body.error));
+  const paidUntil = await adminStore.grantAdminAccess({
+    id: randomUUID(),
+    username,
+    userId,
+    months: body.data.months,
+    days: body.data.days,
+    method: body.data.method,
+    ...(body.data.reference ? { reference: body.data.reference } : {}),
+    ...(body.data.note ? { note: body.data.note } : {}),
+  });
+  if (!paidUntil)
+    return apiError(reply, 404, 'No account exists with that user ID.');
+  const account = await store.getAccount(userId);
+  if (account) refreshOwnerPlan(userId, planOf({ ...account, paidUntil }));
+  return { ok: true, paidUntil };
 });
 
 // ---- Accounts ----
@@ -1302,6 +1476,7 @@ app.post('/api/billing/heartbeat', async (request, reply) => {
   if (!user) return;
   if (user.guest) return { plan: null };
   if (!(await allow(reply, `beat:${user.id}`, 12, 60))) return;
+  if (adminStore) await adminStore.recordAccountActivity(user.id);
   const before = tierOf(user.plan);
   const plan = await store.accrueTrial(user.id);
   // The trial ran out on this beat: apply the free plan to open boards now.

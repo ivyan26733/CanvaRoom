@@ -80,6 +80,7 @@ export function publicUser(account: Account): User {
     color: account.color,
     email: account.email,
     guest: false,
+    role: account.role ?? 'user',
     plan: planOf(account),
     // Accounts from before verification existed are stored as verified.
     emailVerified: account.emailVerified !== false,

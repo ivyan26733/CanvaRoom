@@ -1,4 +1,5 @@
 import type pg from 'pg';
+import { randomUUID } from 'node:crypto';
 import {
   DEFAULT_PAGES,
   MAX_MESSAGES,
@@ -10,6 +11,7 @@ import {
 } from './models.js';
 import type {
   Account,
+  AccountRole,
   BoardMeta,
   BoardObject,
   Capture,
@@ -75,6 +77,7 @@ type BoardRow = {
 type AccountRow = {
   id: string;
   email: string;
+  role: AccountRole;
   email_verified: boolean;
   name: string;
   color: string;
@@ -89,6 +92,7 @@ type AccountRow = {
 const toAccount = (row: AccountRow): Account => ({
   id: row.id,
   email: row.email,
+  role: row.role,
   emailVerified: row.email_verified,
   name: row.name,
   color: row.color,
@@ -950,6 +954,135 @@ export class PostgresStore implements Store {
         WHERE id = $1 AND premium_reminded_for = $2`,
       [userId, paidUntil],
     );
+  }
+
+  async recordAccountActivity(userId: string) {
+    await this.pool.query(
+      `UPDATE accounts SET last_seen_at = now()
+        WHERE id = $1
+          AND (last_seen_at IS NULL OR last_seen_at < now() - interval '1 minute')`,
+      [userId],
+    );
+  }
+
+  async createAdminSession(key: string, username: string, ttlSeconds: number) {
+    await this.pool.query(
+      'DELETE FROM admin_sessions WHERE expires_at <= now()',
+    );
+    await this.pool.query(
+      `INSERT INTO admin_sessions (key, username, expires_at)
+       VALUES ($1, $2, now() + make_interval(secs => $3))`,
+      [key, username, ttlSeconds],
+    );
+  }
+
+  async getAdminSession(key: string) {
+    const { rows } = await this.pool.query<{ username: string }>(
+      `SELECT username FROM admin_sessions WHERE key = $1 AND expires_at > now()`,
+      [key],
+    );
+    return rows[0]?.username;
+  }
+
+  async deleteAdminSession(key: string) {
+    await this.pool.query('DELETE FROM admin_sessions WHERE key = $1', [key]);
+  }
+
+  async listAdminAccounts(search: string, limit: number, offset: number) {
+    const { rows } = await this.pool.query(
+      `SELECT a.id, a.email, a.role, a.email_verified, a.name, a.created_at,
+              a.last_seen_at, a.trial_used_seconds, a.paid_until,
+              (SELECT count(*)::int FROM payments p WHERE p.user_id = a.id) AS payment_count,
+              (SELECT COALESCE(jsonb_agg(jsonb_build_object(
+                 'provider', recent.provider, 'status', recent.status,
+                 'plan', recent.plan, 'months', recent.months, 'days', recent.days,
+                 'amount', recent.amount, 'currency', recent.currency,
+                 'createdAt', recent.created_at, 'paidAt', recent.paid_at,
+                 'refundedAt', recent.refunded_at
+               ) ORDER BY recent.created_at DESC), '[]'::jsonb)
+                 FROM (SELECT provider, status, plan, months, days, amount, currency,
+                              created_at, paid_at, refunded_at
+                         FROM payments WHERE user_id = a.id
+                        ORDER BY created_at DESC LIMIT 10) recent) AS payments,
+              (SELECT COALESCE(jsonb_agg(jsonb_build_object(
+                 'id', g.id, 'adminUsername', g.admin_username,
+                 'months', g.months, 'days', g.days, 'method', g.method,
+                 'reference', g.reference, 'note', g.note,
+                 'paidUntil', g.paid_until, 'createdAt', g.created_at
+               ) ORDER BY g.created_at DESC), '[]'::jsonb)
+                 FROM (SELECT * FROM admin_access_grants WHERE user_id = a.id
+                        ORDER BY created_at DESC LIMIT 10) g) AS grants,
+              count(*) OVER()::int AS total
+         FROM accounts a
+        WHERE $1 = '' OR a.id ILIKE '%' || $1 || '%'
+           OR a.email ILIKE '%' || $1 || '%' OR a.name ILIKE '%' || $1 || '%'
+        ORDER BY a.created_at DESC, a.id
+        LIMIT $2 OFFSET $3`,
+      [search, limit, offset],
+    );
+    return {
+      total: rows[0]?.total ?? 0,
+      users: rows.map((row) => ({
+        id: row.id,
+        email: row.email,
+        role: row.role,
+        emailVerified: row.email_verified,
+        name: row.name,
+        createdAt: iso(row.created_at),
+        lastSeenAt: row.last_seen_at ? iso(row.last_seen_at) : null,
+        trialUsedSeconds: row.trial_used_seconds ?? 1800,
+        paidUntil: row.paid_until ? iso(row.paid_until) : null,
+        paymentCount: row.payment_count,
+        payments: row.payments,
+        grants: row.grants,
+      })),
+    };
+  }
+
+  async grantAdminAccess(input: {
+    id: string;
+    username: string;
+    userId: string;
+    months: number;
+    days: number;
+    method: string;
+    reference?: string;
+    note?: string;
+  }) {
+    return this.transaction(async (client) => {
+      const account = await client.query<{ paid_until: Date | null }>(
+        'SELECT paid_until FROM accounts WHERE id = $1 FOR UPDATE',
+        [input.userId],
+      );
+      if (!account.rows[0]) return undefined;
+      const previous = account.rows[0].paid_until;
+      const updated = await client.query<{ paid_until: Date }>(
+        `UPDATE accounts SET paid_until = greatest(coalesce(paid_until, now()), now())
+             + make_interval(months => $2, days => $3)
+          WHERE id = $1 RETURNING paid_until`,
+        [input.userId, input.months, input.days],
+      );
+      const paidUntil = updated.rows[0]!.paid_until;
+      await client.query(
+        `INSERT INTO admin_access_grants
+           (id, admin_username, user_id, months, days, method, reference, note,
+            previous_paid_until, paid_until)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+        [
+          input.id,
+          input.username,
+          input.userId,
+          input.months,
+          input.days,
+          input.method,
+          input.reference ?? null,
+          input.note ?? null,
+          previous,
+          paidUntil,
+        ],
+      );
+      return iso(paidUntil);
+    });
   }
 
   /**
