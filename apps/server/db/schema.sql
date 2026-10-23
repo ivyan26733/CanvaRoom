@@ -1,4 +1,4 @@
--- Avenor schema. Safe to run repeatedly: `npm run db:migrate -w @collabboard/server`.
+-- CanvaRoom schema. Safe to run repeatedly: `npm run db:migrate -w @collabboard/server`.
 -- Presence, rate limits, and cross-instance relaying live in Redis, not here.
 
 CREATE TABLE IF NOT EXISTS accounts (

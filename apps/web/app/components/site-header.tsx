@@ -128,9 +128,9 @@ export function SiteHeader({
               <Icon name="sidebar" />
             </button>
           )}
-          <Link href="/" className="sh-brand" aria-label="Avenor home">
+          <Link href="/" className="sh-brand" aria-label="CanvaRoom home">
             <Logo size={28} />
-            <span>Avenor</span>
+            <span>CanvaRoom</span>
           </Link>
         </div>
 
@@ -243,7 +243,7 @@ export function SiteHeader({
                 onClick={() => setSheet(false)}
               >
                 <Logo size={26} />
-                <span>Avenor</span>
+                <span>CanvaRoom</span>
               </Link>
               <button
                 className="icon-button"

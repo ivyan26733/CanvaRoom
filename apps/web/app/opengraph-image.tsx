@@ -1,11 +1,11 @@
 import { ImageResponse } from 'next/og';
 
 export const alt =
-  'Avenor — free online collaborative whiteboard with voice and chat';
+  'CanvaRoom — free online collaborative whiteboard with voice and chat';
 export const size = { width: 1200, height: 630 };
 export const contentType = 'image/png';
 
-/** The preview shown when an Avenor link is shared. */
+/** The preview shown when a CanvaRoom link is shared. */
 export default function OpenGraphImage() {
   return new ImageResponse(
     <div
@@ -35,11 +35,11 @@ export default function OpenGraphImage() {
           />
           <circle cx="24.2" cy="9.6" r="2.2" fill="#fff" />
         </svg>
-        <span style={{ fontSize: 40, fontWeight: 700 }}>Avenor</span>
+        <span style={{ fontSize: 40, fontWeight: 700 }}>CanvaRoom</span>
       </div>
       <div style={{ display: 'flex', flexDirection: 'column' }}>
         <div style={{ fontSize: 30, color: '#8c887f', marginBottom: 18 }}>
-          Where ideas move forward.
+          Free online whiteboard · voice · chat
         </div>
         <div
           style={{

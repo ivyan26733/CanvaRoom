@@ -81,10 +81,10 @@ export async function sendPasswordResetCode(
   code: string,
   minutes: number,
 ) {
-  const subject = `${code} is your Avenor reset code`;
-  const text = `Hi ${name},\n\nYour Avenor password reset code is:\n\n${code}\n\nEnter it within ${minutes} minutes to choose a new password. If it wasn't you, ignore this email. Your password stays the same.`;
+  const subject = `${code} is your CanvaRoom reset code`;
+  const text = `Hi ${name},\n\nYour CanvaRoom password reset code is:\n\n${code}\n\nEnter it within ${minutes} minutes to choose a new password. If it wasn't you, ignore this email. Your password stays the same.`;
   const html = `<div style="font-family:system-ui,-apple-system,Segoe UI,sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;color:#141413">
-  <p style="font-size:20px;font-weight:700;margin:0 0 24px">Avenor</p>
+  <p style="font-size:20px;font-weight:700;margin:0 0 24px">CanvaRoom</p>
   <p style="margin:0 0 16px">Hi ${escapeHtml(name)},</p>
   <p style="margin:0 0 16px">Use this code to choose a new password. It works once, for ${minutes} minutes.</p>
   <p style="margin:0 0 24px;font-size:32px;font-weight:700;letter-spacing:8px;font-family:ui-monospace,Menlo,monospace">${escapeHtml(code)}</p>
@@ -100,10 +100,10 @@ export async function sendEmailVerification(
   code: string,
   minutes: number,
 ) {
-  const subject = `${code} is your Avenor verification code`;
-  const text = `Hi ${name},\n\nWelcome to Avenor. Your verification code is:\n\n${code}\n\nEnter it within ${minutes} minutes to confirm your email. If you didn't create this account, you can ignore this email.`;
+  const subject = `${code} is your CanvaRoom verification code`;
+  const text = `Hi ${name},\n\nWelcome to CanvaRoom. Your verification code is:\n\n${code}\n\nEnter it within ${minutes} minutes to confirm your email. If you didn't create this account, you can ignore this email.`;
   const html = `<div style="font-family:system-ui,-apple-system,Segoe UI,sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;color:#141413">
-  <p style="font-size:20px;font-weight:700;margin:0 0 24px">Avenor</p>
+  <p style="font-size:20px;font-weight:700;margin:0 0 24px">CanvaRoom</p>
   <p style="margin:0 0 16px">Hi ${escapeHtml(name)},</p>
   <p style="margin:0 0 16px">Welcome aboard. Enter this code to confirm your email. It works once, for ${minutes} minutes.</p>
   <p style="margin:0 0 24px;font-size:32px;font-weight:700;letter-spacing:8px;font-family:ui-monospace,Menlo,monospace">${escapeHtml(code)}</p>
@@ -130,7 +130,7 @@ export async function sendFeedback(feedback: FeedbackMail) {
   const from = feedback.name
     ? `${feedback.name} <${feedback.email}>`
     : feedback.email;
-  const subject = `Avenor feedback · ${feedback.category}${feedback.rating ? ` · ${feedback.rating}/5` : ''}`;
+  const subject = `CanvaRoom feedback · ${feedback.category}${feedback.rating ? ` · ${feedback.rating}/5` : ''}`;
   const details = [
     ['From', from],
     ['Kind', feedback.category],
@@ -140,7 +140,7 @@ export async function sendFeedback(feedback: FeedbackMail) {
   ];
   const text = `${details.map(([key, value]) => `${key}: ${value}`).join('\n')}\n\n${feedback.message}`;
   const html = `<div style="font-family:system-ui,-apple-system,Segoe UI,sans-serif;max-width:560px;margin:0 auto;padding:28px 24px;color:#141413">
-  <p style="font-size:18px;font-weight:700;margin:0 0 20px">New feedback on Avenor</p>
+  <p style="font-size:18px;font-weight:700;margin:0 0 20px">New feedback on CanvaRoom</p>
   <table style="border-collapse:collapse;margin:0 0 20px;font-size:14px">${details
     .map(
       ([key, value]) =>
@@ -201,10 +201,10 @@ export function premiumWelcomeEmail(welcome: PremiumWelcome) {
     ['Payment ID', welcome.paymentId],
     ['Premium until', until],
   ];
-  const subject = 'Welcome to the Avenor family';
+  const subject = 'Welcome to the CanvaRoom family';
   const text = `Hi ${welcome.name},
 
-Welcome to the Avenor family, and thank you for joining Premium. Your payment went through and Premium is active on your account.
+Welcome to the CanvaRoom family, and thank you for joining Premium. Your payment went through and Premium is active on your account.
 
 ${details.map(([key, value]) => `${key}: ${value}`).join('\n')}
 
@@ -218,10 +218,10 @@ Any complaint, or a feature you'd like? Just reply to this email or write to ${S
 Premium doesn't renew on its own. We'll email you a few days before it ends, so you can renew if you'd like.
 
 Thanks for being with us,
-The Avenor team`;
+The CanvaRoom team`;
   const html = `<div style="font-family:system-ui,-apple-system,Segoe UI,sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;color:#141413;line-height:1.55">
-  <p style="font-size:20px;font-weight:700;margin:0 0 24px">Avenor</p>
-  <p style="font-size:22px;font-weight:700;margin:0 0 16px">Welcome to the Avenor family</p>
+  <p style="font-size:20px;font-weight:700;margin:0 0 24px">CanvaRoom</p>
+  <p style="font-size:22px;font-weight:700;margin:0 0 16px">Welcome to the CanvaRoom family</p>
   <p style="margin:0 0 16px">Hi ${escapeHtml(welcome.name)},</p>
   <p style="margin:0 0 20px">Thank you for joining Premium. Your payment went through and Premium is active on your account.</p>
   <table style="border-collapse:collapse;margin:0 0 24px;font-size:14px;width:100%;background:#f6f4ef;border-radius:10px">${details
@@ -235,7 +235,7 @@ The Avenor team`;
   <p style="margin:0 0 28px"><a href="${escapeHtml(dashboard)}" style="display:inline-block;background:#ff4f1f;color:#fff;text-decoration:none;font-weight:600;padding:12px 22px;border-radius:999px">Open your boards</a></p>
   <p style="margin:0 0 16px">Any complaint, or a feature you’d like? Just reply to this email or write to <a href="mailto:${SUPPORT_EMAIL}" style="color:#ff4f1f">${SUPPORT_EMAIL}</a>. You can also <a href="${escapeHtml(feedback)}" style="color:#ff4f1f">send us feedback</a>.</p>
   <p style="margin:0 0 24px;color:#57544d;font-size:14px">Premium doesn’t renew on its own. We’ll email you a few days before it ends, so you can renew if you’d like.</p>
-  <p style="margin:0">Thanks for being with us,<br>The Avenor team</p>
+  <p style="margin:0">Thanks for being with us,<br>The CanvaRoom team</p>
 </div>`;
   return { subject, html, text };
 }
@@ -256,10 +256,10 @@ export type PremiumReminderMail = {
 export function premiumReminderEmail(reminder: PremiumReminderMail) {
   const until = longDate(reminder.paidUntil);
   const renew = `${reminder.appUrl}/#pricing`;
-  const subject = `Your Avenor Premium ends on ${until}`;
+  const subject = `Your CanvaRoom Premium ends on ${until}`;
   const text = `Hi ${reminder.name},
 
-Your Avenor Premium ends on ${until}. Premium doesn't renew on its own, so nothing will be charged.
+Your CanvaRoom Premium ends on ${until}. Premium doesn't renew on its own, so nothing will be charged.
 
 To keep unlimited boards, people, exports, images and recording, renew for 3, 6 or 12 months here: ${renew}
 Renewing adds the new time after your current end date, so you don't lose a day.
@@ -268,16 +268,16 @@ Your boards stay yours either way. After Premium ends, the free plan keeps your 
 
 Any question? Just reply to this email or write to ${SUPPORT_EMAIL}.
 
-The Avenor team`;
+The CanvaRoom team`;
   const html = `<div style="font-family:system-ui,-apple-system,Segoe UI,sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;color:#141413;line-height:1.55">
-  <p style="font-size:20px;font-weight:700;margin:0 0 24px">Avenor</p>
+  <p style="font-size:20px;font-weight:700;margin:0 0 24px">CanvaRoom</p>
   <p style="font-size:22px;font-weight:700;margin:0 0 16px">Your Premium ends on ${escapeHtml(until)}</p>
   <p style="margin:0 0 16px">Hi ${escapeHtml(reminder.name)},</p>
   <p style="margin:0 0 16px">Premium doesn’t renew on its own, so nothing will be charged. To keep unlimited boards, people, exports, images and recording, renew for 3, 6 or 12 months. The new time starts after your current end date, so you don’t lose a day.</p>
   <p style="margin:0 0 28px"><a href="${escapeHtml(renew)}" style="display:inline-block;background:#ff4f1f;color:#fff;text-decoration:none;font-weight:600;padding:12px 22px;border-radius:999px">Renew Premium</a></p>
   <p style="margin:0 0 16px;color:#57544d;font-size:14px">Your boards stay yours either way. After Premium ends, the free plan keeps your first board for you to use on your own.</p>
   <p style="margin:0 0 24px">Any question? Just reply to this email or write to <a href="mailto:${SUPPORT_EMAIL}" style="color:#ff4f1f">${SUPPORT_EMAIL}</a>.</p>
-  <p style="margin:0">The Avenor team</p>
+  <p style="margin:0">The CanvaRoom team</p>
 </div>`;
   return { subject, html, text };
 }

@@ -49,7 +49,7 @@ export function AppShell({
         <div className="sidebar-top">
           <Link className="brand" href="/" onClick={() => setNavOpen(false)}>
             <Logo />
-            <span>Avenor</span>
+            <span>CanvaRoom</span>
           </Link>
           <button
             className="icon-button sidebar-close"

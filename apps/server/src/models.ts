@@ -125,7 +125,7 @@ export type User = {
 /**
  * An account's free trial and paid pass. The trial is 30 minutes of active
  * use, not wall-clock time: `trialUsedSeconds` only grows while the person
- * has Avenor open in a visible tab (see `accrueTrial`).
+ * has CanvaRoom open in a visible tab (see `accrueTrial`).
  */
 export type Plan = {
   trialUsedSeconds: number;

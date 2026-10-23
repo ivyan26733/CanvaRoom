@@ -250,7 +250,7 @@ export default function ProfilePage() {
             <section className="settings-card danger-zone">
               <div className="settings-head">
                 <h2>Session</h2>
-                <p>Sign out of Avenor on this device.</p>
+                <p>Sign out of CanvaRoom on this device.</p>
               </div>
               <div className="settings-actions">
                 <button

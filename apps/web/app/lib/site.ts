@@ -7,9 +7,9 @@ const productionHost =
     : 'https://canva-room-blush.vercel.app');
 
 export const SITE = {
-  name: 'Avenor',
+  name: 'CanvaRoom',
   url: productionHost.replace(/\/$/, ''),
-  title: 'Avenor — Where ideas move forward.',
+  title: 'CanvaRoom — Online Collaborative Whiteboard with Voice & Chat',
   description:
     'An online whiteboard for teams, classes, and study groups. Start free, draw together in real time with no lag, talk over built-in voice, chat, add pages, and start from templates.',
   keywords: [
@@ -41,13 +41,13 @@ export const PLAN_COPY = {
   premium:
     'a one-time payment of $20 for 3 months, $35 for 6 months plus 15 days free, or $65 for 12 months plus a month free (in India: ₹499, ₹849 or ₹1,499), with nothing renewing on its own',
   trial:
-    'Every new account gets a free trial of 30 minutes of active use (the clock only runs while Avenor is open in front of you): up to two boards, with two people besides you on each, live drawing, voice, chat, and templates',
+    'Every new account gets a free trial of 30 minutes of active use (the clock only runs while CanvaRoom is open in front of you): up to two boards, with two people besides you on each, live drawing, voice, chat, and templates',
   free: 'After the trial, the free plan keeps your first board for you to use on your own',
 };
 
 export const HOME_FAQ: Faq[] = [
   {
-    q: 'Is Avenor free?',
+    q: 'Is CanvaRoom free?',
     a: `${PLAN_COPY.trial}. ${PLAN_COPY.free}. Premium is ${PLAN_COPY.premium}, and adds unlimited boards and people, export, images, and HD recording. Scratch boards stay free with no sign-up.`,
   },
   {
@@ -102,7 +102,7 @@ export const USE_CASES: UseCase[] = [
     kicker: 'Online whiteboard · free to start',
     heading: 'A whiteboard that opens in your browser and fills up with ideas.',
     intro:
-      'Avenor is an online whiteboard with an infinite canvas, free to start. Open it in any modern browser, start drawing, and share a link when you want company. Nothing to install.',
+      'CanvaRoom is an online whiteboard with an infinite canvas, free to start. Open it in any modern browser, start drawing, and share a link when you want company. Nothing to install.',
     sections: [
       {
         title: 'Every tool you reach for',
@@ -129,7 +129,7 @@ export const USE_CASES: UseCase[] = [
     faq: [
       {
         q: 'Do I need to download anything?',
-        a: 'No. Avenor runs in Chrome, Edge, Firefox, and Safari on desktop, and works on tablets and phones too.',
+        a: 'No. CanvaRoom runs in Chrome, Edge, Firefox, and Safari on desktop, and works on tablets and phones too.',
       },
       {
         q: 'Is the online whiteboard free?',
@@ -150,7 +150,7 @@ export const USE_CASES: UseCase[] = [
     kicker: 'Collaborative whiteboard',
     heading: 'Work on one board together, as if you were in the same room.',
     intro:
-      'Most whiteboards sync when you finish a stroke. Avenor streams ink while it is being drawn, shows everyone’s cursor, and puts voice and chat on the board itself, so collaboration feels immediate.',
+      'Most whiteboards sync when you finish a stroke. CanvaRoom streams ink while it is being drawn, shows everyone’s cursor, and puts voice and chat on the board itself, so collaboration feels immediate.',
     sections: [
       {
         title: 'Live strokes and cursors',
@@ -199,7 +199,7 @@ export const USE_CASES: UseCase[] = [
     heading:
       'A shared study board for revising, explaining, and solving together.',
     intro:
-      'Group study works best when everyone can see the same page. Avenor gives your study group a shared whiteboard with voice, chat, and a page for every topic, so you can explain a problem by drawing it.',
+      'Group study works best when everyone can see the same page. CanvaRoom gives your study group a shared whiteboard with voice, chat, and a page for every topic, so you can explain a problem by drawing it.',
     sections: [
       {
         title: 'A page per topic',
@@ -247,7 +247,7 @@ export const USE_CASES: UseCase[] = [
     kicker: 'Online whiteboard for teaching',
     heading: 'Teach on a whiteboard your students can see — and join.',
     intro:
-      'Whether you tutor one student or teach a small class online, Avenor lets you write and draw with ink that appears for everyone instantly, talk over built-in voice, and decide when students can draw too.',
+      'Whether you tutor one student or teach a small class online, CanvaRoom lets you write and draw with ink that appears for everyone instantly, talk over built-in voice, and decide when students can draw too.',
     sections: [
       {
         title: 'Explain in real time',

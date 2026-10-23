@@ -2273,7 +2273,7 @@ export default function BoardPage() {
       <main className="board-gate">
         <Link className="brand" href="/">
           <Logo />
-          <span>Avenor</span>
+          <span>CanvaRoom</span>
         </Link>
         <div className="gate-card">
           <span className="gate-icon">

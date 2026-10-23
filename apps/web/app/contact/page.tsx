@@ -8,7 +8,7 @@ import { CONTACT, SITE } from '../lib/site';
 import './contact.css';
 
 const DESCRIPTION =
-  'Email or send feedback to the team behind Avenor, the online whiteboard with live ink, voice, and chat.';
+  'Email or send feedback to the team behind CanvaRoom, the online whiteboard with live ink, voice, and chat.';
 
 export const metadata: Metadata = {
   title: 'Contact us',
@@ -50,7 +50,7 @@ export default function ContactPage() {
         <section className="contact-intro" aria-labelledby="contact-heading">
           <p className="st-eyebrow">Contact us</p>
           <h1 id="contact-heading">
-            Talk to the people <span>building</span> Avenor.
+            Talk to the people <span>building</span> CanvaRoom.
           </h1>
           <p className="contact-lede">
             A question about Premium, a payment, a class you want to run, or a

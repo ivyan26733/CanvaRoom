@@ -241,7 +241,7 @@ export default function UpgradeDialog({
         amount: order.amount,
         currency: order.currency,
         order_id: order.order_id,
-        name: 'Avenor',
+        name: 'CanvaRoom',
         description: order.name,
         prefill: { name: user.name, email: user.email ?? '' },
         theme: { color: '#ff4f1f' },
@@ -322,7 +322,7 @@ export default function UpgradeDialog({
           ? 'Your free trial has ended'
           : state?.kind === 'premium'
             ? `Premium until ${longDate(state.until)}`
-            : 'Avenor Premium'}
+            : 'CanvaRoom Premium'}
       </p>
       <h2>
         {state?.kind === 'premium'
