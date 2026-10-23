@@ -261,6 +261,16 @@ export type Payment = {
 
 export type PaymentProvider = 'razorpay' | 'paypal';
 
+/** An old unpaid checkout with the address to reach its account. */
+export type CheckoutReminder = {
+  orderId: string;
+  userId: string;
+  email: string;
+  name: string;
+  plan?: string;
+  createdAt: string;
+};
+
 /** Who took an order: as stored, or else from the shape of its ID. */
 export const providerOf = (payment: Pick<Payment, 'orderId' | 'provider'>) =>
   payment.provider ??

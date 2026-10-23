@@ -56,6 +56,7 @@ import {
   sendEmailVerification,
   sendFeedback,
   sendPasswordResetCode,
+  sendCheckoutReminder,
   sendPremiumReminder,
   sendPremiumWelcome,
   teamMailConfigured,
@@ -85,7 +86,11 @@ import {
   saveImage,
   sniffImage,
 } from './images.js';
-import { applyPayment, sendRenewalReminders } from './payments.js';
+import {
+  applyPayment,
+  sendCheckoutReminders,
+  sendRenewalReminders,
+} from './payments.js';
 import { checkoutFor } from './checkout.js';
 import { PostgresStore } from './pg-store.js';
 import {
@@ -1883,6 +1888,33 @@ app.get('/api/cron/premium-reminders', async (request, reply) => {
     // Before the database is migrated the reminder column doesn't exist.
     request.log.error(error, 'Premium reminders failed');
     return apiError(reply, 500, 'Premium reminders failed.');
+  }
+});
+
+// Daily, from the cron in vercel.json: email accounts with unpaid checkouts
+// at least 24 hours old. Email verification is not required for this reminder.
+app.get('/api/cron/checkout-reminders', async (request, reply) => {
+  if (!config.cronSecret)
+    return apiError(reply, 503, 'Scheduled jobs are not set up.');
+  if (!fromCron(request)) return apiError(reply, 401, 'Not allowed.');
+  if (!mailConfigured())
+    return apiError(
+      reply,
+      503,
+      'Email is not set up, so no checkout reminders went out.',
+    );
+  try {
+    const result = await sendCheckoutReminders({
+      store,
+      appUrl: config.appUrl,
+      log: request.log,
+      remind: sendCheckoutReminder,
+    });
+    request.log.info(result, 'Checkout reminders sent');
+    return result;
+  } catch (error) {
+    request.log.error(error, 'Checkout reminders failed');
+    return apiError(reply, 500, 'Checkout reminders failed.');
   }
 });
 

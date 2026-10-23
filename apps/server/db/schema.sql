@@ -178,6 +178,12 @@ ALTER TABLE payments ADD COLUMN IF NOT EXISTS provider text NOT NULL DEFAULT 'ra
 UPDATE payments SET provider = 'paypal'
  WHERE provider = 'razorpay' AND order_id NOT LIKE 'order\_%';
 ALTER TABLE payments ADD COLUMN IF NOT EXISTS refunded_at timestamptz;
+-- One recovery email per unpaid checkout. Claims expire so a crashed cron can retry.
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS checkout_reminder_claimed_at timestamptz;
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS checkout_reminded_at timestamptz;
+CREATE INDEX IF NOT EXISTS payments_checkout_reminder_due_idx
+  ON payments (created_at)
+  WHERE status = 'created' AND checkout_reminded_at IS NULL;
 
 -- The Premium end date a renewal reminder was sent for. Paying again moves
 -- paid_until, so the new end date gets its own reminder.
