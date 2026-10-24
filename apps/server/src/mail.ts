@@ -187,7 +187,7 @@ export type PremiumWelcome = {
 
 /** The thank-you email for a Premium payment, as subject, HTML and text. */
 export function premiumWelcomeEmail(welcome: PremiumWelcome) {
-  // Rupees read as ₹1,499.00, dollars as $65.00.
+  // Rupees read as ₹1,499.00, dollars as $75.00.
   const paid = new Intl.NumberFormat(
     welcome.currency === 'INR' ? 'en-IN' : 'en-US',
     { style: 'currency', currency: welcome.currency },

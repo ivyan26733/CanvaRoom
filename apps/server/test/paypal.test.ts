@@ -110,7 +110,7 @@ describe('prices by region', () => {
       inr.map((plan) => plan.savePercent),
       [0, 15, 25],
     );
-    // The dollar plans are unchanged.
+    // Foreign clients see the new dollar prices and discounts.
     assert.deepEqual(
       plans.PLANS.map((plan) => [
         plan.amount,
@@ -118,9 +118,9 @@ describe('prices by region', () => {
         plan.savePercent,
       ]),
       [
-        [2000, 2000, 0],
-        [3500, 4000, 12],
-        [6500, 8000, 19],
+        [2500, 2500, 0],
+        [4500, 5000, 10],
+        [7500, 10000, 25],
       ],
     );
   });
@@ -171,7 +171,7 @@ describe('PayPal API', () => {
     const order = await paypal.createPayPalOrder(plan, 'user1');
     assert.deepEqual(order, {
       orderId: 'ORDER1234567890AB',
-      amount: 6500,
+      amount: 7500,
       currency: 'USD',
     });
     const create = calls.find((call) =>
@@ -182,7 +182,7 @@ describe('PayPal API', () => {
     assert.equal(body.intent, 'CAPTURE');
     assert.deepEqual(body.purchase_units[0].amount, {
       currency_code: 'USD',
-      value: '65.00',
+      value: '75.00',
     });
     assert.equal(body.purchase_units[0].custom_id, 'user1');
     assert.equal(body.application_context.shipping_preference, 'NO_SHIPPING');
@@ -311,7 +311,7 @@ describe('PayPal webhook', () => {
         resource: {
           id: 'CAPTURE1234567890',
           status: 'COMPLETED',
-          amount: { currency_code: 'USD', value: '35.00' },
+          amount: { currency_code: 'USD', value: '45.00' },
           supplementary_data: {
             related_ids: { order_id: 'ORDER1234567890AB' },
           },
@@ -323,7 +323,7 @@ describe('PayPal webhook', () => {
           orderId: 'ORDER1234567890AB',
           paymentId: 'CAPTURE1234567890',
           source: 'webhook',
-          amount: 3500,
+          amount: 4500,
           currency: 'USD',
         },
       },
@@ -333,7 +333,7 @@ describe('PayPal webhook', () => {
         event_type: 'PAYMENT.CAPTURE.REFUNDED',
         resource: {
           id: 'REFUND1234567890',
-          amount: { currency_code: 'USD', value: '35.00' },
+          amount: { currency_code: 'USD', value: '45.00' },
           links: [
             {
               rel: 'up',
@@ -345,7 +345,7 @@ describe('PayPal webhook', () => {
       {
         kind: 'refund',
         paymentId: 'CAPTURE1234567890',
-        amount: 3500,
+        amount: 4500,
         currency: 'USD',
       },
     );
@@ -356,7 +356,7 @@ describe('PayPal webhook', () => {
         resource: {
           id: 'CAPTURE1234567890',
           status: 'PENDING',
-          amount: { currency_code: 'USD', value: '35.00' },
+          amount: { currency_code: 'USD', value: '45.00' },
           supplementary_data: {
             related_ids: { order_id: 'ORDER1234567890AB' },
           },
@@ -463,7 +463,7 @@ function storeSuite(name: string, make: () => Store | undefined) {
         orderId,
         paymentId,
         source,
-        amount: 3500,
+        amount: 4500,
         currency: 'USD',
       });
       const results = await Promise.all(
@@ -573,7 +573,7 @@ function storeSuite(name: string, make: () => Store | undefined) {
       const refunds = await Promise.all(
         [1, 2].map(() =>
           store.refundPayment(
-            { paymentId: first.paymentId, amount: 2000, currency: 'USD' },
+            { paymentId: first.paymentId, amount: 2500, currency: 'USD' },
             30,
           ),
         ),
@@ -590,7 +590,7 @@ function storeSuite(name: string, make: () => Store | undefined) {
       assert.equal(
         (
           await store.refundPayment(
-            { paymentId: 'UNKNOWN1234567890', amount: 2000, currency: 'USD' },
+            { paymentId: 'UNKNOWN1234567890', amount: 2500, currency: 'USD' },
             30,
           )
         ).outcome,
@@ -632,7 +632,7 @@ function storeSuite(name: string, make: () => Store | undefined) {
         deps,
       );
       const result = await store.refundPayment(
-        { paymentId: first.paymentId, amount: 2000, currency: 'USD' },
+        { paymentId: first.paymentId, amount: 2500, currency: 'USD' },
         30,
       );
       assert.equal(result.outcome, 'refunded');
@@ -677,7 +677,7 @@ test('postgres takes PayPal orders before it is migrated for them', async (t) =>
     assert.equal(stored?.provider, undefined);
     const { deps } = harness(postgres);
     const result = await applyPayment(
-      { orderId, paymentId, source: 'checkout', amount: 3500, currency: 'USD' },
+      { orderId, paymentId, source: 'checkout', amount: 4500, currency: 'USD' },
       deps,
     );
     assert.equal(result.outcome, 'applied');
@@ -686,7 +686,7 @@ test('postgres takes PayPal orders before it is migrated for them', async (t) =>
     assert.equal(
       (
         await postgres.refundPayment(
-          { paymentId, amount: 3500, currency: 'USD' },
+          { paymentId, amount: 4500, currency: 'USD' },
           30,
         )
       ).outcome,

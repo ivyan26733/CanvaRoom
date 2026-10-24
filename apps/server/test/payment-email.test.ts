@@ -164,7 +164,7 @@ describe('welcome email content', () => {
   const email = premiumWelcomeEmail({
     name: '<img src=x onerror=alert(1)>',
     term: '6 months + 15 days free',
-    amount: 2000,
+    amount: 2500,
     currency: 'USD',
     paymentId: 'pay_ABC123',
     paidUntil: '2026-11-21T10:00:00.000Z',
@@ -178,7 +178,7 @@ describe('welcome email content', () => {
 
   test('shows the payment, the date and where to reach us', () => {
     for (const part of [email.html, email.text]) {
-      assert.ok(part.includes('$20.00 USD'));
+      assert.ok(part.includes('$25.00 USD'));
       assert.ok(part.includes('6 months + 15 days free'));
       assert.ok(part.includes('pay_ABC123'));
       assert.ok(part.includes('21 November 2026'));
@@ -206,7 +206,7 @@ describe('welcome email plan', () => {
     await store.createPayment({
       orderId,
       userId,
-      amount: 6500,
+      amount: 7500,
       currency: 'USD',
       status: 'created',
       plan: 'yearly',
@@ -221,7 +221,7 @@ describe('welcome email plan', () => {
     );
     await settle();
     assert.equal(sent[0]!.welcome.term, '12 months + 1 month free');
-    assert.equal(sent[0]!.welcome.amount, 6500);
+    assert.equal(sent[0]!.welcome.amount, 7500);
   });
 });
 

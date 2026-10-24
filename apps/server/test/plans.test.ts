@@ -7,13 +7,13 @@ const plans = await import('../src/plans.js');
 const web = await import('../../web/app/lib/pricing.js');
 
 describe('plans', () => {
-  test('charge $20, $35 and $65 for 3, 6 and 12 months', () => {
+  test('charge $25, $45 and $75 for 3, 6 and 12 months', () => {
     assert.deepEqual(
       plans.PLANS.map(({ id, amount, months }) => ({ id, amount, months })),
       [
-        { id: 'quarterly', amount: 2000, months: 3 },
-        { id: 'half-year', amount: 3500, months: 6 },
-        { id: 'yearly', amount: 6500, months: 12 },
+        { id: 'quarterly', amount: 2500, months: 3 },
+        { id: 'half-year', amount: 4500, months: 6 },
+        { id: 'yearly', amount: 7500, months: 12 },
       ],
     );
     assert.ok(plans.PLANS.every((plan) => plan.currency === 'USD'));
@@ -22,10 +22,10 @@ describe('plans', () => {
   test('show the saving against the 3-month rate', () => {
     const [quarterly, halfYear, yearly] = plans.PLANS;
     assert.equal(quarterly!.savePercent, 0);
-    assert.equal(halfYear!.compareAt, 4000);
-    assert.equal(halfYear!.savePercent, 12);
-    assert.equal(yearly!.compareAt, 8000);
-    assert.equal(yearly!.savePercent, 19);
+    assert.equal(halfYear!.compareAt, 5000);
+    assert.equal(halfYear!.savePercent, 10);
+    assert.equal(yearly!.compareAt, 10000);
+    assert.equal(yearly!.savePercent, 25);
     assert.ok(yearly!.bestValue && !halfYear!.bestValue);
   });
 
@@ -52,10 +52,10 @@ describe('plans', () => {
     );
   });
 
-  test('cost $6.67, $5.38 and $5.00 a month with the bonus', () => {
+  test('cost $8.33, $6.92 and $5.77 a month with the bonus', () => {
     assert.deepEqual(
       plans.PLANS.map((plan) => plan.perMonth),
-      [667, 538, 500],
+      [833, 692, 577],
     );
   });
 

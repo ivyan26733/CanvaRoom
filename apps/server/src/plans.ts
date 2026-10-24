@@ -67,7 +67,7 @@ const plan = (
 };
 
 /** What the 3-month plan costs, the base rate for the savings shown. */
-const BASE_PRICE: Record<Currency, number> = { USD: 2000, INR: 49900 };
+const BASE_PRICE: Record<Currency, number> = { USD: 2500, INR: 49900 };
 
 const plansIn = (
   currency: Currency,
@@ -79,7 +79,7 @@ const plansIn = (
 ];
 
 export const PLANS_BY_CURRENCY: Record<Currency, readonly PremiumPlan[]> = {
-  USD: plansIn('USD', [2000, 3500, 6500]),
+  USD: plansIn('USD', [2500, 4500, 7500]),
   INR: plansIn('INR', [49900, 84900, 149900]),
 };
 
@@ -118,6 +118,13 @@ export function termLabel(item: PremiumPlan) {
  */
 export const PLANS_SINCE = Date.parse('2026-10-22T09:38:00Z');
 
+/** USD prices used before the current increase; pending orders keep their term. */
+const PREVIOUS_USD_PLAN_IDS: Record<number, PlanId> = {
+  2000: 'quarterly',
+  3500: 'half-year',
+  6500: 'yearly',
+};
+
 export type OrderTerms = {
   plan?: string | null;
   months?: number | null;
@@ -132,7 +139,15 @@ export function planOfOrder(order: OrderTerms) {
   const currency = isCurrency(order.currency) ? order.currency : 'USD';
   if (order.plan) return planById(order.plan, currency);
   if (Date.parse(order.createdAt) < PLANS_SINCE) return undefined;
-  return plansFor(currency).find((item) => item.amount === order.amount);
+  const current = plansFor(currency).find(
+    (item) => item.amount === order.amount,
+  );
+  if (current) return current;
+  // Older payment rows may lack the plan columns when a database migration
+  // had not run yet. Keep their original duration recognizable after repricing.
+  const previousId =
+    currency === 'USD' ? PREVIOUS_USD_PLAN_IDS[order.amount] : undefined;
+  return previousId ? planById(previousId, currency) : undefined;
 }
 
 /** How much Premium an order buys; legacy one-month orders buy `legacyDays`. */
