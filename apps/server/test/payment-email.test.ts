@@ -358,7 +358,7 @@ describe('reminder email content', () => {
   test('says when Premium ends and how to renew', () => {
     assert.equal(
       email.subject,
-      'Your CanvaRoom Premium ends on 21 November 2026',
+      '⏳ Your CanvaRoom Premium ends on 21 November 2026',
     );
     assert.ok(!email.html.includes('<b>x</b>'));
     for (const part of [email.html, email.text]) {

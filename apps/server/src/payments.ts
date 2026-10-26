@@ -169,6 +169,12 @@ export async function sendRenewalReminders(deps: ReminderDeps) {
 
 /** Unpaid checkout emails become due one day after order creation. */
 export const CHECKOUT_REMINDER_AFTER_HOURS = 24;
+/**
+ * ...and stop being due as the order expires (48 hours), with a few hours'
+ * slack because a daily cron can fire up to an hour late. Older orders never
+ * get a reminder, so nobody is emailed about a checkout from last week.
+ */
+export const CHECKOUT_REMINDER_UNTIL_HOURS = 54;
 
 export type CheckoutReminderDeps = {
   store: Store;
@@ -189,6 +195,7 @@ export async function sendCheckoutReminders(deps: CheckoutReminderDeps) {
   const due = await store.claimCheckoutReminders(
     CHECKOUT_REMINDER_AFTER_HOURS,
     deps.limit ?? 100,
+    CHECKOUT_REMINDER_UNTIL_HOURS,
   );
   let sent = 0;
   let failed = 0;

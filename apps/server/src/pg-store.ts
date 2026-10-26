@@ -1041,7 +1041,11 @@ export class PostgresStore implements Store {
     );
   }
 
-  async claimCheckoutReminders(olderThanHours: number, limit: number) {
+  async claimCheckoutReminders(
+    olderThanHours: number,
+    limit: number,
+    youngerThanHours: number,
+  ) {
     const { rows } = await this.pool.query<{
       order_id: string;
       user_id: string;
@@ -1056,6 +1060,7 @@ export class PostgresStore implements Store {
            JOIN accounts a ON a.id = p.user_id
           WHERE p.status = 'created'
             AND p.created_at <= now() - make_interval(hours => $1)
+            AND p.created_at > now() - make_interval(hours => $3)
             AND p.checkout_reminded_at IS NULL
             AND (p.checkout_reminder_claimed_at IS NULL
               OR p.checkout_reminder_claimed_at < now() - interval '6 hours')
@@ -1081,7 +1086,7 @@ export class PostgresStore implements Store {
        SELECT c.order_id, c.user_id, a.email, a.name, c.plan, c.created_at
          FROM claimed c
          JOIN accounts a ON a.id = c.user_id`,
-      [olderThanHours, limit],
+      [olderThanHours, limit, youngerThanHours],
     );
     return rows.map((row): CheckoutReminder => ({
       orderId: row.order_id,

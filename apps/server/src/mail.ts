@@ -432,29 +432,42 @@ export type PremiumReminderMail = {
 export function premiumReminderEmail(reminder: PremiumReminderMail) {
   const until = longDate(reminder.paidUntil);
   const renew = `${reminder.appUrl}/#pricing`;
-  const subject = `Your CanvaRoom Premium ends on ${until}`;
+  const subject = `⏳ Your CanvaRoom Premium ends on ${until}`;
   const text = `Hi ${reminder.name},
 
-Your CanvaRoom Premium ends on ${until}. Premium doesn't renew on its own, so nothing will be charged.
+A small heads-up: your CanvaRoom Premium ends on ${until}.
 
-To keep unlimited boards, people, exports, images and recording, renew for 3, 6 or 12 months here: ${renew}
-Renewing adds the new time after your current end date, so you don't lose a day.
+Premium doesn't renew on its own, so nothing will be charged. If you'd like to keep unlimited boards, people, exports, images and recording, you can renew for 3, 6 or 12 months here: ${renew}
+
+Renewing adds the new time after your current end date, so you don't lose a single day.
 
 Your boards stay yours either way. After Premium ends, the free plan keeps your first board for you to use on your own.
 
+${thoughtText(reminder.paidUntil)}
+
 Any question? Just reply to this email or write to ${SUPPORT_EMAIL}.
 
+Thank you for drawing with us,
 The CanvaRoom team`;
-  const html = `<div style="font-family:system-ui,-apple-system,Segoe UI,sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;color:#141413;line-height:1.55">
-  <p style="font-size:20px;font-weight:700;margin:0 0 24px">CanvaRoom</p>
-  <p style="font-size:22px;font-weight:700;margin:0 0 16px">Your Premium ends on ${escapeHtml(until)}</p>
-  <p style="margin:0 0 16px">Hi ${escapeHtml(reminder.name)},</p>
-  <p style="margin:0 0 16px">Premium doesn’t renew on its own, so nothing will be charged. To keep unlimited boards, people, exports, images and recording, renew for 3, 6 or 12 months. The new time starts after your current end date, so you don’t lose a day.</p>
-  <p style="margin:0 0 28px"><a href="${escapeHtml(renew)}" style="display:inline-block;background:#ff4f1f;color:#fff;text-decoration:none;font-weight:600;padding:12px 22px;border-radius:999px">Renew Premium</a></p>
-  <p style="margin:0 0 16px;color:#57544d;font-size:14px">Your boards stay yours either way. After Premium ends, the free plan keeps your first board for you to use on your own.</p>
-  <p style="margin:0 0 24px">Any question? Just reply to this email or write to <a href="mailto:${SUPPORT_EMAIL}" style="color:#ff4f1f">${SUPPORT_EMAIL}</a>.</p>
-  <p style="margin:0">The CanvaRoom team</p>
-</div>`;
+  const html = frame(
+    `Premium ends on ${until}. Renew anytime; you won't lose a day.`,
+    `${doodles(['⏳', '🎨', '📌'])}
+<p style="margin:0 0 6px;font-size:24px;font-weight:800;letter-spacing:-0.5px">Your Premium ends on ${escapeHtml(until)}</p>
+<p style="margin:0 0 18px">Hi ${escapeHtml(reminder.name)}, a small heads-up before your Premium time runs out. Thank you for spending these months drawing and teaching with us.</p>
+${doodleCard(
+  `<p style="margin:0 0 6px;font-size:12px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:${MUTED}">Good to know</p>
+<table role="presentation" cellpadding="0" cellspacing="0" style="font-size:14px">
+<tr><td style="padding:4px 10px 4px 0;vertical-align:top">💳</td><td style="padding:4px 0">Premium doesn’t renew on its own, so <strong>nothing will be charged</strong>.</td></tr>
+<tr><td style="padding:4px 10px 4px 0;vertical-align:top">➕</td><td style="padding:4px 0">Renewing adds the new time <strong>after ${escapeHtml(until)}</strong>, so you don’t lose a single day.</td></tr>
+<tr><td style="padding:4px 10px 4px 0;vertical-align:top">🗂️</td><td style="padding:4px 0">Your boards stay yours either way. The free plan keeps your first board.</td></tr>
+</table>`,
+)}
+<p style="margin:0 0 14px">Keep unlimited boards, people, exports, images and recording for 3, 6 or 12 months:</p>
+${button(renew, 'Renew Premium →')}
+${thoughtBlock(reminder.paidUntil)}
+<p style="margin:0 0 22px">Any question? Just reply to this email or write to <a href="mailto:${SUPPORT_EMAIL}" style="color:${ACCENT}">${SUPPORT_EMAIL}</a>.</p>
+<p style="margin:0 0 6px">Thank you for drawing with us,<br><strong>The CanvaRoom team</strong></p>`,
+  );
   return { subject, html, text };
 }
 
@@ -474,28 +487,48 @@ export type CheckoutReminderMail = {
 
 /** A gentle note for someone who started Premium checkout but hasn't paid. */
 export function checkoutReminderEmail(reminder: CheckoutReminderMail) {
-  const subject = 'Still considering CanvaRoom Premium?';
+  const subject = '🎨 Still thinking about CanvaRoom Premium?';
   const text = `Hi ${reminder.name},
 
-It looks like you started checking out CanvaRoom Premium, but we haven't been able to confirm a completed payment yet.
+You started upgrading to CanvaRoom Premium but the payment didn't go through, so we wanted to check in. No pressure at all.
 
-If Premium would help you keep ideas moving with unlimited boards and collaborators, easy exports, image uploads and recording, you can continue securely here:
+If Premium would help you keep ideas moving, you can pick up right where you left off:
 ${reminder.checkoutUrl}
 
-Your boards are safe either way, and Premium is a one-time pass that doesn't renew automatically. If you've already paid, please ignore this note. If the payment screen got stuck or you ran into another problem, just reply to this email and we'll get back to you as soon as we can.
+What Premium unlocks:
+${PREMIUM_PERKS.map((perk) => `- ${perk}`).join('\n')}
+
+It's a one-time pass that never renews on its own, and your boards are safe either way.
+
+If the payment screen got stuck, your card was declined, or something else went wrong, just reply to this email. A real person reads every message and we'll help you sort it out. If you've already paid, please ignore this note.
+
+${thoughtText(reminder.checkoutUrl)}
 
 The CanvaRoom team`;
-  const html = `<div style="font-family:system-ui,-apple-system,Segoe UI,sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;color:#141413;line-height:1.55">
-  <p style="font-size:20px;font-weight:700;margin:0 0 24px">CanvaRoom</p>
-  <p style="font-size:22px;font-weight:700;margin:0 0 16px">Still considering Premium?</p>
-  <p style="margin:0 0 16px">Hi ${escapeHtml(reminder.name)},</p>
-  <p style="margin:0 0 16px">It looks like you started checking out CanvaRoom Premium, but we haven’t been able to confirm a completed payment yet.</p>
-  <p style="margin:0 0 24px">If Premium would help you keep ideas moving with unlimited boards and collaborators, easy exports, image uploads and recording, you can continue securely here.</p>
-  <p style="margin:0 0 28px"><a href="${escapeHtml(reminder.checkoutUrl)}" style="display:inline-block;background:#ff4f1f;color:#fff;text-decoration:none;font-weight:600;padding:12px 22px;border-radius:999px">Continue to Premium</a></p>
-  <p style="margin:0 0 16px;color:#57544d;font-size:14px">Your boards are safe either way, and Premium is a one-time pass that doesn’t renew automatically. If you’ve already paid, please ignore this note.</p>
-  <p style="margin:0 0 24px">If the payment screen got stuck or you ran into another problem, just reply to this email and we’ll get back to you as soon as we can.</p>
-  <p style="margin:0">The CanvaRoom team</p>
-</div>`;
+  const perkIcons = ['🏫', '👀', '📤', '🖼️', '🎬'];
+  const html = frame(
+    'Your Premium checkout is waiting. Need a hand with the payment?',
+    `${doodles(['🎨', '✏️', '💭'])}
+<p style="margin:0 0 6px;font-size:24px;font-weight:800;letter-spacing:-0.5px">Still thinking about Premium?</p>
+<p style="margin:0 0 18px">Hi ${escapeHtml(reminder.name)}, you started upgrading to CanvaRoom Premium but the payment didn’t go through, so we wanted to check in. No pressure at all.</p>
+${doodleCard(
+  `<p style="margin:0 0 10px;font-size:12px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:${MUTED}">Waiting for you</p>
+<table role="presentation" cellpadding="0" cellspacing="0" style="font-size:14px">${PREMIUM_PERKS.map(
+    (perk, index) =>
+      `<tr><td style="padding:4px 12px 4px 0;vertical-align:top;font-size:17px">${perkIcons[index] ?? '✅'}</td><td style="padding:4px 0">${escapeHtml(perk)}</td></tr>`,
+  ).join('')}</table>`,
+)}
+${button(reminder.checkoutUrl, 'Pick up where you left off →')}
+${doodleCard(
+  `<p style="margin:0 0 4px;font-weight:800">🛟 Payment got stuck?</p>
+<p style="margin:0;font-size:14px">If the payment screen froze, your card was declined, or something else went wrong, just reply to this email. A real person reads every message and we’ll help you sort it out.</p>`,
+  '#eef6ff',
+  '#9db6ff',
+)}
+<p style="margin:0 0 18px;color:${MUTED};font-size:13px">Premium is a one-time pass that never renews on its own, and your boards are safe either way. Already paid? Please ignore this note.</p>
+${thoughtBlock(reminder.checkoutUrl)}
+<p style="margin:0 0 6px">Happy drawing,<br><strong>The CanvaRoom team</strong></p>`,
+  );
   return { subject, html, text };
 }
 

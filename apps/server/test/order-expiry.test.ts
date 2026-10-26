@@ -9,8 +9,12 @@ import pg from 'pg';
 const { migrate } = await import('../src/db.js');
 const { PostgresStore } = await import('../src/pg-store.js');
 const { MemoryStore } = await import('../src/store.js');
-const { applyPayment, expireStaleOrders, EXPIRE_AFTER_HOURS } =
-  await import('../src/payments.js');
+const {
+  applyPayment,
+  expireStaleOrders,
+  sendCheckoutReminders,
+  EXPIRE_AFTER_HOURS,
+} = await import('../src/payments.js');
 const { webhookFailure } = await import('../src/billing.js');
 type Store = import('../src/store.js').Store;
 type Capture = import('../src/models.js').Capture;
@@ -24,13 +28,12 @@ const HOUR = 3_600_000;
 /** Logs collected by level, with the checkout step of each line. */
 function recorder() {
   const lines: { level: string; step?: string; message: string }[] = [];
-  const at =
-    (level: string) => (context: object, message: string) =>
-      void lines.push({
-        level,
-        step: (context as { checkout?: string }).checkout,
-        message,
-      });
+  const at = (level: string) => (context: object, message: string) =>
+    void lines.push({
+      level,
+      step: (context as { checkout?: string }).checkout,
+      message,
+    });
   return {
     log: { info: at('info'), warn: at('warn'), error: at('error') },
     steps: () => lines.map((line) => line.step),
@@ -142,7 +145,11 @@ function expirySuite(name: string, make: () => Store | undefined) {
       assert.equal(await store.expireOrder(order.orderId, 'again'), false);
       const { log } = recorder();
       const result = await applyPayment(
-        { orderId: order.orderId, paymentId: unique('pay_'), source: 'webhook' },
+        {
+          orderId: order.orderId,
+          paymentId: unique('pay_'),
+          source: 'webhook',
+        },
         {
           store,
           passDays: 30,
@@ -154,6 +161,26 @@ function expirySuite(name: string, make: () => Store | undefined) {
       );
       assert.equal(result.outcome, 'applied');
       assert.equal((await store.getPayment(order.orderId))?.status, 'paid');
+    });
+
+    test('reminds only about checkouts one to two days old', async (t) => {
+      const store = make();
+      if (!store) return t.skip('no TEST_DATABASE_URL');
+      const due = await unpaidOrder(store, 30);
+      const stale = await unpaidOrder(store, 100);
+      const young = await unpaidOrder(store, 2);
+      const emailed: string[] = [];
+      const { log } = recorder();
+      await sendCheckoutReminders({
+        store,
+        appUrl: 'https://example.test',
+        log,
+        limit: 500,
+        remind: async (to) => void emailed.push(to),
+      });
+      assert.ok(emailed.includes(`${due.userId}@test.invalid`));
+      assert.ok(!emailed.includes(`${stale.userId}@test.invalid`));
+      assert.ok(!emailed.includes(`${young.userId}@test.invalid`));
     });
 
     test('an unreachable provider still expires the order', async (t) => {

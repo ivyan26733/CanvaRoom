@@ -188,10 +188,14 @@ export interface Store {
   ): Promise<PremiumReminder[]>;
   /** Unmarks a reminder that couldn't be sent, so the next run retries it. */
   releasePremiumReminder(userId: string, paidUntil: string): Promise<void>;
-  /** Claims unpaid orders at least `olderThanHours` old, including unverified accounts. */
+  /**
+   * Claims unpaid orders at least `olderThanHours` but less than
+   * `youngerThanHours` old, including unverified accounts.
+   */
   claimCheckoutReminders(
     olderThanHours: number,
     limit: number,
+    youngerThanHours: number,
   ): Promise<CheckoutReminder[]>;
   markCheckoutReminderSent(orderId: string): Promise<void>;
   releaseCheckoutReminder(orderId: string): Promise<void>;
@@ -1372,8 +1376,13 @@ export class MemoryStore implements Store {
     this.scheduleSave();
   }
 
-  async claimCheckoutReminders(olderThanHours: number, limit: number) {
+  async claimCheckoutReminders(
+    olderThanHours: number,
+    limit: number,
+    youngerThanHours: number,
+  ) {
     const cutoff = Date.now() - olderThanHours * 3_600_000;
+    const oldest = Date.now() - youngerThanHours * 3_600_000;
     const due: CheckoutReminder[] = [];
     const seenUsers = new Set<string>();
     for (const payment of [...this.payments.values()].sort((a, b) =>
@@ -1383,6 +1392,7 @@ export class MemoryStore implements Store {
         due.length >= limit ||
         payment.status !== 'created' ||
         Date.parse(payment.createdAt) > cutoff ||
+        Date.parse(payment.createdAt) <= oldest ||
         this.checkoutReminderClaims.has(payment.orderId) ||
         this.checkoutReminded.has(payment.orderId) ||
         seenUsers.has(payment.userId) ||
