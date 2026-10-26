@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ApiError, api, send } from '../lib/api';
 import './admin.css';
+import { PerformanceSection } from './performance';
 
 type AdminPayment = {
   provider: string;
@@ -121,7 +122,7 @@ type AdminMe = {
   username?: string;
 };
 type GrantMethod = 'cash' | 'bank_transfer' | 'complimentary' | 'other';
-type Section = 'overview' | 'users' | 'pricing' | 'transfers';
+type Section = 'overview' | 'users' | 'performance' | 'pricing' | 'transfers';
 type Filter = 'all' | 'online' | 'premium' | 'unverified' | 'admins';
 
 const PAGE_SIZE = 50;
@@ -257,6 +258,7 @@ function previewPlans(prices: PriceSet) {
 const NAV: { id: Section; label: string; icon: string }[] = [
   { id: 'overview', label: 'Overview', icon: '◎' },
   { id: 'users', label: 'Users', icon: '◍' },
+  { id: 'performance', label: 'Performance', icon: '◷' },
   { id: 'pricing', label: 'Pricing', icon: '◈' },
   { id: 'transfers', label: 'Bank transfers', icon: '⇄' },
 ];
@@ -324,6 +326,7 @@ export default function AdminClient() {
       .finally(() => setChecked(true));
   }, []);
 
+  const signedOut = useCallback(() => setAuthenticated(false), []);
   const handleError = useCallback((error: unknown, fallback: string) => {
     if (error instanceof ApiError && error.status === 401)
       setAuthenticated(false);
@@ -787,6 +790,10 @@ export default function AdminClient() {
             }}
             onError={(text) => setToast({ text, tone: 'error' })}
           />
+        )}
+
+        {section === 'performance' && (
+          <PerformanceSection onUnauthorized={signedOut} />
         )}
 
         {section === 'transfers' && (

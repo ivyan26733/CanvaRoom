@@ -111,8 +111,30 @@ function realtimeUrl() {
  * activity (cursor, in-progress strokes, moves, typing) is coalesced and sent
  * at most once per frame.
  */
+/** How the connection behaved since the last report; see `takeStats`. */
+export type ConnectionStats = {
+  /** Ping round trips, in milliseconds. */
+  rtt: number[];
+  /** From sending an edit to the server confirming it was saved, in ms. */
+  saves: number[];
+  reconnects: number;
+  /** Edits the server refused or couldn't save. */
+  rejected: number;
+  offlineMs: number;
+};
+
 export class RealtimeClient {
   readonly peerId = crypto.randomUUID();
+  private pingSentAt = 0;
+  private savesStarted = new Map<string, number>();
+  private stats: ConnectionStats = {
+    rtt: [],
+    saves: [],
+    reconnects: 0,
+    rejected: 0,
+    offlineMs: 0,
+  };
+  private offlineSince = 0;
   status: ConnectionStatus = 'connecting';
   private socket: WebSocket | null = null;
   /** A replacement connection opened before the current one is closed. */
@@ -171,6 +193,13 @@ export class RealtimeClient {
 
   private setStatus(status: ConnectionStatus) {
     if (this.status === status) return;
+    if (status === 'offline') {
+      this.offlineSince = performance.now();
+      this.stats.reconnects++;
+    } else if (status === 'live' && this.offlineSince) {
+      this.stats.offlineMs += performance.now() - this.offlineSince;
+      this.offlineSince = 0;
+    }
     this.status = status;
     this.handlers.onStatus(status);
   }
@@ -246,8 +275,18 @@ export class RealtimeClient {
         if (this.socket?.readyState === WebSocket.OPEN) return;
       }
       this.lastHeard = Date.now();
+      if (message.t === 'pong' && this.pingSentAt) {
+        this.sample(this.stats.rtt, performance.now() - this.pingSentAt);
+        this.pingSentAt = 0;
+      }
       if (message.t === 'op') this.remember(message.op);
       if (message.t === 'ack' || message.t === 'nack') {
+        const started = this.savesStarted.get(message.id);
+        if (message.t === 'nack' && !message.retry) this.stats.rejected++;
+        if (started !== undefined && message.t === 'ack') {
+          this.sample(this.stats.saves, performance.now() - started);
+          this.savesStarted.delete(message.id);
+        }
         if (message.t === 'nack' && message.retry) {
           this.retrySoon(message.id);
           return;
@@ -320,7 +359,7 @@ export class RealtimeClient {
         this.socket?.close();
         return;
       }
-      this.rawSend({ t: 'ping' });
+      if (this.rawSend({ t: 'ping' })) this.pingSentAt = performance.now();
     }, PING_EVERY_MS);
     clearInterval(this.rotateTimer);
     this.rotateTimer = setInterval(() => {
@@ -414,6 +453,28 @@ export class RealtimeClient {
     this.connect();
   };
 
+  private sample(list: number[], value: number) {
+    if (list.length < 500) list.push(Math.round(value));
+  }
+
+  /** The connection's numbers since the last call, for the performance report. */
+  takeStats(): ConnectionStats {
+    const taken = this.stats;
+    if (this.offlineSince) {
+      const now = performance.now();
+      taken.offlineMs += now - this.offlineSince;
+      this.offlineSince = now;
+    }
+    this.stats = {
+      rtt: [],
+      saves: [],
+      reconnects: 0,
+      rejected: 0,
+      offlineMs: 0,
+    };
+    return { ...taken, offlineMs: Math.round(taken.offlineMs) };
+  }
+
   private rawSend(message: unknown) {
     if (this.socket?.readyState !== WebSocket.OPEN || this.status !== 'live')
       return false;
@@ -422,6 +483,10 @@ export class RealtimeClient {
   }
 
   sendOperation(op: Operation) {
+    // Timed from the first send, so time spent offline counts as the user
+    // felt it.
+    if (this.savesStarted.size < 500)
+      this.savesStarted.set(op.id, performance.now());
     this.outbox = [...this.outbox, op];
     writeOutbox(this.outboxKey, this.outbox);
     this.handlers.onPending(this.outbox.length);

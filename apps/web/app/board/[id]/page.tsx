@@ -82,6 +82,7 @@ import {
   type LocalOverlayHandle,
 } from './live-layers';
 import dynamic from 'next/dynamic';
+import { useBoardMetrics } from '../../lib/board-metrics';
 import { DRAG_TYPE, itemSrc } from '../../lib/library';
 import type { InsertRequest } from '../../components/library-panel';
 import { Minimap } from './minimap';
@@ -343,6 +344,14 @@ export default function BoardPage() {
   const remote = useMemo(() => new RemoteActivity(), []);
   const objectsRef = useRef<BoardObject[]>([]);
   const viewRef = useRef(view);
+  // How the board performs for this person, reported once a minute.
+  useBoardMetrics({
+    boardId,
+    client: clientRef,
+    objects: () => objectsRef.current.length,
+    zoom: () => viewRef.current.zoom,
+    enabled: !isLocal,
+  });
   const gesture = useRef<Gesture | null>(null);
   const pointers = useRef(new Map<number, Point>());
   const history = useRef<Change[][]>([]);

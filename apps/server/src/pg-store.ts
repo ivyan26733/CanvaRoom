@@ -33,6 +33,7 @@ import type {
   SessionRecord,
   Snapshot,
 } from './models.js';
+import type { BoardMetricRow } from './perf.js';
 import type { BoardListItem, LiveStore, Store } from './store.js';
 import {
   CURRENCIES,
@@ -1122,6 +1123,222 @@ export class PostgresStore implements Store {
         WHERE order_id = $1 AND checkout_reminded_at IS NULL`,
       [orderId],
     );
+  }
+
+  async addBoardMetric(row: BoardMetricRow) {
+    await this.pool.query(
+      `INSERT INTO board_metrics (
+         id, user_id, guest, board_id, visible_ms,
+         rtt_p50, rtt_p95, rtt_max, save_p50, save_p95, save_max, saves,
+         reconnects, rejected, offline_ms, slow_frames, slow_frame_ms,
+         worst_frame_ms, errors, first_error, objects, zoom, mobile, browser,
+         os, cores, memory_gb, network, screen, country, poor, reasons)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
+               $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26,
+               $27, $28, $29, $30, $31, $32)`,
+      [
+        row.id,
+        row.userId,
+        row.guest,
+        row.boardId,
+        row.visibleMs,
+        row.rttP50,
+        row.rttP95,
+        row.rttMax,
+        row.saveP50,
+        row.saveP95,
+        row.saveMax,
+        row.saves,
+        row.reconnects,
+        row.rejected,
+        row.offlineMs,
+        row.slowFrames,
+        row.slowFrameMs,
+        row.worstFrameMs,
+        row.errors,
+        row.firstError,
+        row.objects,
+        row.zoom,
+        row.mobile,
+        row.browser,
+        row.os,
+        row.cores,
+        row.memoryGb,
+        row.network,
+        row.screen,
+        row.country,
+        row.poor,
+        row.reasons,
+      ],
+    );
+  }
+
+  async purgeBoardMetrics(days: number) {
+    const { rowCount } = await this.pool.query(
+      `DELETE FROM board_metrics
+        WHERE created_at < now() - make_interval(days => $1)`,
+      [days],
+    );
+    return rowCount ?? 0;
+  }
+
+  /** How boards performed over the last `hours`, for the admin console. */
+  async performanceOverview(hours: number) {
+    const window = [hours];
+    const [totals, devices, countries, worst, errors, hourly] =
+      await Promise.all([
+        this.pool.query(
+          `SELECT count(*)::int AS reports,
+                  count(DISTINCT user_id)::int AS people,
+                  count(DISTINCT board_id)::int AS boards,
+                  count(*) FILTER (WHERE poor)::int AS poor,
+                  round(sum(visible_ms) / 60000.0)::int AS minutes,
+                  percentile_cont(0.5) WITHIN GROUP (ORDER BY rtt_p50)::int AS rtt_median,
+                  percentile_cont(0.95) WITHIN GROUP (ORDER BY rtt_p95)::int AS rtt_p95,
+                  percentile_cont(0.95) WITHIN GROUP (ORDER BY save_p95)::int AS save_p95,
+                  coalesce(sum(slow_frames), 0)::int AS slow_frames,
+                  coalesce(sum(reconnects), 0)::int AS reconnects,
+                  coalesce(sum(errors), 0)::int AS errors
+             FROM board_metrics
+            WHERE created_at > now() - make_interval(hours => $1)`,
+          window,
+        ),
+        this.pool.query(
+          `SELECT os, browser, mobile, count(*)::int AS reports,
+                  count(DISTINCT user_id)::int AS people,
+                  percentile_cont(0.5) WITHIN GROUP (ORDER BY rtt_p50)::int AS rtt_median,
+                  round(avg(slow_frame_ms))::int AS freeze_ms_per_min,
+                  round(100.0 * count(*) FILTER (WHERE poor) / count(*))::int AS poor_percent
+             FROM board_metrics
+            WHERE created_at > now() - make_interval(hours => $1)
+            GROUP BY os, browser, mobile
+            ORDER BY reports DESC
+            LIMIT 12`,
+          window,
+        ),
+        this.pool.query(
+          `SELECT coalesce(country, '??') AS country, count(*)::int AS reports,
+                  count(DISTINCT user_id)::int AS people,
+                  percentile_cont(0.5) WITHIN GROUP (ORDER BY rtt_p50)::int AS rtt_median,
+                  round(100.0 * count(*) FILTER (WHERE poor) / count(*))::int AS poor_percent
+             FROM board_metrics
+            WHERE created_at > now() - make_interval(hours => $1)
+            GROUP BY 1
+            ORDER BY reports DESC
+            LIMIT 12`,
+          window,
+        ),
+        this.pool.query(
+          `SELECT m.id, m.created_at, m.user_id, m.guest, m.board_id,
+                  m.rtt_p95, m.save_p95, m.slow_frame_ms, m.worst_frame_ms,
+                  m.reconnects, m.offline_ms, m.errors, m.first_error,
+                  m.objects, m.zoom, m.mobile, m.browser, m.os, m.cores,
+                  m.memory_gb, m.network, m.country, m.reasons,
+                  a.name, a.email, b.title
+             FROM board_metrics m
+             LEFT JOIN accounts a ON a.id = m.user_id
+             LEFT JOIN boards b ON b.id = m.board_id
+            WHERE m.poor AND m.created_at > now() - make_interval(hours => $1)
+            ORDER BY m.created_at DESC
+            LIMIT 40`,
+          window,
+        ),
+        this.pool.query(
+          `SELECT first_error AS message, count(*)::int AS reports,
+                  count(DISTINCT user_id)::int AS people, max(created_at) AS last_seen
+             FROM board_metrics
+            WHERE first_error IS NOT NULL
+              AND created_at > now() - make_interval(hours => $1)
+            GROUP BY first_error
+            ORDER BY reports DESC
+            LIMIT 10`,
+          window,
+        ),
+        this.pool.query(
+          `SELECT date_trunc('hour', created_at) AS hour, count(*)::int AS reports,
+                  count(*) FILTER (WHERE poor)::int AS poor,
+                  percentile_cont(0.5) WITHIN GROUP (ORDER BY rtt_p50)::int AS rtt_median
+             FROM board_metrics
+            WHERE created_at > now() - make_interval(hours => $1)
+            GROUP BY 1
+            ORDER BY 1`,
+          window,
+        ),
+      ]);
+    const t = totals.rows[0]!;
+    return {
+      hours,
+      totals: {
+        reports: t.reports,
+        people: t.people,
+        boards: t.boards,
+        poor: t.poor,
+        minutes: t.minutes ?? 0,
+        rttMedian: t.rtt_median,
+        rttP95: t.rtt_p95,
+        saveP95: t.save_p95,
+        slowFrames: t.slow_frames,
+        reconnects: t.reconnects,
+        errors: t.errors,
+      },
+      devices: devices.rows.map((row) => ({
+        os: row.os,
+        browser: row.browser,
+        mobile: row.mobile,
+        reports: row.reports,
+        people: row.people,
+        rttMedian: row.rtt_median,
+        freezeMsPerMin: row.freeze_ms_per_min,
+        poorPercent: row.poor_percent,
+      })),
+      countries: countries.rows.map((row) => ({
+        country: row.country,
+        reports: row.reports,
+        people: row.people,
+        rttMedian: row.rtt_median,
+        poorPercent: row.poor_percent,
+      })),
+      worst: worst.rows.map((row) => ({
+        id: row.id,
+        at: iso(row.created_at),
+        userId: row.user_id,
+        guest: row.guest,
+        name: row.name,
+        email: row.email,
+        boardId: row.board_id,
+        boardTitle: row.title,
+        rttP95: row.rtt_p95,
+        saveP95: row.save_p95,
+        slowFrameMs: row.slow_frame_ms,
+        worstFrameMs: row.worst_frame_ms,
+        reconnects: row.reconnects,
+        offlineMs: row.offline_ms,
+        errors: row.errors,
+        firstError: row.first_error,
+        objects: row.objects,
+        zoom: row.zoom,
+        mobile: row.mobile,
+        browser: row.browser,
+        os: row.os,
+        cores: row.cores,
+        memoryGb: row.memory_gb,
+        network: row.network,
+        country: row.country,
+        reasons: row.reasons,
+      })),
+      errors: errors.rows.map((row) => ({
+        message: row.message,
+        reports: row.reports,
+        people: row.people,
+        lastSeen: iso(row.last_seen),
+      })),
+      hourly: hourly.rows.map((row) => ({
+        hour: iso(row.hour),
+        reports: row.reports,
+        poor: row.poor,
+        rttMedian: row.rtt_median,
+      })),
+    };
   }
 
   async noteOrderEvent(orderId: string, event: string, failureReason?: string) {

@@ -96,6 +96,7 @@ import {
 } from './payments.js';
 import { checkoutFor } from './checkout.js';
 import { errorSummary, trail } from './checkout-log.js';
+import { boardReportSchema, KEEP_METRICS_DAYS, summarise } from './perf.js';
 import { ONLINE_SECONDS, PostgresStore } from './pg-store.js';
 import {
   CURRENCIES,
@@ -725,6 +726,72 @@ app.post('/api/presence', async (request, reply) => {
   if (!(await allow(reply, `presence:${user.id}`, 6, 60))) return;
   await adminStore.recordAccountActivity(user.id);
   return { ok: true };
+});
+
+// A minute of an open board, as the browser measured it: connection speed,
+// save delays, screen freezes, reconnects and errors. Stored for the admin
+// console; a poor minute is also logged as perf=poor, with who and where, so
+// it can be found in the Vercel logs.
+app.post('/api/telemetry', async (request, reply) => {
+  const user = await currentUser(request, reply);
+  if (!user) return;
+  if (!(await allow(reply, `telemetry:${user.id}`, 8, 60))) return;
+  const body = boardReportSchema.safeParse(request.body);
+  if (!body.success) return apiError(reply, 400, 'Invalid report.');
+  const country = request.headers['x-vercel-ip-country'];
+  const row = summarise(body.data, {
+    id: randomUUID(),
+    userId: user.id,
+    guest: Boolean(user.guest),
+    ...(typeof country === 'string' ? { country } : {}),
+  });
+  if (row.poor)
+    request.log.warn(
+      {
+        perf: 'poor',
+        reasons: row.reasons,
+        userId: row.userId,
+        boardId: row.boardId,
+        rttP95: row.rttP95,
+        saveP95: row.saveP95,
+        slowFrameMs: row.slowFrameMs,
+        worstFrameMs: row.worstFrameMs,
+        reconnects: row.reconnects,
+        errors: row.errors,
+        ...(row.firstError ? { firstError: row.firstError } : {}),
+        objects: row.objects,
+        device: `${row.os} ${row.browser}${row.mobile ? ' (mobile)' : ''}`,
+        country: row.country,
+      },
+      `Board performance was poor: ${row.reasons.join(', ')}`,
+    );
+  if (adminStore)
+    await adminStore
+      .addBoardMetric(row)
+      .catch((error: unknown) =>
+        request.log.error(error, 'Could not store a board performance report'),
+      );
+  return reply.code(204).send();
+});
+
+app.get('/api/admin/performance', async (request, reply) => {
+  const username = await requireAdmin(request, reply);
+  if (!username || !adminStore) return;
+  const query = z
+    .object({ hours: z.coerce.number().int().min(1).max(720).default(24) })
+    .safeParse(request.query);
+  if (!query.success) return apiError(reply, 400, 'Invalid time range.');
+  try {
+    return await adminStore.performanceOverview(query.data.hours);
+  } catch (error) {
+    if ((error as { code?: string }).code === '42P01')
+      return apiError(
+        reply,
+        503,
+        'Performance reports need the database migration (npm run db:migrate).',
+      );
+    throw error;
+  }
 });
 
 // ---- Accounts ----
@@ -2584,7 +2651,13 @@ app.get('/api/cron/checkout-reminders', async (request, reply) => {
       apply: (capture) => applyCapture(capture, request.log),
     });
     request.log.info(expiry, 'Unpaid orders settled');
-    return { reminders, expiry };
+    const purged = await adminStore
+      ?.purgeBoardMetrics(KEEP_METRICS_DAYS)
+      .catch((error: unknown) => {
+        request.log.error(error, 'Could not delete old performance reports');
+        return 0;
+      });
+    return { reminders, expiry, performanceReportsDeleted: purged ?? 0 };
   } catch (error) {
     request.log.error(error, 'Expiring unpaid orders failed');
     return apiError(reply, 500, 'Expiring unpaid orders failed.');
