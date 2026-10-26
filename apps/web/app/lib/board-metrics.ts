@@ -35,6 +35,8 @@ const SLOW_FRAME_MS = 50;
 
 export type BoardReport = {
   boardId: string;
+  /** The build this page runs (commit), so fixes can be judged per version. */
+  version: string;
   visibleMs: number;
   rtt: number[];
   saves: number[];
@@ -140,6 +142,7 @@ export function useBoardMetrics(options: {
     const visibleMs = Math.round(visible.current.ms);
     const body: BoardReport = {
       boardId,
+      version: process.env.APP_VERSION ?? 'dev',
       visibleMs,
       ...connection,
       slowFrames: frames.current.count,

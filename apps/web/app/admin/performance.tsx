@@ -68,6 +68,8 @@ type Overview = {
     network: string | null;
     country: string | null;
     reasons: string[];
+    side: Side;
+    why: string[];
   }[];
   errors: {
     message: string;
@@ -81,6 +83,33 @@ type Overview = {
     poor: number;
     rttMedian: number | null;
   }[];
+  sides: Record<Side, number>;
+  versions: Release[];
+  onlyVersion: string | null;
+};
+
+type Side = 'ours' | 'user' | 'unclear';
+type Release = {
+  version: string;
+  firstSeen: string;
+  message: string | null;
+  reports: number;
+  poor: number;
+};
+
+const SIDES: Record<Side, { label: string; hint: string }> = {
+  ours: {
+    label: 'Our side',
+    hint: 'Our app, server or an update we released. Worth fixing.',
+  },
+  user: {
+    label: 'User side',
+    hint: 'Their network or a low-powered device.',
+  },
+  unclear: {
+    label: 'Unclear',
+    hint: 'A single short drop. Usually their network.',
+  },
 };
 
 const RANGES = [
@@ -122,10 +151,15 @@ export function PerformanceSection({
   const [data, setData] = useState<Overview | null>(null);
   const [error, setError] = useState('');
   const [showAll, setShowAll] = useState(false);
+  /** 'all', 'latest', or one version's commit. */
+  const [version, setVersion] = useState('all');
+  const [side, setSide] = useState<Side | 'all'>('all');
 
   const load = useCallback(async () => {
     try {
-      setData(await api<Overview>(`/admin/performance?hours=${hours}`));
+      const params = new URLSearchParams({ hours: String(hours) });
+      if (version !== 'all') params.set('version', version);
+      setData(await api<Overview>(`/admin/performance?${params}`));
       setError('');
     } catch (caught) {
       if (caught instanceof ApiError && caught.status === 401) onUnauthorized();
@@ -135,7 +169,7 @@ export function PerformanceSection({
           : 'Could not load performance.',
       );
     }
-  }, [hours, onUnauthorized]);
+  }, [hours, version, onUnauthorized]);
 
   useEffect(() => {
     void load();
@@ -144,6 +178,9 @@ export function PerformanceSection({
   }, [load]);
 
   const totals = data?.totals;
+  const worst = (data?.worst ?? []).filter(
+    (row) => side === 'all' || row.side === side,
+  );
   const poorPercent =
     totals && totals.reports
       ? Math.round((totals.poor / totals.reports) * 100)
@@ -160,18 +197,36 @@ export function PerformanceSection({
             errors. Each open board reports once a minute.
           </p>
         </div>
-        <div className="admin-segment" role="tablist" aria-label="Time range">
-          {RANGES.map((range) => (
-            <button
-              key={range.hours}
-              role="tab"
-              aria-selected={hours === range.hours}
-              className={hours === range.hours ? 'is-active' : ''}
-              onClick={() => setHours(range.hours)}
+        <div className="perf-filters">
+          <label className="perf-version">
+            <span>Version</span>
+            <select
+              value={version}
+              onChange={(event) => setVersion(event.target.value)}
             >
-              {range.label}
-            </button>
-          ))}
+              <option value="all">All versions</option>
+              <option value="latest">Latest version only</option>
+              {(data?.versions ?? []).map((release) => (
+                <option key={release.version} value={release.version}>
+                  {release.version} · {release.message ?? 'update'} (
+                  {when(release.firstSeen)})
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="admin-segment" role="tablist" aria-label="Time range">
+            {RANGES.map((range) => (
+              <button
+                key={range.hours}
+                role="tab"
+                aria-selected={hours === range.hours}
+                className={hours === range.hours ? 'is-active' : ''}
+                onClick={() => setHours(range.hours)}
+              >
+                {range.label}
+              </button>
+            ))}
+          </div>
         </div>
       </section>
       {error && (
@@ -230,10 +285,14 @@ export function PerformanceSection({
         <div className="admin-card-head">
           <h2>Minutes on boards, smooth and poor</h2>
           <span className="admin-legend">
-            <i className="is-smooth" /> Smooth <i className="is-poor" /> Poor
+            <i className="is-smooth" /> Smooth <i className="is-poor" /> Poor{' '}
+            <i className="is-release" /> Update released
           </span>
         </div>
-        <HourlyChart hourly={data?.hourly ?? []} />
+        <HourlyChart
+          hourly={data?.hourly ?? []}
+          releases={data?.versions ?? []}
+        />
       </section>
 
       <section className="admin-card admin-perf-worst">
@@ -243,7 +302,28 @@ export function PerformanceSection({
             Search the user or board ID in Vercel logs for “perf”
           </span>
         </div>
-        {data?.worst.length ? (
+        <div className="perf-sides" role="group" aria-label="Whose side">
+          <button
+            className={`perf-side ${side === 'all' ? 'is-active' : ''}`}
+            onClick={() => setSide('all')}
+          >
+            <strong>{totals?.poor ?? 0}</strong>
+            <span>All poor minutes</span>
+          </button>
+          {(Object.keys(SIDES) as Side[]).map((key) => (
+            <button
+              key={key}
+              className={`perf-side is-${key} ${side === key ? 'is-active' : ''}`}
+              onClick={() => setSide(key)}
+              title={SIDES[key].hint}
+            >
+              <strong>{data?.sides[key] ?? 0}</strong>
+              <span>{SIDES[key].label}</span>
+              <small>{SIDES[key].hint}</small>
+            </button>
+          ))}
+        </div>
+        {worst.length ? (
           <div className="admin-table-wrap">
             <table className="admin-table">
               <thead>
@@ -252,11 +332,12 @@ export function PerformanceSection({
                   <th>Who</th>
                   <th>Board</th>
                   <th>What went wrong</th>
+                  <th>Whose side</th>
                   <th>Device</th>
                 </tr>
               </thead>
               <tbody>
-                {(showAll ? data.worst : data.worst.slice(0, 8)).map((row) => (
+                {(showAll ? worst : worst.slice(0, 8)).map((row) => (
                   <tr key={row.id}>
                     <td>{when(row.at)}</td>
                     <td>
@@ -284,6 +365,16 @@ export function PerformanceSection({
                       )}
                     </td>
                     <td>
+                      <span className={`perf-badge is-${row.side}`}>
+                        {SIDES[row.side].label}
+                      </span>
+                      <ul className="admin-reasons perf-why">
+                        {row.why.map((reason) => (
+                          <li key={reason}>{reason}</li>
+                        ))}
+                      </ul>
+                    </td>
+                    <td>
                       <strong>
                         {row.os} · {row.browser}
                         {row.mobile ? ' · phone' : ''}
@@ -303,21 +394,23 @@ export function PerformanceSection({
                 ))}
               </tbody>
             </table>
-            {data.worst.length > 8 && (
+            {worst.length > 8 && (
               <button
                 className="button ghost small admin-show-more"
                 onClick={() => setShowAll((current) => !current)}
               >
                 {showAll
                   ? 'Show fewer'
-                  : `Show all ${data.worst.length} recent poor minutes`}
+                  : `Show all ${worst.length} recent poor minutes`}
               </button>
             )}
           </div>
         ) : (
           <p className="admin-muted">
             {data
-              ? 'No poor minutes in this period. Boards are running smoothly.'
+              ? side === 'all'
+                ? 'No poor minutes in this period. Boards are running smoothly.'
+                : `No ${SIDES[side].label.toLowerCase()} problems in this period.`
               : 'Loading…'}
           </p>
         )}
@@ -358,6 +451,48 @@ export function PerformanceSection({
           />
         </section>
       </div>
+
+      <section className="admin-card">
+        <div className="admin-card-head">
+          <h2>By version</h2>
+          <span className="admin-secondary">
+            Did an update make things better or worse?
+          </span>
+        </div>
+        {data?.versions.length ? (
+          <ul className="admin-breakdown">
+            {data.versions.map((release, index) => (
+              <li key={release.version}>
+                <span>
+                  <strong>
+                    {release.message ?? 'Update'}{' '}
+                    {index === 0 && (
+                      <span className="admin-pill is-good">Latest</span>
+                    )}
+                  </strong>
+                  <small>
+                    {release.version} · released {when(release.firstSeen)} ·{' '}
+                    {release.reports} min measured
+                  </small>
+                </span>
+                <span className="admin-pill">{release.poor} poor</span>
+                <span
+                  className={`admin-poor ${release.reports && release.poor / release.reports > 0.1 ? 'is-bad' : ''}`}
+                >
+                  {release.reports
+                    ? `${Math.round((release.poor / release.reports) * 100)}% poor`
+                    : '—'}
+                </span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="admin-muted">
+            Versions appear here from the next update onwards, as people open
+            boards on it.
+          </p>
+        )}
+      </section>
 
       <section className="admin-card">
         <div className="admin-card-head">
@@ -426,7 +561,13 @@ function BreakdownTable({
 }
 
 /** Minutes per hour, the poor ones stacked on top in the alert colour. */
-function HourlyChart({ hourly }: { hourly: Overview['hourly'] }) {
+function HourlyChart({
+  hourly,
+  releases,
+}: {
+  hourly: Overview['hourly'];
+  releases: Release[];
+}) {
   const [hover, setHover] = useState<number | null>(null);
   const bars = useMemo(() => hourly.slice(-48), [hourly]);
   if (!bars.length)
@@ -490,6 +631,24 @@ function HourlyChart({ hourly }: { hourly: Overview['hourly'] }) {
                   pointerEvents="none"
                 />
               )}
+            </g>
+          );
+        })}
+        {releases.map((release) => {
+          // The bar for the hour it shipped in; bars exist only for hours
+          // with reports, so the marker sits inside the right one.
+          const at = Date.parse(release.firstSeen);
+          let index = -1;
+          bars.forEach((bar, position) => {
+            if (Date.parse(bar.hour) <= at) index = position;
+          });
+          const hourStart = index >= 0 ? Date.parse(bars[index]!.hour) : NaN;
+          if (index < 0 || at - hourStart >= 3_600_000) return null;
+          const x = (index + (at - hourStart) / 3_600_000) * slot;
+          return (
+            <g key={release.version} className="perf-release">
+              <line x1={x} x2={x} y1={0} y2={height} />
+              <title>{`Update ${release.version}: ${release.message ?? ''}`}</title>
             </g>
           );
         })}

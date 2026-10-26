@@ -19,6 +19,11 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
+  // Which build a page is running, for the performance reports: the commit
+  // Vercel built from (short), or "dev" locally.
+  env: {
+    APP_VERSION: (process.env.VERCEL_GIT_COMMIT_SHA ?? 'dev').slice(0, 7),
+  },
   async headers() {
     return [
       { source: '/:path*', headers: securityHeaders },

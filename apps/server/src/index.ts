@@ -765,24 +765,56 @@ app.post('/api/telemetry', async (request, reply) => {
       },
       `Board performance was poor: ${row.reasons.join(', ')}`,
     );
-  if (adminStore)
+  if (adminStore) {
     await adminStore
       .addBoardMetric(row)
       .catch((error: unknown) =>
         request.log.error(error, 'Could not store a board performance report'),
       );
+    await noteVersions(row.appVersion, request);
+  }
   return reply.code(204).send();
 });
+
+/**
+ * Records when each build is first seen: this server's own (with its commit
+ * message) and the one a report came from. Once per instance per version.
+ */
+const notedVersions = new Set<string>();
+async function noteVersions(reported: string | null, request: FastifyRequest) {
+  const own = process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7);
+  const pending: [string, string | undefined][] = [];
+  if (own && !notedVersions.has(own))
+    pending.push([own, process.env.VERCEL_GIT_COMMIT_MESSAGE?.split('\n')[0]]);
+  if (reported && reported !== own && !notedVersions.has(reported))
+    pending.push([reported, undefined]);
+  for (const [version, message] of pending)
+    try {
+      await adminStore!.noteAppVersion(version, message);
+      notedVersions.add(version);
+    } catch (error) {
+      request.log.warn(error, 'Could not record an app version');
+    }
+}
 
 app.get('/api/admin/performance', async (request, reply) => {
   const username = await requireAdmin(request, reply);
   if (!username || !adminStore) return;
   const query = z
-    .object({ hours: z.coerce.number().int().min(1).max(720).default(24) })
+    .object({
+      hours: z.coerce.number().int().min(1).max(720).default(24),
+      version: z
+        .string()
+        .regex(/^[a-z0-9]{1,40}$/)
+        .optional(),
+    })
     .safeParse(request.query);
   if (!query.success) return apiError(reply, 400, 'Invalid time range.');
   try {
-    return await adminStore.performanceOverview(query.data.hours);
+    return await adminStore.performanceOverview(
+      query.data.hours,
+      query.data.version ?? null,
+    );
   } catch (error) {
     if ((error as { code?: string }).code === '42P01')
       return apiError(

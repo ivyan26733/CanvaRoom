@@ -370,6 +370,15 @@ CREATE TABLE IF NOT EXISTS notices (
 CREATE INDEX IF NOT EXISTS notices_live_idx
   ON notices (show_from) WHERE published;
 
+-- Which build of the app sent each performance report, and when each build
+-- was first seen, so the admin console can show "since the last update".
+ALTER TABLE board_metrics ADD COLUMN IF NOT EXISTS app_version text;
+CREATE TABLE IF NOT EXISTS app_versions (
+  version text PRIMARY KEY,
+  first_seen_at timestamptz NOT NULL DEFAULT now(),
+  message text
+);
+
 -- The free plan keeps an owner's oldest board, found through this index.
 CREATE INDEX IF NOT EXISTS boards_owner_created_idx ON boards (owner_id, created_at);
 
