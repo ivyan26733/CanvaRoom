@@ -1,4 +1,5 @@
-import type { Capture, CaptureResult } from './models.js';
+import { errorSummary, trail } from './checkout-log.js';
+import type { Capture, CaptureResult, Payment } from './models.js';
 import type {
   CheckoutReminderMail,
   PremiumReminderMail,
@@ -37,13 +38,44 @@ export async function applyPayment(
 ): Promise<CaptureResult> {
   const { store, log } = deps;
   const result = await store.recordPayment(capture, deps.passDays);
-  const context = { ...capture, outcome: result.outcome };
+  const context = {
+    ...capture,
+    outcome: result.outcome,
+    ...('userId' in result ? { userId: result.userId } : {}),
+  };
   if (result.outcome === 'extra')
-    log.warn(context, 'Extra payment on an order already paid: refund it');
+    trail(
+      log,
+      'payment.extra',
+      context,
+      'Extra payment on an order already paid: refund it',
+      'warn',
+    );
   else if (result.outcome === 'mismatch')
-    log.error(context, 'Captured amount differs from the order');
+    trail(
+      log,
+      'payment.mismatch',
+      context,
+      'Captured amount differs from the order',
+      'error',
+    );
+  else if (result.outcome === 'unknown')
+    trail(
+      log,
+      'payment.unknown_order',
+      context,
+      'A payment arrived for an order we have no record of',
+      'error',
+    );
+  else if (result.outcome === 'repeat')
+    trail(log, 'payment.repeat', context, 'Payment already applied');
   else if (result.outcome === 'applied') {
-    log.info(context, 'Payment applied');
+    trail(
+      log,
+      'payment.applied',
+      { ...context, paidUntil: result.paidUntil },
+      'Payment applied',
+    );
     const send = deps.welcome;
     if (send)
       deps.background(
@@ -63,8 +95,20 @@ export async function applyPayment(
             paidUntil: result.paidUntil,
             appUrl: deps.appUrl,
           });
+          trail(
+            log,
+            'email.welcome_sent',
+            context,
+            'Premium welcome email sent',
+          );
         })().catch((error: unknown) =>
-          log.error({ ...context, error }, 'Premium welcome email failed'),
+          trail(
+            log,
+            'email.welcome_failed',
+            { ...context, ...errorSummary(error) },
+            'Premium welcome email failed',
+            'error',
+          ),
         ),
       );
   }
@@ -202,4 +246,128 @@ export async function sendCheckoutReminders(deps: CheckoutReminderDeps) {
     }
   }
   return { due: due.length, sent, failed, skipped };
+}
+
+/** Unpaid orders older than this are checked with the provider and expired. */
+export const EXPIRE_AFTER_HOURS = 48;
+/** Expired orders are deleted this many days after they expired. */
+export const PURGE_EXPIRED_AFTER_DAYS = 90;
+
+/** What the provider says about an unpaid order. */
+export type OrderCheck =
+  | { state: 'paid'; capture: Capture }
+  /** Paid, but the provider didn't give us the payment to apply. */
+  | { state: 'paid_unreadable' }
+  | { state: 'unpaid'; detail?: string }
+  /** We couldn't ask (no keys, or the provider didn't answer). */
+  | { state: 'unknown'; error: unknown };
+
+export type ExpireDeps = {
+  store: Store;
+  log: Log;
+  check: (order: Payment) => Promise<OrderCheck>;
+  apply: (capture: Capture) => Promise<CaptureResult>;
+  limit?: number;
+};
+
+/** Why an unpaid order ended, for the order's failure_reason. */
+function expiryReason(order: Payment, detail?: string) {
+  const last = order.lastEvent
+    ? `last event: ${order.lastEvent}`
+    : "no event from the buyer's browser";
+  const failure = order.failureReason ? `; ${order.failureReason}` : '';
+  return `Unpaid after ${EXPIRE_AFTER_HOURS} hours (${last}${failure})${detail ? `; provider: ${detail}` : ''}`.slice(
+    0,
+    500,
+  );
+}
+
+/**
+ * Settles orders nobody paid. Each one is first checked with its provider, so
+ * a payment whose confirmation never reached us is applied rather than lost.
+ * Unpaid ones become `expired` (a payment that still arrives later is applied
+ * all the same); expired orders are deleted after PURGE_EXPIRED_AFTER_DAYS.
+ */
+export async function expireStaleOrders(deps: ExpireDeps) {
+  const { store, log } = deps;
+  const stale = await store.listStaleOrders(
+    EXPIRE_AFTER_HOURS,
+    deps.limit ?? 50,
+  );
+  let recovered = 0;
+  let expired = 0;
+  let skipped = 0;
+  for (const order of stale) {
+    const context = {
+      orderId: order.orderId,
+      userId: order.userId,
+      provider: order.provider ?? 'razorpay',
+      amount: order.amount,
+      currency: order.currency,
+      createdAt: order.createdAt,
+      ...(order.lastEvent ? { lastEvent: order.lastEvent } : {}),
+    };
+    try {
+      const found = await deps.check(order);
+      if (found.state === 'paid') {
+        const result = await deps.apply(found.capture);
+        trail(
+          log,
+          'expire.recovered',
+          { ...context, outcome: result.outcome },
+          'An unpaid-looking order was paid at the provider; applied it',
+          'warn',
+        );
+        recovered++;
+        continue;
+      }
+      if (found.state === 'paid_unreadable') {
+        trail(
+          log,
+          'expire.check_failed',
+          context,
+          'The provider says this order is paid but returned no capture; left for review',
+          'error',
+        );
+        skipped++;
+        continue;
+      }
+      if (found.state === 'unknown') {
+        // We expire it anyway: a payment that arrives later still applies.
+        trail(
+          log,
+          'expire.check_failed',
+          { ...context, ...errorSummary(found.error) },
+          'Could not check an unpaid order with its provider; expiring it',
+          'warn',
+        );
+      }
+      const reason = expiryReason(
+        order,
+        found.state === 'unpaid' ? found.detail : 'not checked',
+      );
+      if (await store.expireOrder(order.orderId, reason)) {
+        trail(
+          log,
+          'expire.expired',
+          { ...context, reason },
+          'Unpaid order expired',
+        );
+        expired++;
+      } else skipped++;
+    } catch (error) {
+      skipped++;
+      trail(
+        log,
+        'expire.check_failed',
+        { ...context, ...errorSummary(error) },
+        'Expiring an unpaid order failed; the next run retries it',
+        'error',
+      );
+    }
+  }
+  const purged = await store.purgeExpiredOrders(PURGE_EXPIRED_AFTER_DAYS);
+  if (purged)
+    trail(log, 'expire.purged', { purged }, 'Old expired orders deleted');
+  return { checked: stale.length, recovered, expired, skipped, purged };
 }

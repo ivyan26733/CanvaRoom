@@ -195,6 +195,21 @@ export interface Store {
   ): Promise<CheckoutReminder[]>;
   markCheckoutReminderSent(orderId: string): Promise<void>;
   releaseCheckoutReminder(orderId: string): Promise<void>;
+  /**
+   * Notes the latest checkout step on an order (and, for failures, why), so
+   * the admin console and logs show where an unpaid order stopped.
+   */
+  noteOrderEvent(
+    orderId: string,
+    event: string,
+    failureReason?: string,
+  ): Promise<void>;
+  /** Unpaid orders created at least `olderThanHours` ago, oldest first. */
+  listStaleOrders(olderThanHours: number, limit: number): Promise<Payment[]>;
+  /** Marks an unpaid order expired; false if it was paid or is gone. */
+  expireOrder(orderId: string, reason: string): Promise<boolean>;
+  /** Deletes orders expired more than `days` ago; returns how many. */
+  purgeExpiredOrders(days: number): Promise<number>;
 }
 
 /** The oldest of an owner's boards, given each board's owner and creation. */
@@ -847,6 +862,21 @@ export class RedisStore implements Store {
   async markCheckoutReminderSent() {}
 
   async releaseCheckoutReminder() {}
+
+  // Like reminders, expiring orders needs Postgres to list them by date.
+  async noteOrderEvent() {}
+
+  async listStaleOrders(): Promise<Payment[]> {
+    return [];
+  }
+
+  async expireOrder() {
+    return false;
+  }
+
+  async purgeExpiredOrders() {
+    return 0;
+  }
 }
 
 type MemoryBoard = {
@@ -1398,6 +1428,55 @@ export class MemoryStore implements Store {
 
   async releaseCheckoutReminder(orderId: string) {
     this.checkoutReminderClaims.delete(orderId);
+  }
+  async noteOrderEvent(orderId: string, event: string, failureReason?: string) {
+    const payment = this.payments.get(orderId);
+    if (!payment) return;
+    this.payments.set(orderId, {
+      ...payment,
+      lastEvent: event,
+      lastEventAt: new Date().toISOString(),
+      ...(failureReason ? { failureReason } : {}),
+    });
+  }
+
+  async listStaleOrders(olderThanHours: number, limit: number) {
+    const cutoff = Date.now() - olderThanHours * 3_600_000;
+    return [...this.payments.values()]
+      .filter(
+        (payment) =>
+          payment.status === 'created' &&
+          Date.parse(payment.createdAt) <= cutoff,
+      )
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      .slice(0, limit);
+  }
+
+  async expireOrder(orderId: string, reason: string) {
+    const payment = this.payments.get(orderId);
+    if (payment?.status !== 'created') return false;
+    this.payments.set(orderId, {
+      ...payment,
+      status: 'expired',
+      expiredAt: new Date().toISOString(),
+      failureReason: reason,
+    });
+    return true;
+  }
+
+  async purgeExpiredOrders(days: number) {
+    const cutoff = Date.now() - days * 86_400_000;
+    let purged = 0;
+    for (const [orderId, payment] of this.payments)
+      if (
+        payment.status === 'expired' &&
+        payment.expiredAt &&
+        Date.parse(payment.expiredAt) <= cutoff
+      ) {
+        this.payments.delete(orderId);
+        purged++;
+      }
+    return purged;
   }
 }
 

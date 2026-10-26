@@ -249,7 +249,9 @@ export type Payment = {
   userId: string;
   amount: number;
   currency: string;
-  status: 'created' | 'paid';
+  /** `expired`: nobody paid within EXPIRE_AFTER_HOURS. A payment that
+   * still arrives later is applied all the same. */
+  status: 'created' | 'paid' | 'expired';
   /** The plan bought, and the months and extra days it adds. Missing on
    * one-month orders from before the plans. */
   plan?: string;
@@ -260,6 +262,12 @@ export type Payment = {
   paidAt?: string;
   /** When a full refund took the order's Premium time back. */
   refundedAt?: string;
+  /** The latest checkout step for this order, like `client.dismissed`. */
+  lastEvent?: string;
+  lastEventAt?: string;
+  /** Why it failed or expired, in words, when it did. */
+  failureReason?: string;
+  expiredAt?: string;
 };
 
 export type PaymentProvider = 'razorpay' | 'paypal';

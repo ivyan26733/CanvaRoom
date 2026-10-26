@@ -38,6 +38,7 @@ import {
   validPaymentSignature,
   validWebhookSignature,
   webhookCapture,
+  webhookFailure,
   webhookRefund,
 } from './billing.js';
 import {
@@ -88,10 +89,13 @@ import {
 } from './images.js';
 import {
   applyPayment,
+  expireStaleOrders,
   sendCheckoutReminders,
   sendRenewalReminders,
+  type OrderCheck,
 } from './payments.js';
 import { checkoutFor } from './checkout.js';
+import { errorSummary, trail } from './checkout-log.js';
 import { ONLINE_SECONDS, PostgresStore } from './pg-store.js';
 import {
   CURRENCIES,
@@ -122,6 +126,7 @@ import type {
   BoardMeta,
   BoardObject,
   Capture,
+  Payment,
   CaptureResult,
   Operation,
   Page,
@@ -1710,15 +1715,40 @@ async function applyRefund(
   const result = await store.refundPayment(refund, config.passDays);
   const context = { ...refund, outcome: result.outcome };
   if (result.outcome === 'refunded') {
-    log.info(context, 'Refund took Premium time back');
+    trail(
+      log,
+      'refund.applied',
+      { ...context, userId: result.userId },
+      'Refund took Premium time back',
+    );
     for (const boardId of await store.boardIdsFor(result.userId)) {
       const board = await store.getMeta(boardId);
       if (board?.ownerId === result.userId) broadcastBoard(board);
     }
   } else if (result.outcome === 'partial')
-    log.warn(context, 'Partial refund: Premium left as it was');
+    trail(
+      log,
+      'refund.partial',
+      context,
+      'Partial refund: Premium left as it was',
+      'warn',
+    );
   else if (result.outcome === 'unmigrated')
-    log.error(context, 'Refund not applied: the database needs migrating');
+    trail(
+      log,
+      'refund.ignored',
+      context,
+      'Refund not applied: the database needs migrating',
+      'error',
+    );
+  else if (result.outcome === 'unknown')
+    trail(
+      log,
+      'refund.ignored',
+      context,
+      'Refund for a payment we have no record of',
+      'warn',
+    );
   return result;
 }
 
@@ -1897,6 +1927,18 @@ app.post('/api/billing/create-order', async (request, reply) => {
   const currency = currencyOf(request, user.email);
   const price = planById(body.data.plan, currency)!;
   const provider = checkoutFor(currency, user.email);
+  trail(
+    request.log,
+    'order.requested',
+    {
+      userId: user.id,
+      plan: price.id,
+      amount: price.amount,
+      currency,
+      provider: provider ?? 'none',
+    },
+    'Checkout requested',
+  );
   if (!provider) return apiError(reply, 503, 'Payments aren’t available yet.');
   if (provider === 'paypal')
     return paypalCheckout(request, reply, user.id, price);
@@ -1923,11 +1965,32 @@ app.post('/api/billing/create-order', async (request, reply) => {
     // never heard (the tab closed before checkout reported back), apply that
     // payment now rather than charging again.
     const state = await orderCapture(open.orderId).catch((error: unknown) => {
-      request.log.warn(error, 'Could not check an open Razorpay order');
+      trail(
+        request.log,
+        'order.check_failed',
+        { orderId: open.orderId, userId: user.id, ...errorSummary(error) },
+        'Could not check an open Razorpay order; starting a new one',
+        'warn',
+      );
       return undefined;
     });
-    if (state && !state.paid) return checkout(open);
+    if (state && !state.paid) {
+      trail(
+        request.log,
+        'order.reused',
+        { orderId: open.orderId, userId: user.id, provider: 'razorpay' },
+        'Reusing an unpaid Razorpay order',
+      );
+      return checkout(open);
+    }
     if (state?.capture) {
+      trail(
+        request.log,
+        'order.recovered',
+        { orderId: open.orderId, userId: user.id, provider: 'razorpay' },
+        'An open order was already paid; applying it instead of charging again',
+        'warn',
+      );
       await applyCapture(state.capture, request.log);
       const account = await store.getAccount(user.id);
       return { already_paid: true, paidUntil: account?.paidUntil };
@@ -1948,9 +2011,33 @@ app.post('/api/billing/create-order', async (request, reply) => {
       status: 'created',
       createdAt: new Date().toISOString(),
     });
+    trail(
+      request.log,
+      'order.created',
+      {
+        orderId: order.orderId,
+        userId: user.id,
+        provider: 'razorpay',
+        plan: price.id,
+        amount: order.amount,
+        currency: order.currency,
+      },
+      'Razorpay order created',
+    );
     return checkout(order);
   } catch (error) {
-    request.log.error(error, 'Could not create a Razorpay order');
+    trail(
+      request.log,
+      'order.create_failed',
+      {
+        userId: user.id,
+        provider: 'razorpay',
+        plan: price.id,
+        ...errorSummary(error),
+      },
+      'Could not create a Razorpay order',
+      'error',
+    );
     if (error instanceof RazorpayError && error.status === 401)
       return apiError(
         reply,
@@ -2008,15 +2095,28 @@ async function paypalCheckout(
     if (open) {
       const state = await getPayPalOrder(open.orderId).catch(
         (error: unknown) => {
-          request.log.warn(error, 'Could not check an open PayPal order');
+          trail(
+            request.log,
+            'order.check_failed',
+            { orderId: open.orderId, userId, ...errorSummary(error) },
+            'Could not check an open PayPal order; starting a new one',
+            'warn',
+          );
           return undefined;
         },
       );
       if (
         state?.status === 'CREATED' ||
         state?.status === 'PAYER_ACTION_REQUIRED'
-      )
+      ) {
+        trail(
+          request.log,
+          'order.reused',
+          { orderId: open.orderId, userId, provider: 'paypal' },
+          'Reusing an unpaid PayPal order',
+        );
         return paypalOrderReply(open, plan);
+      }
       if (state?.status === 'APPROVED' || state?.status === 'COMPLETED') {
         const done =
           state.status === 'APPROVED'
@@ -2024,6 +2124,18 @@ async function paypalCheckout(
             : state;
         const found = captureOfOrder(done, 'reconcile');
         if (found?.status === 'COMPLETED') {
+          trail(
+            request.log,
+            'order.recovered',
+            {
+              orderId: open.orderId,
+              userId,
+              provider: 'paypal',
+              paypalStatus: state.status,
+            },
+            'An open PayPal order was already approved or paid; applying it',
+            'warn',
+          );
           await applyCapture(found.capture, request.log);
           return alreadyPaid(userId);
         }
@@ -2039,9 +2151,28 @@ async function paypalCheckout(
       status: 'created',
       createdAt: new Date().toISOString(),
     });
+    trail(
+      request.log,
+      'order.created',
+      {
+        orderId: order.orderId,
+        userId,
+        provider: 'paypal',
+        plan: plan.id,
+        amount: order.amount,
+        currency: order.currency,
+      },
+      'PayPal order created',
+    );
     return paypalOrderReply(order, plan);
   } catch (error) {
-    request.log.error(error, 'Could not create a PayPal order');
+    trail(
+      request.log,
+      'order.create_failed',
+      { userId, provider: 'paypal', plan: plan.id, ...errorSummary(error) },
+      'Could not create a PayPal order',
+      'error',
+    );
     if (error instanceof PayPalError && error.status === 401)
       return apiError(
         reply,
@@ -2092,24 +2223,46 @@ app.post('/api/billing/paypal/capture', async (request, reply) => {
     return apiError(reply, 400, 'The payment details are incomplete.');
   if (!(await allow(reply, `verify:${user.id}`, 30, 3600))) return;
   const orderId = body.data.order_id;
+  const context = { orderId, userId: user.id, provider: 'paypal' };
+  trail(request.log, 'verify.received', context, 'PayPal approval received');
   const payment = await store.getPayment(orderId);
   // Orders belong to whoever created them; someone else's is "not found".
   if (
     !payment ||
     payment.userId !== user.id ||
     providerOf(payment) !== 'paypal'
-  )
+  ) {
+    trail(
+      request.log,
+      'verify.unknown_order',
+      { ...context, owner: payment?.userId ?? null },
+      'PayPal capture for an order this account doesn’t own',
+      'warn',
+    );
     return apiError(reply, 400, 'We don’t recognise that payment.');
+  }
   if (user.guest || !paypalAllowedFor(user.email))
     return apiError(reply, 403, 'PayPal isn’t available for this account.');
   let order;
   try {
     order = await capturePayPalOrder(orderId);
   } catch (error) {
-    request.log.warn(error, 'PayPal capture failed');
+    const declined =
+      error instanceof PayPalError && error.issue === 'INSTRUMENT_DECLINED';
+    const step = declined ? 'paypal.declined' : 'paypal.capture_failed';
+    trail(
+      request.log,
+      step,
+      { ...context, ...errorSummary(error) },
+      declined ? 'PayPal declined the payment method' : 'PayPal capture failed',
+      declined ? 'warn' : 'error',
+    );
+    await store
+      .noteOrderEvent(orderId, step, (error as Error).message)
+      .catch(() => undefined);
     // The buyer's card or balance was declined: PayPal's window can offer
     // another way to pay on the same order.
-    if (error instanceof PayPalError && error.issue === 'INSTRUMENT_DECLINED')
+    if (declined)
       return apiError(
         reply,
         402,
@@ -2125,13 +2278,40 @@ app.post('/api/billing/paypal/capture', async (request, reply) => {
   const found = captureOfOrder(order, 'checkout');
   // PayPal sometimes holds a payment for review; its webhook applies it once
   // it clears.
-  if (found?.status === 'PENDING') return { ok: true, pending: true };
-  if (!found || found.status !== 'COMPLETED')
+  if (found?.status === 'PENDING') {
+    trail(
+      request.log,
+      'paypal.pending',
+      context,
+      'PayPal is holding the payment for review',
+    );
+    await store
+      .noteOrderEvent(orderId, 'paypal.pending')
+      .catch(() => undefined);
+    return { ok: true, pending: true };
+  }
+  if (!found || found.status !== 'COMPLETED') {
+    const status = found?.status ?? order.status;
+    trail(
+      request.log,
+      'paypal.not_completed',
+      { ...context, paypalStatus: status },
+      'PayPal did not complete the payment',
+      'warn',
+    );
+    await store
+      .noteOrderEvent(
+        orderId,
+        'paypal.not_completed',
+        `PayPal status ${status}`,
+      )
+      .catch(() => undefined);
     return apiError(
       reply,
       402,
       'PayPal didn’t complete the payment. You haven’t been charged.',
     );
+  }
   const result = await applyCapture(found.capture, request.log);
   return paymentReply(reply, user.id, result);
 });
@@ -2154,12 +2334,47 @@ app.post('/api/billing/verify-payment', async (request, reply) => {
     razorpay_payment_id: paymentId,
     razorpay_signature: signature,
   } = body.data;
+  const context = {
+    orderId,
+    paymentId,
+    userId: user.id,
+    provider: 'razorpay',
+  };
+  trail(
+    request.log,
+    'verify.received',
+    context,
+    'Razorpay checkout reported a payment',
+  );
   const payment = await store.getPayment(orderId);
   // Orders belong to whoever created them; someone else's is "not found".
-  if (!payment || payment.userId !== user.id)
+  if (!payment || payment.userId !== user.id) {
+    trail(
+      request.log,
+      'verify.unknown_order',
+      { ...context, owner: payment?.userId ?? null },
+      'Payment reported for an order this account doesn’t own',
+      'warn',
+    );
     return apiError(reply, 400, 'We don’t recognise that payment.');
-  if (!validPaymentSignature(orderId, paymentId, signature))
+  }
+  if (!validPaymentSignature(orderId, paymentId, signature)) {
+    trail(
+      request.log,
+      'verify.bad_signature',
+      context,
+      'Razorpay signature did not match; the webhook can still apply a real payment',
+      'error',
+    );
+    await store
+      .noteOrderEvent(
+        orderId,
+        'verify.bad_signature',
+        'Checkout signature did not match',
+      )
+      .catch(() => undefined);
     return apiError(reply, 400, 'The payment could not be verified.');
+  }
   // The signature ties this payment to our order, whose amount we set. The
   // webhook may have applied it already; that is a repeat, not an error.
   const result = await applyCapture(
@@ -2189,8 +2404,16 @@ app.register(async (webhook) => {
       !Buffer.isBuffer(request.body) ||
       typeof signature !== 'string' ||
       !validWebhookSignature(request.body, signature)
-    )
+    ) {
+      trail(
+        request.log,
+        'webhook.rejected',
+        { provider: 'razorpay', signed: typeof signature === 'string' },
+        'Razorpay webhook with a bad or missing signature',
+        'warn',
+      );
       return apiError(reply, 400, 'Invalid signature.');
+    }
     let event: unknown;
     try {
       event = JSON.parse(request.body.toString('utf8'));
@@ -2199,6 +2422,37 @@ app.register(async (webhook) => {
     }
     const capture = webhookCapture(event);
     const refund = webhookRefund(event);
+    const failed = webhookFailure(event);
+    const name = (event as { event?: unknown }).event;
+    trail(
+      request.log,
+      capture || refund || failed ? 'webhook.received' : 'webhook.ignored',
+      {
+        provider: 'razorpay',
+        event: typeof name === 'string' ? name : 'unknown',
+        ...(capture
+          ? { orderId: capture.orderId, paymentId: capture.paymentId }
+          : {}),
+        ...(refund ? { paymentId: refund.paymentId } : {}),
+        ...(failed ? { orderId: failed.orderId } : {}),
+      },
+      'Razorpay webhook received',
+    );
+    // A failed attempt: note why on the order, for the admin console.
+    if (failed) {
+      trail(
+        request.log,
+        'client.failed',
+        { provider: 'razorpay', ...failed },
+        'Razorpay reports a failed payment attempt',
+        'warn',
+      );
+      await store.noteOrderEvent(
+        failed.orderId,
+        'payment.failed',
+        failed.reason,
+      );
+    }
     // Other events, and orders that aren't ours, are acknowledged and
     // ignored. A database error answers 500, so Razorpay retries later.
     if (capture) await applyCapture(capture, request.log);
@@ -2228,8 +2482,32 @@ app.register(async (webhook) => {
       request.log.error(error, 'Could not verify a PayPal webhook');
       return apiError(reply, 500, 'Could not verify the webhook.');
     }
-    if (!genuine) return apiError(reply, 400, 'Invalid signature.');
+    if (!genuine) {
+      trail(
+        request.log,
+        'webhook.rejected',
+        { provider: 'paypal' },
+        'PayPal webhook failed verification',
+        'warn',
+      );
+      return apiError(reply, 400, 'Invalid signature.');
+    }
     const read = readPayPalEvent(event);
+    const eventType = (event as { event_type?: unknown }).event_type;
+    trail(
+      request.log,
+      read.kind === 'capture' || read.kind === 'refund'
+        ? 'webhook.received'
+        : 'webhook.ignored',
+      {
+        provider: 'paypal',
+        event: typeof eventType === 'string' ? eventType : 'unknown',
+        ...(read.kind === 'capture'
+          ? { orderId: read.capture.orderId, paymentId: read.capture.paymentId }
+          : {}),
+      },
+      'PayPal webhook received',
+    );
     if (read.kind === 'capture') await applyCapture(read.capture, request.log);
     else if (read.kind === 'refund') await applyRefund(read, request.log);
     return { ok: true };
@@ -2276,31 +2554,153 @@ app.get('/api/cron/premium-reminders', async (request, reply) => {
   }
 });
 
-// Daily, from the cron in vercel.json: email accounts with unpaid checkouts
-// at least 24 hours old. Email verification is not required for this reminder.
+// Daily, from the cron in vercel.json: first email accounts whose checkout
+// has been unpaid for a day, then settle orders unpaid for two days (checked
+// with Razorpay or PayPal first, so a payment we never heard about is
+// applied rather than lost). Reminders need email; expiry runs regardless.
 app.get('/api/cron/checkout-reminders', async (request, reply) => {
   if (!config.cronSecret)
     return apiError(reply, 503, 'Scheduled jobs are not set up.');
   if (!fromCron(request)) return apiError(reply, 401, 'Not allowed.');
-  if (!mailConfigured())
-    return apiError(
-      reply,
-      503,
-      'Email is not set up, so no checkout reminders went out.',
-    );
+  let reminders: object = { skipped: 'Email is not set up.' };
+  if (mailConfigured())
+    try {
+      reminders = await sendCheckoutReminders({
+        store,
+        appUrl: config.appUrl,
+        log: request.log,
+        remind: sendCheckoutReminder,
+      });
+      request.log.info(reminders, 'Checkout reminders sent');
+    } catch (error) {
+      request.log.error(error, 'Checkout reminders failed');
+      reminders = { failed: true };
+    }
   try {
-    const result = await sendCheckoutReminders({
+    const expiry = await expireStaleOrders({
       store,
-      appUrl: config.appUrl,
       log: request.log,
-      remind: sendCheckoutReminder,
+      check: checkOrder,
+      apply: (capture) => applyCapture(capture, request.log),
     });
-    request.log.info(result, 'Checkout reminders sent');
-    return result;
+    request.log.info(expiry, 'Unpaid orders settled');
+    return { reminders, expiry };
   } catch (error) {
-    request.log.error(error, 'Checkout reminders failed');
-    return apiError(reply, 500, 'Checkout reminders failed.');
+    request.log.error(error, 'Expiring unpaid orders failed');
+    return apiError(reply, 500, 'Expiring unpaid orders failed.');
   }
+});
+
+/** Asks the order's provider whether it was paid after all. */
+async function checkOrder(order: Payment): Promise<OrderCheck> {
+  try {
+    if (providerOf(order) === 'razorpay') {
+      if (!config.razorpay)
+        return { state: 'unknown', error: 'Razorpay keys are not set' };
+      const state = await orderCapture(order.orderId);
+      if (!state.paid) return { state: 'unpaid', detail: 'Razorpay: not paid' };
+      return state.capture
+        ? { state: 'paid', capture: state.capture }
+        : { state: 'paid_unreadable' };
+    }
+    if (!config.paypal)
+      return { state: 'unknown', error: 'PayPal keys are not set' };
+    const state = await getPayPalOrder(order.orderId);
+    // An approved but uncaptured order is left uncaptured: the buyer may have
+    // paid another way since, and capturing it now could charge them twice.
+    if (state.status !== 'COMPLETED')
+      return { state: 'unpaid', detail: `PayPal: ${state.status}` };
+    const found = captureOfOrder(state, 'reconcile');
+    return found?.status === 'COMPLETED'
+      ? { state: 'paid', capture: found.capture }
+      : {
+          state: 'unpaid',
+          detail: `PayPal capture ${found?.status ?? 'missing'}`,
+        };
+  } catch (error) {
+    // PayPal forgets abandoned orders after a while; that means unpaid.
+    if (error instanceof PayPalError && error.status === 404)
+      return { state: 'unpaid', detail: 'PayPal: order no longer exists' };
+    return { state: 'unknown', error };
+  }
+}
+
+// The checkout window runs in the buyer's browser, so its outcomes (closed,
+// declined, an error in PayPal's buttons) only reach us if the page says so.
+// Each is logged on the order's trail and kept as the order's last event.
+const CLIENT_EVENTS = {
+  opened: 'client.opened',
+  dismissed: 'client.dismissed',
+  failed: 'client.failed',
+  error: 'client.error',
+  pending: 'client.pending',
+} as const;
+
+app.post('/api/billing/checkout-event', async (request, reply) => {
+  const user = await currentUser(request, reply);
+  if (!user) return;
+  if (user.guest) return { ok: true };
+  if (!(await allow(reply, `checkout-event:${user.id}`, 60, 3600))) return;
+  const text = (max: number) => z.string().trim().max(max).optional();
+  const body = z
+    .object({
+      order_id: z.string().min(1).max(60),
+      event: z.enum(['opened', 'dismissed', 'failed', 'error', 'pending']),
+      code: text(80),
+      reason: text(300),
+      step: text(80),
+      source: text(80),
+      payment_id: text(60),
+    })
+    .safeParse(request.body);
+  if (!body.success) return apiError(reply, 400, 'Invalid checkout event.');
+  const { order_id: orderId, event, ...detail } = body.data;
+  const step = CLIENT_EVENTS[event];
+  const payment = await store.getPayment(orderId);
+  const context = {
+    orderId,
+    userId: user.id,
+    provider: payment ? providerOf(payment) : 'unknown',
+    ...detail,
+  };
+  if (!payment || payment.userId !== user.id) {
+    trail(
+      request.log,
+      'client.unknown_order',
+      { ...context, reported: step },
+      'Checkout event for an order this account doesn’t own',
+      'warn',
+    );
+    return { ok: true };
+  }
+  const failure =
+    event === 'failed' || event === 'error'
+      ? [
+          detail.reason,
+          detail.code && `code ${detail.code}`,
+          detail.step && `at ${detail.step}`,
+          detail.source && `source ${detail.source}`,
+        ]
+          .filter(Boolean)
+          .join(', ') || 'No reason given'
+      : undefined;
+  trail(
+    request.log,
+    step,
+    context,
+    {
+      opened: 'Checkout window opened',
+      dismissed: 'Buyer closed the checkout without paying',
+      failed: 'Payment attempt failed in the checkout window',
+      error: 'Checkout window reported an error',
+      pending: 'Checkout reports the payment as pending',
+    }[event],
+    event === 'failed' || event === 'error' ? 'warn' : 'info',
+  );
+  // A paid order keeps "paid" as its story; later noise doesn't overwrite it.
+  if (payment.status === 'created')
+    await store.noteOrderEvent(orderId, step, failure);
+  return { ok: true };
 });
 
 // ---- Library ----

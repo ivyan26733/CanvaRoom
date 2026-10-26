@@ -1509,3 +1509,21 @@ button.admin-kpi:hover {
     animation: none;
   }
 }
+
+/* Order details in a user's payment history. */
+.admin-history li span.admin-order-id {
+  font: 10px var(--mono);
+  user-select: all;
+}
+.admin-history li span.admin-order-why {
+  max-width: 300px;
+  color: var(--ink-2);
+  line-height: 1.4;
+}
+.admin-pay-status.is-paid {
+  color: var(--green) !important;
+}
+.admin-pay-status.is-expired,
+.admin-pay-status.is-refunded {
+  color: var(--danger) !important;
+}

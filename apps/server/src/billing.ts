@@ -105,6 +105,13 @@ const paymentEntity = z.object({
   amount: z.number().int().positive(),
   currency: z.string().regex(/^[A-Z]{3}$/),
   status: z.string(),
+  // Set on failed payments: what went wrong, where, and whose side it was.
+  method: z.string().nullish(),
+  error_code: z.string().nullish(),
+  error_description: z.string().nullish(),
+  error_reason: z.string().nullish(),
+  error_source: z.string().nullish(),
+  error_step: z.string().nullish(),
 });
 
 const refundEntity = z.object({
@@ -137,6 +144,32 @@ export function webhookRefund(body: unknown) {
     paymentId: refund.payment_id,
     amount: refund.amount,
     currency: refund.currency,
+  };
+}
+
+/**
+ * The failed attempt a `payment.failed` webhook reports: which order, and
+ * Razorpay's account of why (e.g. "bank declined at payment_authorization",
+ * source "customer"). Other events give undefined.
+ */
+export function webhookFailure(body: unknown) {
+  const parsed = webhookSchema.safeParse(body);
+  if (!parsed.success || parsed.data.event !== 'payment.failed') return;
+  const payment = parsed.data.payload?.payment?.entity;
+  if (!payment) return;
+  const reason = [
+    payment.error_description ?? payment.error_reason ?? 'Payment failed',
+    payment.error_code ? `code ${payment.error_code}` : '',
+    payment.error_step ? `at ${payment.error_step}` : '',
+    payment.error_source ? `source ${payment.error_source}` : '',
+    payment.method ? `method ${payment.method}` : '',
+  ]
+    .filter(Boolean)
+    .join(', ');
+  return {
+    orderId: payment.order_id,
+    paymentId: payment.id,
+    reason: reason.slice(0, 500),
   };
 }
 

@@ -122,6 +122,11 @@ type PaymentRow = {
   amount: number;
   currency: string;
   status: Payment['status'];
+  // Missing until the database is migrated for order expiry.
+  last_event?: string | null;
+  last_event_at?: Date | null;
+  failure_reason?: string | null;
+  expired_at?: Date | null;
   // Missing until the database is migrated for the 3/6/12-month plans.
   plan?: string | null;
   months?: number | null;
@@ -202,6 +207,10 @@ const toPayment = (row: PaymentRow): Payment => ({
     ? { provider: row.provider }
     : {}),
   ...(row.refunded_at ? { refundedAt: iso(row.refunded_at) } : {}),
+  ...(row.last_event ? { lastEvent: row.last_event } : {}),
+  ...(row.last_event_at ? { lastEventAt: iso(row.last_event_at) } : {}),
+  ...(row.failure_reason ? { failureReason: row.failure_reason } : {}),
+  ...(row.expired_at ? { expiredAt: iso(row.expired_at) } : {}),
 });
 
 const toBankTransferRequest = (row: BankTransferRow): BankTransferRequest => ({
@@ -1110,6 +1119,56 @@ export class PostgresStore implements Store {
     );
   }
 
+  async noteOrderEvent(orderId: string, event: string, failureReason?: string) {
+    try {
+      await this.pool.query(
+        `UPDATE payments
+            SET last_event = $2, last_event_at = now(),
+                failure_reason = coalesce($3, failure_reason)
+          WHERE order_id = $1`,
+        [orderId, event, failureReason?.slice(0, 500) ?? null],
+      );
+    } catch (error) {
+      // Before the migration there's nowhere to keep it; the log line has it.
+      if (!missingColumn(error)) throw error;
+    }
+  }
+
+  async listStaleOrders(olderThanHours: number, limit: number) {
+    const { rows } = await this.pool.query<PaymentRow>(
+      `SELECT * FROM payments
+        WHERE status = 'created'
+          AND created_at <= now() - make_interval(hours => $1)
+        ORDER BY created_at
+        LIMIT $2`,
+      [olderThanHours, limit],
+    );
+    return rows.map(toPayment);
+  }
+
+  async expireOrder(orderId: string, reason: string) {
+    const { rowCount } = await this.pool.query(
+      `UPDATE payments
+          SET status = 'expired', expired_at = now(), failure_reason = $2
+        WHERE order_id = $1 AND status = 'created'`,
+      [orderId, reason],
+    );
+    return rowCount === 1;
+  }
+
+  async purgeExpiredOrders(days: number) {
+    // An order with a recorded capture is a money record; it is never deleted.
+    const { rowCount } = await this.pool.query(
+      `DELETE FROM payments p
+        WHERE p.status = 'expired'
+          AND p.expired_at <= now() - make_interval(days => $1)
+          AND NOT EXISTS (
+            SELECT 1 FROM payment_captures c WHERE c.order_id = p.order_id)`,
+      [days],
+    );
+    return rowCount ?? 0;
+  }
+
   async recordAccountActivity(userId: string) {
     await this.pool.query(
       `UPDATE accounts SET last_seen_at = now()
@@ -1335,10 +1394,13 @@ export class PostgresStore implements Store {
                  'plan', recent.plan, 'months', recent.months, 'days', recent.days,
                  'amount', recent.amount, 'currency', recent.currency,
                  'createdAt', recent.created_at, 'paidAt', recent.paid_at,
-                 'refundedAt', recent.refunded_at
+                 'refundedAt', recent.refunded_at, 'orderId', recent.order_id,
+                 'lastEvent', recent.last_event, 'failureReason', recent.failure_reason,
+                 'expiredAt', recent.expired_at
                ) ORDER BY recent.created_at DESC), '[]'::jsonb)
                  FROM (SELECT provider, status, plan, months, days, amount, currency,
-                              created_at, paid_at, refunded_at
+                              created_at, paid_at, refunded_at, order_id,
+                              last_event, failure_reason, expired_at
                          FROM payments WHERE user_id = a.id
                         ORDER BY created_at DESC LIMIT 10) recent) AS payments,
               (SELECT COALESCE(jsonb_agg(jsonb_build_object(

@@ -15,6 +15,12 @@ type AdminPayment = {
   createdAt: string;
   paidAt: string | null;
   refundedAt: string | null;
+  orderId?: string;
+  /** The latest checkout step, like client.dismissed. */
+  lastEvent?: string | null;
+  /** Why it failed or expired, in words. */
+  failureReason?: string | null;
+  expiredAt?: string | null;
 };
 type AdminGrant = {
   id: string;
@@ -197,6 +203,15 @@ const paymentTerm = (
     )[payment.plan ?? ''] ?? 'Legacy term'
   );
 };
+/** "Paid", "Refunded", "Expired" or "Unpaid", for a payment row. */
+const paymentStatus = (payment: Pick<AdminPayment, 'status' | 'refundedAt'>) =>
+  payment.refundedAt
+    ? 'Refunded'
+    : payment.status === 'paid'
+      ? 'Paid'
+      : payment.status === 'expired'
+        ? 'Expired'
+        : 'Unpaid';
 const initials = (name: string) =>
   name
     .split(/\s+/)
@@ -698,11 +713,7 @@ export default function AdminClient() {
                               </strong>
                               <span className="admin-secondary">
                                 {methodLabel(recent.provider)} ·{' '}
-                                {recent.refundedAt
-                                  ? 'Refunded'
-                                  : recent.status === 'paid'
-                                    ? 'Paid'
-                                    : 'Unpaid'}
+                                {paymentStatus(recent)}
                               </span>
                             </>
                           ) : user.grants[0] ? (
@@ -1755,11 +1766,28 @@ function UserDrawer({
                       {paymentTerm(payment)} · {methodLabel(payment.provider)}
                     </strong>
                     <span>{dateTime(payment.paidAt ?? payment.createdAt)}</span>
+                    {payment.orderId && (
+                      <span
+                        className="admin-order-id"
+                        title="Search this in the Vercel logs to see every step"
+                      >
+                        {payment.orderId}
+                      </span>
+                    )}
+                    {payment.status !== 'paid' &&
+                      (payment.failureReason || payment.lastEvent) && (
+                        <span className="admin-order-why">
+                          {payment.failureReason ??
+                            `Last step: ${payment.lastEvent}`}
+                        </span>
+                      )}
                   </div>
                   <div>
                     <strong>{money(payment.amount, payment.currency)}</strong>
-                    <span>
-                      {payment.refundedAt ? 'Refunded' : payment.status}
+                    <span
+                      className={`admin-pay-status is-${payment.refundedAt ? 'refunded' : payment.status}`}
+                    >
+                      {paymentStatus(payment)}
                     </span>
                   </div>
                 </li>

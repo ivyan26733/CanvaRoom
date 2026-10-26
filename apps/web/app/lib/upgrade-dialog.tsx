@@ -76,13 +76,45 @@ type RazorpaySuccess = {
   razorpay_signature: string;
 };
 
+type RazorpayFailure = {
+  error?: {
+    code?: string;
+    description?: string;
+    reason?: string;
+    source?: string;
+    step?: string;
+    metadata?: { payment_id?: string; order_id?: string };
+  };
+};
+
 type RazorpayCheckout = {
   open(): void;
   on(
     event: 'payment.failed',
-    handler: (response: { error?: { description?: string } }) => void,
+    handler: (response: RazorpayFailure) => void,
   ): void;
 };
+
+/**
+ * Tells the server what happened in the checkout window (it can't see it):
+ * opened, closed, declined. Only for the order's log; never blocks the page.
+ */
+function reportCheckout(
+  orderId: string,
+  event: 'opened' | 'dismissed' | 'failed' | 'error' | 'pending',
+  detail: Record<string, string | undefined> = {},
+) {
+  const clean = Object.fromEntries(
+    Object.entries(detail)
+      .filter(([, value]) => typeof value === 'string' && value)
+      .map(([key, value]) => [key, (value as string).slice(0, 280)]),
+  );
+  void send('/billing/checkout-event', 'POST', {
+    order_id: orderId,
+    event,
+    ...clean,
+  }).catch(() => {});
+}
 
 type PayPalButtons = {
   render(container: HTMLElement): Promise<void>;
@@ -340,7 +372,8 @@ export default function UpgradeDialog({
         theme: { color: '#ff4f1f' },
         handler: (response: RazorpaySuccess) => void verify(response),
         modal: {
-          ondismiss: () =>
+          ondismiss: () => {
+            reportCheckout(order.order_id, 'dismissed');
             setPhase((current) =>
               current.step === 'paying'
                 ? {
@@ -349,17 +382,27 @@ export default function UpgradeDialog({
                     message: 'Payment cancelled. You haven’t been charged.',
                   }
                 : current,
-            ),
+            );
+          },
         },
       });
-      checkout.on('payment.failed', (response) =>
+      checkout.on('payment.failed', (response) => {
+        const failure = response.error;
+        reportCheckout(order.order_id, 'failed', {
+          code: failure?.code,
+          reason: failure?.description ?? failure?.reason,
+          step: failure?.step,
+          source: failure?.source,
+          payment_id: failure?.metadata?.payment_id,
+        });
         setPhase({
           step: 'idle',
           tone: 'error',
-          message: `Payment failed: ${response.error?.description ?? 'please try again or use another method.'}`,
-        }),
-      );
+          message: `Payment failed: ${failure?.description ?? 'please try again or use another method.'}`,
+        });
+      });
       checkout.open();
+      reportCheckout(order.order_id, 'opened');
     } catch (error) {
       setPhase({
         step: 'idle',
@@ -636,7 +679,8 @@ export default function UpgradeDialog({
                 within 3–6 hours of your payment. Access starts after we verify
                 the funds.
               </p>
-              {bankTransfer.previewOnly ? null : bankTransfer.request.status === 'instructions' ? (
+              {bankTransfer.previewOnly ? null : bankTransfer.request.status ===
+                'instructions' ? (
                 <div className="upgrade-bank-submit">
                   <label>
                     Sender’s bank reference <span>(optional)</span>
@@ -753,6 +797,8 @@ function PayPalCheckout({
     // Set when the server found an earlier payment, so PayPal's window
     // closing with an error isn't reported as one.
     let settled = false;
+    // The order the buttons are working on, for reporting what happens to it.
+    let orderId = '';
     loadPayPal(clientId)
       .then(() => {
         if (cancelled || !container.current || !window.paypal) return;
@@ -775,6 +821,8 @@ function PayPalCheckout({
               latest.current.onPaid(order.paidUntil);
               throw new Error('Already paid');
             }
+            orderId = order.order_id;
+            reportCheckout(order.order_id, 'opened');
             return order.order_id;
           },
           onApprove: async (
@@ -802,13 +850,21 @@ function PayPalCheckout({
               );
             }
           },
-          onCancel: () =>
+          onCancel: (data?: { orderID?: string }) => {
+            const cancelled = data?.orderID ?? orderId;
+            if (cancelled) reportCheckout(cancelled, 'dismissed');
             latest.current.onStop(
               'Payment cancelled. You haven’t been charged.',
               'info',
-            ),
+            );
+          },
           onError: (error: unknown) => {
             if (settled) return;
+            if (orderId)
+              reportCheckout(orderId, 'error', {
+                reason: error instanceof Error ? error.message : String(error),
+                source: 'paypal-buttons',
+              });
             latest.current.onStop(
               error instanceof ApiError
                 ? error.message
