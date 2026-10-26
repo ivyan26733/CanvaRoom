@@ -3,6 +3,7 @@ import { SpeedInsights } from '@vercel/speed-insights/next';
 import { Suspense } from 'react';
 import { Clarity } from './components/clarity';
 import { FeedbackPrompt } from './components/feedback-prompt';
+import { SiteNotices } from './components/site-notices';
 import type { Metadata, Viewport } from 'next';
 import { Bricolage_Grotesque, Geist, Geist_Mono } from 'next/font/google';
 import { FeedbackProvider } from './components/feedback';
@@ -81,6 +82,7 @@ export default function RootLayout({
       </head>
       <body>
         <AuthProvider>
+          <SiteNotices />
           <BillingProvider>{children}</BillingProvider>
           <FeedbackProvider />
           <Suspense>

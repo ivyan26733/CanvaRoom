@@ -1,0 +1,98 @@
+.status-main {
+  width: min(100% - 32px, 820px);
+  margin: 0 auto;
+  padding: 56px 0 80px;
+}
+.status-intro h1 {
+  margin-top: 10px;
+  font: 700 clamp(30px, 5vw, 44px) / 1.1 var(--display);
+  letter-spacing: -0.04em;
+}
+.status-lede {
+  max-width: 620px;
+  margin-top: 14px;
+  color: var(--ink-2);
+  font-size: 16px;
+  line-height: 1.6;
+}
+.status-section {
+  margin-top: 40px;
+}
+.status-section h2 {
+  margin-bottom: 14px;
+  font: 650 19px var(--display);
+  letter-spacing: -0.02em;
+}
+.status-ok {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 18px 20px;
+  border: 1px solid color-mix(in srgb, var(--green) 35%, transparent);
+  border-radius: var(--radius-lg);
+  background: var(--green-soft);
+}
+.status-ok > span {
+  font-size: 26px;
+}
+.status-ok p,
+.status-empty {
+  margin-top: 2px;
+  color: var(--ink-2);
+  font-size: 14px;
+}
+.status-list {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.status-card {
+  display: grid;
+  gap: 6px;
+  padding: 18px 20px;
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--blue);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.status-card.is-outage {
+  border-left-color: var(--danger);
+}
+.status-card.is-maintenance {
+  border-left-color: var(--amber);
+}
+.status-card.is-update {
+  border-left-color: var(--green);
+}
+.status-list.is-past .status-card {
+  opacity: 0.75;
+}
+.status-badge {
+  justify-self: start;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--bg-2);
+  color: var(--ink-2);
+  font-size: 12px;
+  font-weight: 650;
+}
+.status-card h3 {
+  font: 650 17px var(--display);
+}
+.status-when {
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 600;
+}
+.status-message {
+  color: var(--ink-2);
+  font-size: 14.5px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+.status-posted {
+  color: var(--ink-3);
+  font-size: 12px;
+}

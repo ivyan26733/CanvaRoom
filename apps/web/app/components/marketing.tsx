@@ -139,6 +139,9 @@ export function MarketingFooter() {
             <Link href="/contact">Contact us</Link>
           </li>
           <li>
+            <Link href="/status">Status</Link>
+          </li>
+          <li>
             <Link href="/contact#feedback">Send feedback</Link>
           </li>
         </ul>

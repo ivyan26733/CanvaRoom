@@ -804,6 +804,123 @@ app.get('/api/geo', async (request, reply) => {
   };
 });
 
+// ---- Notices ----
+
+// What everyone should know right now: maintenance, downtime, repairs. Read
+// by every page (signed in or not) every few minutes, so keep it cheap.
+app.get('/api/notices', async (request, reply) => {
+  const history = (request.query as { history?: string }).history === '1';
+  // Browsers always ask again, so a notice shows (or goes) as soon as it is
+  // published; Vercel's edge keeps a copy for a few seconds to absorb load.
+  reply.header('Cache-Control', 'public, max-age=0, s-maxage=15');
+  if (!adminStore) return { notices: [] };
+  return {
+    notices: history
+      ? await adminStore.listRecentNotices(30)
+      : await adminStore.listLiveNotices(),
+  };
+});
+
+const isoDate = z.iso
+  .datetime({ offset: true })
+  .nullable()
+  .optional()
+  .transform((value) => value ?? null);
+const noticeSchema = z
+  .object({
+    kind: z.enum(['maintenance', 'outage', 'info', 'update']),
+    title: z.string().trim().min(3, 'Give the notice a title.').max(120),
+    message: z.string().trim().max(1000).default(''),
+    startsAt: isoDate,
+    endsAt: isoDate,
+    showFrom: isoDate,
+    showUntil: isoDate,
+    published: z.boolean().default(false),
+  })
+  .refine(
+    (value) =>
+      !value.startsAt ||
+      !value.endsAt ||
+      Date.parse(value.endsAt) > Date.parse(value.startsAt),
+    { message: 'The end must be after the start.' },
+  )
+  .refine(
+    (value) =>
+      !value.showUntil ||
+      Date.parse(value.showUntil) >
+        Date.parse(value.showFrom ?? new Date().toISOString()),
+    { message: 'Stop showing it after it starts showing.' },
+  );
+
+app.get('/api/admin/notices', async (request, reply) => {
+  const username = await requireAdmin(request, reply);
+  if (!username || !adminStore) return;
+  try {
+    return { notices: await adminStore.adminListNotices() };
+  } catch (error) {
+    if ((error as { code?: string }).code === '42P01')
+      return apiError(
+        reply,
+        503,
+        'Notices need the database migration (npm run db:migrate).',
+      );
+    throw error;
+  }
+});
+
+async function saveNotice(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  id: string,
+) {
+  const username = await requireAdmin(request, reply);
+  if (!username || !adminStore) return;
+  const body = noticeSchema.safeParse(request.body);
+  if (!body.success) return apiError(reply, 400, firstIssue(body.error));
+  const value = body.data;
+  // An event with an end stops showing two hours after it, unless told.
+  const showUntil =
+    value.showUntil ??
+    (value.endsAt
+      ? new Date(Date.parse(value.endsAt) + 2 * 3_600_000).toISOString()
+      : null);
+  const notice = await adminStore.saveNotice({
+    id,
+    kind: value.kind,
+    title: value.title,
+    message: value.message,
+    startsAt: value.startsAt,
+    endsAt: value.endsAt,
+    showFrom: value.showFrom ?? new Date().toISOString(),
+    showUntil,
+    published: value.published,
+    createdBy: username,
+  });
+  await audit(username, 'save_notice', undefined, {
+    id,
+    title: notice.title,
+    published: notice.published,
+  });
+  return { notice };
+}
+
+app.post('/api/admin/notices', (request, reply) =>
+  saveNotice(request, reply, randomUUID()),
+);
+app.put('/api/admin/notices/:id', (request, reply) =>
+  saveNotice(request, reply, (request.params as { id: string }).id),
+);
+
+app.delete('/api/admin/notices/:id', async (request, reply) => {
+  const username = await requireAdmin(request, reply);
+  if (!username || !adminStore) return;
+  const { id } = request.params as { id: string };
+  if (!(await adminStore.deleteNotice(id)))
+    return apiError(reply, 404, 'That notice no longer exists.');
+  await audit(username, 'delete_notice', undefined, { id });
+  return { ok: true };
+});
+
 // ---- Accounts ----
 
 app.get('/api/auth/me', async (request) => ({
