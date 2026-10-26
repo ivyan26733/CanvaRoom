@@ -33,6 +33,7 @@ import {
   defaultFontSize,
   FONT_FAMILY,
   encloses,
+  freeSpot,
   isBoxShape,
   layoutText,
   LINE_HEIGHT,
@@ -227,8 +228,18 @@ function colorFor(userId: string) {
   return PEER_COLORS[Math.abs(hash) % PEER_COLORS.length]!;
 }
 
+/** The sizes the text-size buttons step through, in board units. */
+const TEXT_SIZES = [
+  8, 10, 12, 14, 16, 18, 20, 24, 28, 32, 36, 40, 48, 56, 64, 72, 80, 96, 112,
+  128, 144, 160,
+];
+
 function diffFields(target: BoardObject, current: BoardObject) {
   const fields: Partial<BoardObject> = {};
+  // Flags missing from the target mean off; send that explicitly, since a
+  // missing field would leave the current value in place.
+  for (const flag of ['flipX', 'flipY'] as const)
+    if (current[flag] && !target[flag]) fields[flag] = false;
   for (const [key, value] of Object.entries(target)) {
     if (key === 'id') continue;
     if (
@@ -1051,6 +1062,44 @@ export default function BoardPage() {
     );
   }
 
+  /**
+   * Mirrors the selection across the centre of its bounds: left-to-right
+   * ('x') or top-to-bottom ('y'). Strokes and lines are mirrored point by
+   * point; shapes and images flip in place; text and notes keep their
+   * reading direction and only swap sides.
+   */
+  function flipSelection(axis: 'x' | 'y') {
+    if (readonly || !selectedObjects.length) return;
+    const box = unionBounds(selectedObjects);
+    if (!box) return;
+    const horizontal = axis === 'x';
+    const mid2 = horizontal ? box.x * 2 + box.width : box.y * 2 + box.height;
+    perform(
+      selectedObjects.map((item) => {
+        const fields: Partial<BoardObject> = {};
+        const at = horizontal ? item.x : item.y;
+        if (item.points?.length) {
+          // Absolute p becomes mid2 - p; relative to an unchanged origin.
+          fields.points = item.points.map((value, index) =>
+            index % 2 === (horizontal ? 0 : 1)
+              ? round(mid2 - 2 * at - value)
+              : value,
+          );
+        } else {
+          const bounds = objectBounds(item);
+          const size = horizontal ? bounds.width : bounds.height;
+          fields[horizontal ? 'x' : 'y'] = round(mid2 - at - size);
+          if (item.kind !== 'text' && item.kind !== 'sticky')
+            fields[horizontal ? 'flipX' : 'flipY'] = !(horizontal
+              ? item.flipX
+              : item.flipY);
+        }
+        if (item.rotation) fields.rotation = -item.rotation;
+        return { type: 'update' as const, objectId: item.id, fields };
+      }),
+    );
+  }
+
   /** Live preview for sliders: peers see it move, history records one step. */
   function previewProperty(item: BoardObject, fields: Partial<BoardObject>) {
     if (!propertyOrigin.current) propertyOrigin.current = item;
@@ -1161,10 +1210,34 @@ export default function BoardPage() {
         { type: 'create', objectId: object.id, object: { ...object, text } },
       ]);
     else {
-      perform([{ type: 'update', objectId: object.id, fields: { text } }]);
+      perform([
+        {
+          type: 'update',
+          objectId: object.id,
+          fields: {
+            text,
+            ...(object.fontSize ? { fontSize: object.fontSize } : {}),
+          },
+        },
+      ]);
       clientRef.current?.liveRemove([object.id]);
     }
     setSelected([object.id]);
+  }
+
+  /** Steps the text being typed up or down the size ladder. */
+  function stepEditorFont(direction: 1 | -1) {
+    const editor = editorRef.current;
+    if (!editor) return;
+    const size = defaultFontSize(editor.object);
+    const fontSize =
+      direction > 0
+        ? (TEXT_SIZES.find((step) => step > size + 0.5) ?? TEXT_SIZES.at(-1)!)
+        : ([...TEXT_SIZES].reverse().find((step) => step < size - 0.5) ??
+          TEXT_SIZES[0]!);
+    const object = { ...editor.object, fontSize };
+    setTextEditor({ ...editor, object });
+    clientRef.current?.liveUpsert([object]);
   }
 
   // ---- Pointer gestures ----
@@ -1986,6 +2059,14 @@ export default function BoardPage() {
     } else if (key === 'escape') {
       cancelGesture();
       setSelected([]);
+    } else if (
+      event.shiftKey &&
+      !modifier &&
+      (key === 'h' || key === 'v') &&
+      selectedObjects.length
+    ) {
+      event.preventDefault();
+      flipSelection(key === 'h' ? 'x' : 'y');
     } else if (!modifier && !event.altKey) {
       if (key === 'm' && call.joined) {
         callRef.current?.setMuted(!call.muted);
@@ -2198,9 +2279,26 @@ export default function BoardPage() {
       x: current.x + size.width / current.zoom / 2,
       y: current.y + size.height / current.zoom / 2,
     };
+    // Dropped items go where they were dropped. Items added from the drawer
+    // take the nearest free spot, so a second table doesn't land on the first.
+    const corner = at
+      ? { x: centre.x - width / 2, y: centre.y - height / 2 }
+      : freeSpot(
+          pageObjectsRef.current.map(objectBounds),
+          width,
+          height,
+          centre,
+          24 / current.zoom,
+          {
+            x: current.x,
+            y: current.y,
+            width: size.width / current.zoom,
+            height: size.height / current.zoom,
+          },
+        );
     const object = newObject(
       'image',
-      { x: centre.x - width / 2, y: centre.y - height / 2 },
+      { x: round(corner.x), y: round(corner.y) },
       { width, height, src: itemSrc(request.pack, request.item) },
     );
     perform([{ type: 'create', objectId: object.id, object }]);
@@ -2480,6 +2578,39 @@ export default function BoardPage() {
         </svg>
 
         {editorObject && (
+          <div
+            className="text-size-bar"
+            role="toolbar"
+            aria-label="Text size"
+            style={{
+              left: Math.max(8, (editorObject.x - view.x) * view.zoom),
+              top: Math.max(8, (editorObject.y - view.y) * view.zoom - 46),
+            }}
+            // Clicks here must not take focus from the text being typed.
+            onPointerDown={(event) => event.preventDefault()}
+          >
+            <button
+              type="button"
+              aria-label="Smaller text"
+              title="Smaller · Ctrl/⌘ Shift <"
+              disabled={editorFont <= TEXT_SIZES[0]!}
+              onClick={() => stepEditorFont(-1)}
+            >
+              A<small>−</small>
+            </button>
+            <span aria-live="polite">{Math.round(editorFont)}</span>
+            <button
+              type="button"
+              aria-label="Bigger text"
+              title="Bigger · Ctrl/⌘ Shift >"
+              disabled={editorFont >= TEXT_SIZES.at(-1)!}
+              onClick={() => stepEditorFont(1)}
+            >
+              A<small>+</small>
+            </button>
+          </div>
+        )}
+        {editorObject && (
           <textarea
             className={`canvas-text-editor ${editorObject.kind === 'sticky' ? 'sticky-editor' : ''}`}
             aria-label={
@@ -2529,6 +2660,12 @@ export default function BoardPage() {
             }}
             onBlur={finishText}
             onKeyDown={(event) => {
+              const modifier = event.metaKey || event.ctrlKey;
+              if (modifier && event.shiftKey && /^[>.<,]$/.test(event.key)) {
+                event.preventDefault();
+                stepEditorFont(event.key === '>' || event.key === '.' ? 1 : -1);
+                return;
+              }
               if (
                 event.key === 'Escape' ||
                 (event.key === 'Enter' && (event.metaKey || event.ctrlKey))
@@ -3374,6 +3511,28 @@ export default function BoardPage() {
             />
           )}
 
+          {selectedObjects.length > 0 && (
+            <div className="inspector-section">
+              <span className="inspector-label">Flip</span>
+              <div className="segmented wide">
+                <button
+                  disabled={readonly}
+                  title="Flip horizontal · Shift H"
+                  onClick={() => flipSelection('x')}
+                >
+                  ↔ Horizontal
+                </button>
+                <button
+                  disabled={readonly}
+                  title="Flip vertical · Shift V"
+                  onClick={() => flipSelection('y')}
+                >
+                  ↕ Vertical
+                </button>
+              </div>
+            </div>
+          )}
+
           {pages.length > 1 && !readonly && (
             <label className="inspector-section">
               <span className="inspector-label">Move to page</span>
@@ -3630,6 +3789,8 @@ export default function BoardPage() {
               ['Copy / paste / duplicate', 'Ctrl/⌘ C · V · D'],
               ['Delete selection', 'Delete'],
               ['Nudge selection', 'Arrows (Shift ×10)'],
+              ['Flip horizontal / vertical', 'Shift H · Shift V'],
+              ['Bigger / smaller text while typing', 'Ctrl/⌘ Shift > · <'],
               ['Mute in a call', 'M'],
               ['Finish text', 'Esc · Ctrl/⌘ Enter'],
             ].map(([label, keys]) => (

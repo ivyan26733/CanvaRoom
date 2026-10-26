@@ -4817,3 +4817,45 @@ button.plan-chip.is-pro {
     font-size: max(16px, 1em);
   }
 }
+
+/* Text size buttons that float above the text being typed. */
+.text-size-bar {
+  position: absolute;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: var(--shadow-2);
+  user-select: none;
+}
+.text-size-bar button {
+  display: inline-flex;
+  min-width: 32px;
+  height: 30px;
+  align-items: baseline;
+  justify-content: center;
+  padding: 5px 6px 0;
+  border-radius: 7px;
+  color: var(--ink);
+  font: 700 15px/1 var(--ui);
+}
+.text-size-bar button small {
+  font-size: 11px;
+}
+.text-size-bar button:hover:not(:disabled) {
+  background: var(--bg-2);
+}
+.text-size-bar button:disabled {
+  opacity: 0.35;
+}
+.text-size-bar span {
+  min-width: 26px;
+  color: var(--ink-2);
+  font: 600 12px var(--ui);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}

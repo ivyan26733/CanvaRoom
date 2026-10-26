@@ -348,3 +348,57 @@ export function pageOf(object: { page?: string }, pages: readonly Page[]) {
     ? object.page
     : homePage(pages);
 }
+
+/**
+ * Where to put a new item of `width` × `height` near `centre` without covering
+ * anything in `taken`, keeping `gap` clear around it. Tries the centre first,
+ * then rings of nearby spots, nearest first, preferring spots wholly inside
+ * `within` (the visible area); if all are taken it goes just right of
+ * everything. Returns the item's top-left corner.
+ */
+export function freeSpot(
+  taken: readonly Bounds[],
+  width: number,
+  height: number,
+  centre: Point,
+  gap: number,
+  within?: Bounds,
+  rings = 6,
+): Point {
+  const clear = (x: number, y: number) =>
+    taken.every(
+      (box) =>
+        x + width + gap <= box.x ||
+        box.x + box.width + gap <= x ||
+        y + height + gap <= box.y ||
+        box.y + box.height + gap <= y,
+    );
+  const stepX = (width + gap) / 2;
+  const stepY = (height + gap) / 2;
+  const start = { x: centre.x - width / 2, y: centre.y - height / 2 };
+  const inside = (x: number, y: number) =>
+    !within ||
+    (x >= within.x &&
+      y >= within.y &&
+      x + width <= within.x + within.width &&
+      y + height <= within.y + within.height);
+  const spots: { x: number; y: number; distance: number }[] = [];
+  for (let ring = 0; ring <= rings * 2; ring++)
+    for (let dx = -ring; dx <= ring; dx++)
+      for (let dy = -ring; dy <= ring; dy++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== ring) continue;
+        const x = start.x + dx * stepX;
+        const y = start.y + dy * stepY;
+        // Off-screen spots rank after every on-screen one.
+        spots.push({
+          x,
+          y,
+          distance:
+            Math.hypot(x - start.x, y - start.y) + (inside(x, y) ? 0 : 1e9),
+        });
+      }
+  spots.sort((a, b) => a.distance - b.distance);
+  for (const spot of spots) if (clear(spot.x, spot.y)) return spot;
+  const right = Math.max(...taken.map((box) => box.x + box.width));
+  return { x: right + gap * 2, y: start.y };
+}

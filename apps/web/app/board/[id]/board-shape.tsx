@@ -248,7 +248,15 @@ export const BoardShape = memo(function BoardShape({
         ? { pointerEvents: 'none' }
         : { 'data-oid': item.id, className: 'canvas-object' })}
     >
-      <Shape item={item} />
+      {item.flipX || item.flipY ? (
+        <g
+          transform={`translate(${item.flipX ? (item.width ?? 0) : 0} ${item.flipY ? (item.height ?? 0) : 0}) scale(${item.flipX ? -1 : 1} ${item.flipY ? -1 : 1})`}
+        >
+          <Shape item={item} />
+        </g>
+      ) : (
+        <Shape item={item} />
+      )}
       {bounds && (
         <g data-ui="selection">
           <rect
