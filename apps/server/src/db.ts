@@ -16,7 +16,13 @@ export function createPool(connectionString: string) {
   const pool = new pg.Pool({
     connectionString: strictSsl(connectionString),
     max: 8,
-    idleTimeoutMillis: 5_000,
+    // Opening a connection to Neon (Singapore) from the function (Mumbai)
+    // takes about 7 round trips, ~400 ms. Keeping idle connections for 30 s
+    // means a save after a pause in drawing reuses one; with 5 s, most saves
+    // after someone stopped to talk or think paid that extra ~400 ms.
+    // attachDatabasePool keeps the instance alive until they close, so this
+    // is a small extra in function time, not a leak.
+    idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 10_000,
   });
   // An idle client can be dropped by the server; the pool replaces it.

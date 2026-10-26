@@ -64,7 +64,11 @@ type Connection = {
   /** When the browser was last heard from: any message, or a pong. */
   heard: Heard;
   /** Saves run one after another so a connection's edits land in order. */
-  writes: Promise<unknown>;
+  /**
+   * Saves still running, by object. Edits to one object are saved in the
+   * order they were made; edits to different objects are saved side by side.
+   */
+  writes: Map<string, Promise<unknown>>;
   /** Presence and chat saves, kept apart so they never wait on edits. */
   chores: Promise<unknown>;
 };
@@ -617,19 +621,30 @@ function handleOperation(connection: Connection, op: Operation) {
     { t: 'op', op, by: connection.peerId },
     { exceptPeer: connection.peerId },
   );
-  connection.writes = connection.writes.then(async () => {
-    try {
-      await store.applyOperation(connection.boardId, op);
-      reply({ t: 'ack', id: op.id });
-    } catch (error) {
-      console.error('Failed to save operation', error);
-      reply({
-        t: 'nack',
-        id: op.id,
-        message: 'Could not save that change.',
-        retry: true,
-      });
-    }
+  // One object's edits wait for each other, so a create is never overtaken
+  // by its own update or delete. Different objects don't wait: a burst of
+  // edits (erasing or moving many things) used to queue one after another,
+  // and the last was confirmed seconds later.
+  const key = op.objectId;
+  const saved = (connection.writes.get(key) ?? Promise.resolve()).then(
+    async () => {
+      try {
+        await store.applyOperation(connection.boardId, op);
+        reply({ t: 'ack', id: op.id });
+      } catch (error) {
+        console.error('Failed to save operation', error);
+        reply({
+          t: 'nack',
+          id: op.id,
+          message: 'Could not save that change.',
+          retry: true,
+        });
+      }
+    },
+  );
+  connection.writes.set(key, saved);
+  void saved.then(() => {
+    if (connection.writes.get(key) === saved) connection.writes.delete(key);
   });
 }
 
@@ -793,7 +808,7 @@ async function authenticate(
     recording: hello.recording ?? false,
     presenceWrittenAt: Date.now(),
     heard,
-    writes: Promise.resolve(),
+    writes: new Map(),
     chores: Promise.resolve(),
   };
 }
