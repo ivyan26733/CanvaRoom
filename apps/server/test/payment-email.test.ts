@@ -186,7 +186,7 @@ describe('welcome email content', () => {
       assert.ok(part.includes('https://canva-room-blush.vercel.app/dashboard'));
       assert.ok(part.includes('/contact#feedback'));
     }
-    assert.equal(email.subject, 'Welcome to the CanvaRoom family');
+    assert.equal(email.subject, '🎉 Welcome to the CanvaRoom family');
   });
 });
 
