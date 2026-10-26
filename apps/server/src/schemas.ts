@@ -42,6 +42,9 @@ const fieldShape = {
   fontSize: z.number().min(8).max(160).optional(),
   opacity: z.number().min(0).max(1).optional(),
   fillColor: colorSchema.optional(),
+  // Mirrored across its vertical (flipX) or horizontal (flipY) centre line.
+  flipX: z.boolean().optional(),
+  flipY: z.boolean().optional(),
   page: z.string().min(1).max(40).optional(),
 };
 

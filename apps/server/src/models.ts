@@ -34,6 +34,9 @@ export type BoardObject = {
   fontSize?: number;
   opacity?: number;
   fillColor?: string;
+  /** Mirrored left-to-right (flipX) or top-to-bottom (flipY). */
+  flipX?: boolean;
+  flipY?: boolean;
   /** The page this object sits on. Missing or unknown pages mean the first page. */
   page?: string;
 };

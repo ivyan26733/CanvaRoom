@@ -131,3 +131,36 @@ describe('plans', () => {
       );
     });
 });
+
+describe('admin prices', () => {
+  test('repricing changes what is charged, and the savings shown', () => {
+    try {
+      plans.setPrices({ USD: [3000, 5400, 9000] });
+      const [quarterly, halfYear, yearly] = plans.plansFor('USD');
+      assert.equal(quarterly!.amount, 3000);
+      assert.equal(halfYear!.compareAt, 6000);
+      assert.equal(halfYear!.savePercent, 10);
+      assert.equal(yearly!.savePercent, 25);
+      assert.equal(plans.planById('yearly', 'USD')!.amount, 9000);
+      // Rupees weren't given, so they stay at the defaults.
+      assert.deepEqual(plans.currentPrices().INR, plans.DEFAULT_PRICES.INR);
+    } finally {
+      plans.setPrices({});
+    }
+    assert.deepEqual(plans.currentPrices().USD, plans.DEFAULT_PRICES.USD);
+  });
+
+  test('an order at the default price keeps its plan after repricing', () => {
+    try {
+      plans.setPrices({ USD: [3000, 5400, 9000] });
+      const plan = plans.planOfOrder({
+        amount: 4500,
+        currency: 'USD',
+        createdAt: new Date().toISOString(),
+      });
+      assert.equal(plan?.id, 'half-year');
+    } finally {
+      plans.setPrices({});
+    }
+  });
+});

@@ -35,8 +35,13 @@ import type {
 } from './models.js';
 import type { BoardListItem, LiveStore, Store } from './store.js';
 import {
+  CURRENCIES,
+  PLAN_IDS,
   PLANS_SINCE,
   planOfOrder,
+  type Currency,
+  type PlanId,
+  type PriceSet,
   termOfPlan,
   termOfOrder,
   type PremiumPlan,
@@ -146,6 +151,35 @@ type BankTransferRow = {
   reviewed_by: string | null;
   paid_until: Date | null;
 };
+
+export type AdminAccountFilter =
+  | 'all'
+  | 'online'
+  | 'premium'
+  | 'unverified'
+  | 'admins';
+
+/** Seconds since the last heartbeat that still count as online. */
+export const ONLINE_SECONDS = 150;
+
+const ACCOUNT_FILTERS: Record<AdminAccountFilter, string> = {
+  all: 'true',
+  online: `a.last_seen_at > now() - interval '${ONLINE_SECONDS} seconds'`,
+  premium: 'a.paid_until > now()',
+  unverified: 'NOT a.email_verified',
+  admins: "a.role = 'admin'",
+};
+
+/**
+ * Money received: paid card/UPI/PayPal orders and confirmed bank transfers,
+ * with `refunded` set where the money went back.
+ */
+const PAID_REVENUE = `
+  SELECT amount, currency, paid_at, refunded_at IS NOT NULL AS refunded
+    FROM payments WHERE status = 'paid' AND paid_at IS NOT NULL
+  UNION ALL
+  SELECT amount, currency, reviewed_at AS paid_at, false AS refunded
+    FROM bank_transfer_requests WHERE status = 'confirmed'`;
 
 /** Postgres's "undefined column": the database isn't migrated yet. */
 const missingColumn = (error: unknown) =>
@@ -1283,10 +1317,17 @@ export class PostgresStore implements Store {
     });
   }
 
-  async listAdminAccounts(search: string, limit: number, offset: number) {
+  async listAdminAccounts(
+    search: string,
+    limit: number,
+    offset: number,
+    filter: AdminAccountFilter = 'all',
+  ) {
     const { rows } = await this.pool.query(
       `SELECT a.id, a.email, a.role, a.email_verified, a.name, a.created_at,
               a.last_seen_at, a.trial_used_seconds, a.paid_until,
+              coalesce(a.last_seen_at > now() - interval '${ONLINE_SECONDS} seconds', false) AS online,
+              (SELECT count(*)::int FROM boards b WHERE b.owner_id = a.id) AS board_count,
               (SELECT count(*)::int FROM payments p WHERE p.user_id = a.id) AS payment_count,
               (SELECT COALESCE(jsonb_agg(jsonb_build_object(
                  'provider', recent.provider, 'status', recent.status,
@@ -1309,9 +1350,10 @@ export class PostgresStore implements Store {
                         ORDER BY created_at DESC LIMIT 10) g) AS grants,
               count(*) OVER()::int AS total
          FROM accounts a
-        WHERE $1 = '' OR a.id ILIKE '%' || $1 || '%'
-           OR a.email ILIKE '%' || $1 || '%' OR a.name ILIKE '%' || $1 || '%'
-        ORDER BY a.created_at DESC, a.id
+        WHERE ($1 = '' OR a.id ILIKE '%' || $1 || '%'
+           OR a.email ILIKE '%' || $1 || '%' OR a.name ILIKE '%' || $1 || '%')
+          AND ${ACCOUNT_FILTERS[filter]}
+        ORDER BY ${filter === 'online' ? 'a.last_seen_at DESC,' : ''} a.created_at DESC, a.id
         LIMIT $2 OFFSET $3`,
       [search, limit, offset],
     );
@@ -1325,6 +1367,8 @@ export class PostgresStore implements Store {
         name: row.name,
         createdAt: iso(row.created_at),
         lastSeenAt: row.last_seen_at ? iso(row.last_seen_at) : null,
+        online: row.online,
+        boardCount: row.board_count,
         trialUsedSeconds: row.trial_used_seconds ?? 1800,
         paidUntil: row.paid_until ? iso(row.paid_until) : null,
         paymentCount: row.payment_count,
@@ -1378,6 +1422,252 @@ export class PostgresStore implements Store {
       );
       return iso(paidUntil);
     });
+  }
+
+  async logAdminAction(action: {
+    id: string;
+    username: string;
+    action: string;
+    userId?: string;
+    detail?: Record<string, unknown>;
+  }) {
+    await this.pool.query(
+      `INSERT INTO admin_actions (id, admin_username, action, user_id, detail)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [
+        action.id,
+        action.username,
+        action.action,
+        action.userId ?? null,
+        JSON.stringify(action.detail ?? {}),
+      ],
+    );
+  }
+
+  async listAdminActions(limit: number) {
+    const { rows } = await this.pool.query<{
+      id: string;
+      admin_username: string;
+      action: string;
+      user_id: string | null;
+      detail: Record<string, unknown>;
+      created_at: Date;
+    }>(
+      `SELECT id, admin_username, action, user_id, detail, created_at
+         FROM admin_actions ORDER BY created_at DESC LIMIT $1`,
+      [limit],
+    );
+    return rows.map((row) => ({
+      id: row.id,
+      adminUsername: row.admin_username,
+      action: row.action,
+      userId: row.user_id,
+      detail: row.detail,
+      createdAt: iso(row.created_at),
+    }));
+  }
+
+  /** Admin-set prices, or nothing for a currency left at the defaults. */
+  async getPlanPrices() {
+    try {
+      const { rows } = await this.pool.query<{
+        currency: Currency;
+        plan: PlanId;
+        amount: number;
+      }>('SELECT currency, plan, amount FROM plan_prices');
+      const prices: Partial<Record<Currency, PriceSet>> = {};
+      for (const currency of CURRENCIES) {
+        const amounts = PLAN_IDS.map(
+          (id) =>
+            rows.find((row) => row.currency === currency && row.plan === id)
+              ?.amount,
+        );
+        if (amounts.every((amount) => amount !== undefined))
+          prices[currency] = amounts as unknown as PriceSet;
+      }
+      return prices;
+    } catch (error) {
+      // Not migrated yet: the prices in code apply.
+      if ((error as { code?: string }).code === '42P01') return {};
+      throw error;
+    }
+  }
+
+  async setPlanPrices(
+    currency: Currency,
+    prices: PriceSet | null,
+    username: string,
+  ) {
+    await this.transaction(async (client) => {
+      await client.query('DELETE FROM plan_prices WHERE currency = $1', [
+        currency,
+      ]);
+      if (prices)
+        for (const [index, id] of PLAN_IDS.entries())
+          await client.query(
+            `INSERT INTO plan_prices (currency, plan, amount, updated_by)
+             VALUES ($1, $2, $3, $4)`,
+            [currency, id, prices[index], username],
+          );
+    });
+  }
+
+  /** Counts and money for the console's overview. */
+  async adminOverview(onlineSeconds: number) {
+    const [accounts, revenue, daily, plans] = await Promise.all([
+      this.pool.query<{
+        total: number;
+        verified: number;
+        premium: number;
+        online: number;
+        active_day: number;
+        new_week: number;
+        admins: number;
+      }>(
+        `SELECT count(*)::int AS total,
+                count(*) FILTER (WHERE email_verified)::int AS verified,
+                count(*) FILTER (WHERE paid_until > now())::int AS premium,
+                count(*) FILTER (WHERE last_seen_at > now() - make_interval(secs => $1))::int AS online,
+                count(*) FILTER (WHERE last_seen_at > now() - interval '1 day')::int AS active_day,
+                count(*) FILTER (WHERE created_at > now() - interval '7 days')::int AS new_week,
+                count(*) FILTER (WHERE role = 'admin')::int AS admins
+           FROM accounts`,
+        [onlineSeconds],
+      ),
+      this.pool.query<{
+        currency: string;
+        total: string;
+        month: string;
+        last30: string;
+        today: string;
+        orders: number;
+        refunded: number;
+      }>(
+        `WITH paid AS (${PAID_REVENUE})
+         SELECT currency,
+                sum(amount) FILTER (WHERE NOT refunded)::bigint AS total,
+                coalesce(sum(amount) FILTER (WHERE NOT refunded AND paid_at >= date_trunc('month', now())), 0)::bigint AS month,
+                coalesce(sum(amount) FILTER (WHERE NOT refunded AND paid_at > now() - interval '30 days'), 0)::bigint AS last30,
+                coalesce(sum(amount) FILTER (WHERE NOT refunded AND paid_at >= date_trunc('day', now())), 0)::bigint AS today,
+                count(*) FILTER (WHERE NOT refunded)::int AS orders,
+                count(*) FILTER (WHERE refunded)::int AS refunded
+           FROM paid GROUP BY currency ORDER BY currency`,
+      ),
+      this.pool.query<{ day: Date; currency: string; amount: string }>(
+        `WITH paid AS (${PAID_REVENUE})
+         SELECT date_trunc('day', paid_at) AS day, currency, sum(amount)::bigint AS amount
+           FROM paid
+          WHERE NOT refunded AND paid_at > now() - interval '30 days'
+          GROUP BY 1, 2 ORDER BY 1`,
+      ),
+      this.pool.query<{ plan: string | null; count: number }>(
+        `SELECT plan, count(*)::int AS count FROM payments
+          WHERE status = 'paid' AND refunded_at IS NULL GROUP BY plan`,
+      ),
+    ]);
+    const row = accounts.rows[0]!;
+    return {
+      accounts: {
+        total: row.total,
+        verified: row.verified,
+        premium: row.premium,
+        online: row.online,
+        activeDay: row.active_day,
+        newWeek: row.new_week,
+        admins: row.admins,
+      },
+      revenue: revenue.rows.map((item) => ({
+        currency: item.currency,
+        total: Number(item.total ?? 0),
+        month: Number(item.month),
+        last30: Number(item.last30),
+        today: Number(item.today),
+        orders: item.orders,
+        refunded: item.refunded,
+      })),
+      daily: daily.rows.map((item) => ({
+        day: iso(item.day).slice(0, 10),
+        currency: item.currency,
+        amount: Number(item.amount),
+      })),
+      plans: plans.rows.map((item) => ({
+        plan: item.plan ?? 'legacy',
+        count: item.count,
+      })),
+    };
+  }
+
+  /** Marks an address confirmed, as if its owner had entered the code. */
+  async adminVerifyEmail(userId: string) {
+    const { rowCount } = await this.pool.query(
+      'UPDATE accounts SET email_verified = true WHERE id = $1',
+      [userId],
+    );
+    await this.pool.query(
+      'DELETE FROM email_verification_tokens WHERE user_id = $1',
+      [userId],
+    );
+    return rowCount === 1;
+  }
+
+  /** Ends Premium now; returns the end date it had, or undefined if none. */
+  async adminRevokePremium(userId: string) {
+    return this.transaction(async (client) => {
+      const { rows } = await client.query<{ paid_until: Date | null }>(
+        'SELECT paid_until FROM accounts WHERE id = $1 FOR UPDATE',
+        [userId],
+      );
+      if (!rows[0]) return { found: false as const };
+      await client.query(
+        `UPDATE accounts SET paid_until = NULL, premium_reminded_for = NULL
+          WHERE id = $1`,
+        [userId],
+      );
+      return {
+        found: true as const,
+        previous: rows[0].paid_until ? iso(rows[0].paid_until) : undefined,
+      };
+    });
+  }
+
+  /**
+   * Removes an account: its sessions, codes, library, memberships and the
+   * boards it owns (with everything on them). Payment records and the admin
+   * audit trail stay, as the business's own records.
+   */
+  async adminDeleteAccount(userId: string) {
+    const deleted = await this.transaction(async (client) => {
+      const account = await client.query<{ email: string; name: string }>(
+        'SELECT email, name FROM accounts WHERE id = $1 FOR UPDATE',
+        [userId],
+      );
+      if (!account.rows[0]) return undefined;
+      const owned = await client.query<{ id: string }>(
+        'DELETE FROM boards WHERE owner_id = $1 RETURNING id',
+        [userId],
+      );
+      await client.query('DELETE FROM board_members WHERE user_id = $1', [
+        userId,
+      ]);
+      await client.query('DELETE FROM sessions WHERE user_id = $1', [userId]);
+      await client.query('DELETE FROM reset_tokens WHERE user_id = $1', [
+        userId,
+      ]);
+      await client.query('DELETE FROM account_library WHERE account_id = $1', [
+        userId,
+      ]);
+      await client.query(
+        'DELETE FROM bank_transfer_requests WHERE user_id = $1',
+        [userId],
+      );
+      await client.query('DELETE FROM accounts WHERE id = $1', [userId]);
+      return { ...account.rows[0], boards: owned.rows.map((row) => row.id) };
+    });
+    if (deleted)
+      for (const boardId of deleted.boards)
+        for (const presence of await this.live.listPresence(boardId))
+          await this.live.removePresence(boardId, presence.peerId);
+    return deleted;
   }
 
   /**

@@ -92,12 +92,16 @@ import {
   sendRenewalReminders,
 } from './payments.js';
 import { checkoutFor } from './checkout.js';
-import { PostgresStore } from './pg-store.js';
+import { ONLINE_SECONDS, PostgresStore } from './pg-store.js';
 import {
+  CURRENCIES,
   currencyForCountry,
+  currentPrices,
+  DEFAULT_PRICES,
   PLAN_IDS,
   planById,
   plansFor,
+  setPrices,
   termOfPlan,
   type PremiumPlan,
 } from './plans.js';
@@ -301,6 +305,14 @@ app.addHook('onRequest', async (request, reply) => {
     return apiError(reply, 403, 'Cross-site request blocked.');
 });
 
+// Prices can change from the admin console; refresh them before any route
+// that quotes or charges one.
+app.addHook('preHandler', async (request) => {
+  const url = request.url;
+  if (url.startsWith('/api/billing') || url.startsWith('/api/admin'))
+    await loadPrices();
+});
+
 // ---- Admin console ----
 
 app.get('/api/admin/me', async (request) => {
@@ -384,6 +396,9 @@ app.get('/api/admin/users', async (request, reply) => {
       q: z.string().trim().max(200).default(''),
       page: z.coerce.number().int().min(1).default(1),
       limit: z.coerce.number().int().min(1).max(100).default(50),
+      filter: z
+        .enum(['all', 'online', 'premium', 'unverified', 'admins'])
+        .default('all'),
     })
     .safeParse(request.query);
   if (!query.success) return apiError(reply, 400, 'Invalid user-list request.');
@@ -391,6 +406,7 @@ app.get('/api/admin/users', async (request, reply) => {
     query.data.q,
     query.data.limit,
     (query.data.page - 1) * query.data.limit,
+    query.data.filter,
   );
 });
 
@@ -483,6 +499,201 @@ app.post('/api/admin/bank-transfers/:id/reject', async (request, reply) => {
   if (result.outcome === 'not_pending')
     return apiError(reply, 409, 'This bank transfer is no longer pending.');
   return result;
+});
+
+// Prices an admin set live in Postgres; each instance rereads them at most
+// every 30 seconds, and at once on the instance that changed them.
+let pricesLoadedAt = 0;
+async function loadPrices(force = false) {
+  if (!adminStore || (!force && Date.now() - pricesLoadedAt < 30_000)) return;
+  try {
+    setPrices(await adminStore.getPlanPrices());
+    pricesLoadedAt = Date.now();
+  } catch (error) {
+    app.log.error(error, 'Could not load plan prices; keeping the last ones');
+  }
+}
+
+/** The plans in both currencies, for the pricing page. */
+app.get('/api/billing/prices', async (_request, reply) => {
+  reply.header('Cache-Control', 'public, max-age=60, s-maxage=60');
+  return { plans: Object.fromEntries(CURRENCIES.map((c) => [c, plansFor(c)])) };
+});
+
+const audit = (
+  username: string,
+  action: string,
+  userId?: string,
+  detail?: Record<string, unknown>,
+) =>
+  adminStore?.logAdminAction({
+    id: randomUUID(),
+    username,
+    action,
+    ...(userId ? { userId } : {}),
+    ...(detail ? { detail } : {}),
+  });
+
+app.get('/api/admin/overview', async (request, reply) => {
+  const username = await requireAdmin(request, reply);
+  if (!username || !adminStore) return;
+  const [overview, activity] = await Promise.all([
+    adminStore.adminOverview(ONLINE_SECONDS),
+    adminStore.listAdminActions(12),
+  ]);
+  return { ...overview, activity, onlineSeconds: ONLINE_SECONDS };
+});
+
+app.post('/api/admin/users', async (request, reply) => {
+  const username = await requireAdmin(request, reply);
+  if (!username || !adminStore) return;
+  const body = z
+    .object({
+      name: nameSchema,
+      email: emailSchema,
+      password: passwordSchema,
+      verified: z.boolean().default(true),
+      premiumMonths: z.number().int().min(0).max(120).default(0),
+    })
+    .safeParse(request.body);
+  if (!body.success) return apiError(reply, 400, firstIssue(body.error));
+  const id = randomUUID();
+  const account: Account = {
+    id,
+    email: body.data.email,
+    name: body.data.name,
+    color: colorFor(id),
+    createdAt: new Date().toISOString(),
+    passwordHash: await hashPassword(body.data.password),
+    emailVerified: body.data.verified,
+    trialUsedSeconds: 0,
+  };
+  if (!(await store.createAccount(account)))
+    return apiError(reply, 409, 'An account with this email already exists.');
+  await audit(username, 'create_user', id, {
+    email: account.email,
+    verified: body.data.verified,
+  });
+  let paidUntil: string | undefined;
+  if (body.data.premiumMonths > 0)
+    paidUntil = await adminStore.grantAdminAccess({
+      id: randomUUID(),
+      username,
+      userId: id,
+      months: body.data.premiumMonths,
+      days: 0,
+      method: 'complimentary',
+      note: 'Granted when the account was created in the admin console',
+    });
+  return reply.code(201).send({ ok: true, id, paidUntil: paidUntil ?? null });
+});
+
+app.post('/api/admin/users/:userId/verify', async (request, reply) => {
+  const username = await requireAdmin(request, reply);
+  if (!username || !adminStore) return;
+  const { userId } = request.params as { userId: string };
+  if (!(await adminStore.adminVerifyEmail(userId)))
+    return apiError(reply, 404, 'No account exists with that user ID.');
+  await audit(username, 'verify_email', userId);
+  return { ok: true };
+});
+
+app.post('/api/admin/users/:userId/revoke', async (request, reply) => {
+  const username = await requireAdmin(request, reply);
+  if (!username || !adminStore) return;
+  const { userId } = request.params as { userId: string };
+  const body = z
+    .object({ note: z.string().trim().max(500).optional() })
+    .safeParse(request.body ?? {});
+  if (!body.success) return apiError(reply, 400, firstIssue(body.error));
+  const result = await adminStore.adminRevokePremium(userId);
+  if (!result.found)
+    return apiError(reply, 404, 'No account exists with that user ID.');
+  await audit(username, 'revoke_premium', userId, {
+    previousPaidUntil: result.previous ?? null,
+    ...(body.data.note ? { note: body.data.note } : {}),
+  });
+  const account = await store.getAccount(userId);
+  if (account) refreshOwnerPlan(userId, planOf(account));
+  return { ok: true };
+});
+
+app.delete('/api/admin/users/:userId', async (request, reply) => {
+  const username = await requireAdmin(request, reply);
+  if (!username || !adminStore) return;
+  const { userId } = request.params as { userId: string };
+  const target = await store.getAccount(userId);
+  if (!target) return apiError(reply, 404, 'No account exists with that user ID.');
+  if (target.email === username)
+    return apiError(reply, 400, 'You can’t remove the account you’re signed in with.');
+  if (target.role === 'admin')
+    return apiError(reply, 400, 'Remove the Admin role before deleting an admin account.');
+  const deleted = await adminStore.adminDeleteAccount(userId);
+  if (!deleted) return apiError(reply, 404, 'No account exists with that user ID.');
+  await audit(username, 'delete_user', userId, {
+    email: deleted.email,
+    name: deleted.name,
+    boardsDeleted: deleted.boards.length,
+  });
+  return { ok: true, boardsDeleted: deleted.boards.length };
+});
+
+app.get('/api/admin/prices', async (request, reply) => {
+  const username = await requireAdmin(request, reply);
+  if (!username || !adminStore) return;
+  await loadPrices(true);
+  return {
+    current: currentPrices(),
+    defaults: DEFAULT_PRICES,
+    plans: Object.fromEntries(CURRENCIES.map((c) => [c, plansFor(c)])),
+  };
+});
+
+app.put('/api/admin/prices/:currency', async (request, reply) => {
+  const username = await requireAdmin(request, reply);
+  if (!username || !adminStore) return;
+  const { currency } = request.params as { currency: string };
+  if (!CURRENCIES.includes(currency as (typeof CURRENCIES)[number]))
+    return apiError(reply, 404, 'Unknown currency.');
+  const key = currency as (typeof CURRENCIES)[number];
+  // Whole units (dollars, rupees) up to a sane ceiling; null means defaults.
+  const amount = z.number().int().min(1).max(1_000_000);
+  const body = z
+    .object({ prices: z.tuple([amount, amount, amount]).nullable() })
+    .safeParse(request.body);
+  if (!body.success)
+    return apiError(reply, 400, 'Enter a whole-number price for every plan.');
+  const prices = body.data.prices
+    ? (body.data.prices.map((value) => value * 100) as unknown as [
+        number,
+        number,
+        number,
+      ])
+    : null;
+  const before = currentPrices()[key];
+  await adminStore.setPlanPrices(key, prices, username);
+  await loadPrices(true);
+  await audit(username, prices ? 'set_prices' : 'reset_prices', undefined, {
+    currency: key,
+    before,
+    after: currentPrices()[key],
+  });
+  return {
+    current: currentPrices(),
+    defaults: DEFAULT_PRICES,
+    plans: Object.fromEntries(CURRENCIES.map((c) => [c, plansFor(c)])),
+  };
+});
+
+// Signed-in pages beat about once a minute while visible, so the console can
+// show who is online. Trial accounts are counted by the trial heartbeat.
+app.post('/api/presence', async (request, reply) => {
+  const user = await currentUser(request, reply);
+  if (!user) return;
+  if (user.guest || !adminStore) return { ok: true };
+  if (!(await allow(reply, `presence:${user.id}`, 6, 60))) return;
+  await adminStore.recordAccountActivity(user.id);
+  return { ok: true };
 });
 
 // ---- Accounts ----

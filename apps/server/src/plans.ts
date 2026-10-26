@@ -66,12 +66,27 @@ const plan = (
   };
 };
 
+/** Prices of the 3, 6 and 12-month plans, in that order. */
+export type PriceSet = readonly [number, number, number];
+
+/**
+ * The prices in code. An admin can override them (stored in Postgres, see
+ * `setPrices`); these stay the fallback and what the web app shows first.
+ */
+export const DEFAULT_PRICES: Record<Currency, PriceSet> = {
+  USD: [2500, 4500, 7500],
+  INR: [235000, 423000, 705000],
+};
+
 /** What the 3-month plan costs, the base rate for the savings shown. */
-const BASE_PRICE: Record<Currency, number> = { USD: 2500, INR: 235000 };
+const BASE_PRICE: Record<Currency, number> = {
+  USD: DEFAULT_PRICES.USD[0],
+  INR: DEFAULT_PRICES.INR[0],
+};
 
 const plansIn = (
   currency: Currency,
-  [quarterly, halfYear, yearly]: [number, number, number],
+  [quarterly, halfYear, yearly]: PriceSet,
 ): readonly PremiumPlan[] => [
   plan(currency, 'quarterly', 3, quarterly),
   plan(currency, 'half-year', 6, halfYear, { days: 15 }),
@@ -79,12 +94,30 @@ const plansIn = (
 ];
 
 export const PLANS_BY_CURRENCY: Record<Currency, readonly PremiumPlan[]> = {
-  USD: plansIn('USD', [2500, 4500, 7500]),
-  INR: plansIn('INR', [235000, 423000, 705000]),
+  USD: plansIn('USD', DEFAULT_PRICES.USD),
+  INR: plansIn('INR', DEFAULT_PRICES.INR),
 };
 
-/** The dollar plans, which most of the world sees. */
+/** The dollar plans at the prices in code, which most of the world sees. */
 export const PLANS = PLANS_BY_CURRENCY.USD;
+
+/** The prices charged now, per currency. */
+export const currentPrices = (): Record<Currency, PriceSet> => ({
+  USD: PLANS_BY_CURRENCY.USD.map((item) => item.amount) as unknown as PriceSet,
+  INR: PLANS_BY_CURRENCY.INR.map((item) => item.amount) as unknown as PriceSet,
+});
+
+/**
+ * Charges new prices from now on. Missing currencies go back to the defaults.
+ * Orders already created keep the amount they were created with.
+ */
+export function setPrices(prices: Partial<Record<Currency, PriceSet>>) {
+  for (const currency of CURRENCIES) {
+    const next = prices[currency] ?? DEFAULT_PRICES[currency];
+    BASE_PRICE[currency] = next[0];
+    PLANS_BY_CURRENCY[currency] = plansIn(currency, next);
+  }
+}
 
 export const isCurrency = (value: unknown): value is Currency =>
   CURRENCIES.includes(value as Currency);
@@ -150,10 +183,14 @@ export function planOfOrder(order: OrderTerms) {
   if (current) return current;
   // Older payment rows may lack the plan columns when a database migration
   // had not run yet. Keep their original duration recognizable after repricing.
+  // An admin may have repriced since; the prices in code still identify it.
+  const defaultIndex = DEFAULT_PRICES[currency].indexOf(order.amount);
   const previousId =
-    currency === 'USD'
-      ? PREVIOUS_USD_PLAN_IDS[order.amount]
-      : PREVIOUS_INR_PLAN_IDS[order.amount];
+    defaultIndex >= 0
+      ? PLAN_IDS[defaultIndex]
+      : currency === 'USD'
+        ? PREVIOUS_USD_PLAN_IDS[order.amount]
+        : PREVIOUS_INR_PLAN_IDS[order.amount];
   return previousId ? planById(previousId, currency) : undefined;
 }
 
