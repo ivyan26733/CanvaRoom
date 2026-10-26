@@ -520,13 +520,18 @@ const audit = (
   userId?: string,
   detail?: Record<string, unknown>,
 ) =>
-  adminStore?.logAdminAction({
-    id: randomUUID(),
-    username,
-    action,
-    ...(userId ? { userId } : {}),
-    ...(detail ? { detail } : {}),
-  });
+  adminStore
+    ?.logAdminAction({
+      id: randomUUID(),
+      username,
+      action,
+      ...(userId ? { userId } : {}),
+      ...(detail ? { detail } : {}),
+    })
+    // The change itself is done; a missing audit table mustn't undo the reply.
+    .catch((error: unknown) =>
+      app.log.error(error, 'Could not record an admin action'),
+    );
 
 app.get('/api/admin/overview', async (request, reply) => {
   const username = await requireAdmin(request, reply);

@@ -153,11 +153,7 @@ type BankTransferRow = {
 };
 
 export type AdminAccountFilter =
-  | 'all'
-  | 'online'
-  | 'premium'
-  | 'unverified'
-  | 'admins';
+  'all' | 'online' | 'premium' | 'unverified' | 'admins';
 
 /** Seconds since the last heartbeat that still count as online. */
 export const ONLINE_SECONDS = 150;
@@ -174,12 +170,17 @@ const ACCOUNT_FILTERS: Record<AdminAccountFilter, string> = {
  * Money received: paid card/UPI/PayPal orders and confirmed bank transfers,
  * with `refunded` set where the money went back.
  */
-const PAID_REVENUE = `
+const PAID_ORDERS = `
   SELECT amount, currency, paid_at, refunded_at IS NOT NULL AS refunded
-    FROM payments WHERE status = 'paid' AND paid_at IS NOT NULL
+    FROM payments WHERE status = 'paid' AND paid_at IS NOT NULL`;
+const PAID_REVENUE = `${PAID_ORDERS}
   UNION ALL
   SELECT amount, currency, reviewed_at AS paid_at, false AS refunded
     FROM bank_transfer_requests WHERE status = 'confirmed'`;
+
+/** Postgres's "undefined table": the database isn't migrated yet. */
+const missingTable = (error: unknown) =>
+  (error as { code?: string } | null)?.code === '42P01';
 
 /** Postgres's "undefined column": the database isn't migrated yet. */
 const missingColumn = (error: unknown) =>
@@ -1445,18 +1446,23 @@ export class PostgresStore implements Store {
   }
 
   async listAdminActions(limit: number) {
-    const { rows } = await this.pool.query<{
-      id: string;
-      admin_username: string;
-      action: string;
-      user_id: string | null;
-      detail: Record<string, unknown>;
-      created_at: Date;
-    }>(
-      `SELECT id, admin_username, action, user_id, detail, created_at
+    const { rows } = await this.pool
+      .query<{
+        id: string;
+        admin_username: string;
+        action: string;
+        user_id: string | null;
+        detail: Record<string, unknown>;
+        created_at: Date;
+      }>(
+        `SELECT id, admin_username, action, user_id, detail, created_at
          FROM admin_actions ORDER BY created_at DESC LIMIT $1`,
-      [limit],
-    );
+        [limit],
+      )
+      .catch((error: unknown) => {
+        if (missingTable(error)) return { rows: [] };
+        throw error;
+      });
     return rows.map((row) => ({
       id: row.id,
       adminUsername: row.admin_username,
@@ -1514,6 +1520,16 @@ export class PostgresStore implements Store {
 
   /** Counts and money for the console's overview. */
   async adminOverview(onlineSeconds: number) {
+    try {
+      return await this.overviewFrom(onlineSeconds, PAID_REVENUE);
+    } catch (error) {
+      // Bank transfers aren't migrated yet: count card and PayPal money only.
+      if (!missingTable(error)) throw error;
+      return this.overviewFrom(onlineSeconds, PAID_ORDERS);
+    }
+  }
+
+  private async overviewFrom(onlineSeconds: number, paidRevenue: string) {
     const [accounts, revenue, daily, plans] = await Promise.all([
       this.pool.query<{
         total: number;
@@ -1543,7 +1559,7 @@ export class PostgresStore implements Store {
         orders: number;
         refunded: number;
       }>(
-        `WITH paid AS (${PAID_REVENUE})
+        `WITH paid AS (${paidRevenue})
          SELECT currency,
                 sum(amount) FILTER (WHERE NOT refunded)::bigint AS total,
                 coalesce(sum(amount) FILTER (WHERE NOT refunded AND paid_at >= date_trunc('month', now())), 0)::bigint AS month,
@@ -1554,7 +1570,7 @@ export class PostgresStore implements Store {
            FROM paid GROUP BY currency ORDER BY currency`,
       ),
       this.pool.query<{ day: Date; currency: string; amount: string }>(
-        `WITH paid AS (${PAID_REVENUE})
+        `WITH paid AS (${paidRevenue})
          SELECT date_trunc('day', paid_at) AS day, currency, sum(amount)::bigint AS amount
            FROM paid
           WHERE NOT refunded AND paid_at > now() - interval '30 days'

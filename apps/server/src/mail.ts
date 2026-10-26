@@ -89,12 +89,27 @@ const FONT_STACK =
 
 /** Thoughtful lines; one closes each email, picked by `seed` so it is stable. */
 const THOUGHTS = [
-  ['The best ideas rarely arrive alone. They show up when people draw together.', 'Written on our whiteboard'],
-  ['A blank page is not empty. It is full of things nobody has drawn yet.', 'Something we believe'],
-  ['Teaching is drawing a map, then handing someone the pen.', 'Why we love classrooms'],
-  ['Messy sketches are where good thinking starts. Neat comes later.', 'A note to ourselves'],
+  [
+    'The best ideas rarely arrive alone. They show up when people draw together.',
+    'Written on our whiteboard',
+  ],
+  [
+    'A blank page is not empty. It is full of things nobody has drawn yet.',
+    'Something we believe',
+  ],
+  [
+    'Teaching is drawing a map, then handing someone the pen.',
+    'Why we love classrooms',
+  ],
+  [
+    'Messy sketches are where good thinking starts. Neat comes later.',
+    'A note to ourselves',
+  ],
   ['Every great diagram began as a wobbly line.', 'A note to ourselves'],
-  ['Ideas grow faster when they have room to spread out.', 'Why we built CanvaRoom'],
+  [
+    'Ideas grow faster when they have room to spread out.',
+    'Why we built CanvaRoom',
+  ],
 ] as const;
 
 const thoughtFor = (seed: string) => {
@@ -156,7 +171,11 @@ const codeCard = (code: string, minutes: number) =>
   );
 
 /** The password reset code email, as subject, HTML and text. */
-export function passwordResetEmail(name: string, code: string, minutes: number) {
+export function passwordResetEmail(
+  name: string,
+  code: string,
+  minutes: number,
+) {
   const subject = `🔑 ${code} is your CanvaRoom reset code`;
   const text = `Hi ${name},
 
@@ -379,9 +398,9 @@ ${doodleCard(
 )}
 <p style="margin:0 0 10px;font-weight:800;font-size:16px">What you’ve just unlocked</p>
 <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 0 24px;font-size:14px">${PREMIUM_PERKS.map(
-    (perk, index) =>
-      `<tr><td style="padding:5px 12px 5px 0;vertical-align:top;font-size:18px">${perkIcons[index] ?? '✅'}</td><td style="padding:5px 0">${escapeHtml(perk)}</td></tr>`,
-  ).join('')}</table>
+      (perk, index) =>
+        `<tr><td style="padding:5px 12px 5px 0;vertical-align:top;font-size:18px">${perkIcons[index] ?? '✅'}</td><td style="padding:5px 0">${escapeHtml(perk)}</td></tr>`,
+    ).join('')}</table>
 ${button(dashboard, 'Open your boards →')}
 ${doodleCard(
   `<p style="margin:0 0 4px;font-weight:800">💡 A little idea to start with</p>
