@@ -640,7 +640,7 @@
     left: 0;
     z-index: 40;
     width: auto;
-    height: min(72vh, 620px);
+    height: min(72dvh, 620px);
     border-radius: 18px 18px 0 0;
     animation: lib-sheet-up 0.22s var(--ease);
   }
@@ -679,4 +679,18 @@
   margin: 0 0 12px;
   color: var(--ink-2);
   font-size: 14px;
+}
+
+/* A phone on its side: the drawer rises above the tool dock. */
+@media (max-height: 500px) and (orientation: landscape) {
+  .lib-drawer-shell {
+    top: 64px;
+    right: 8px;
+    bottom: 8px;
+    left: auto;
+    z-index: 40;
+    width: min(420px, calc(100vw - 16px));
+    height: auto;
+    border-radius: 16px;
+  }
 }
