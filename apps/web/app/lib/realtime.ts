@@ -131,6 +131,7 @@ export class RealtimeClient {
     muted: false,
   };
   private away = false;
+  private recording = false;
   private awayTimer: ReturnType<typeof setTimeout> | undefined;
   /** The page is hidden in the back/forward cache, so stay disconnected. */
   private suspended = false;
@@ -208,6 +209,7 @@ export class RealtimeClient {
           color: this.color,
           ...this.call,
           ...(this.away ? { away: true } : {}),
+          ...(this.recording ? { recording: true } : {}),
         }),
       );
     };
@@ -371,6 +373,13 @@ export class RealtimeClient {
     }
     this.reconnectNow();
   };
+
+  /** Tells everyone on the board this tab is (or stopped) recording. */
+  setRecording(recording: boolean) {
+    if (this.recording === recording) return;
+    this.recording = recording;
+    this.rawSend({ t: 'recording', recording });
+  }
 
   private setAway(away: boolean) {
     if (this.away === away) return;

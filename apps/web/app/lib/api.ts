@@ -68,6 +68,8 @@ export type Peer = {
   muted: boolean;
   /** Their tab has been in the background for a while. */
   away?: boolean;
+  /** They are recording this session. */
+  recording?: boolean;
   /** Their microphone on the SFU, when calls go through one. */
   audio?: { session: string; track: string };
 };

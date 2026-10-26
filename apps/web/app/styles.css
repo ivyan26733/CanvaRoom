@@ -4859,3 +4859,58 @@ button.plan-chip.is-pro {
   font-variant-numeric: tabular-nums;
   text-align: center;
 }
+
+/* Shown to everyone on a board while someone else records the session. */
+.recording-banner {
+  position: absolute;
+  top: 70px;
+  left: 50%;
+  z-index: 27;
+  display: flex;
+  max-width: min(560px, calc(100vw - 24px));
+  align-items: center;
+  gap: 10px;
+  padding: 9px 14px;
+  border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--danger) 10%, var(--surface));
+  box-shadow: var(--shadow-2);
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.35;
+  transform: translateX(-50%);
+}
+.recording-dot {
+  width: 10px;
+  height: 10px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--danger);
+  animation: recording-pulse 1.4s ease-in-out infinite;
+}
+@keyframes recording-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .recording-dot {
+    animation: none;
+  }
+}
+.record-consent {
+  display: flex;
+  gap: 8px;
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--danger-soft);
+  color: var(--ink-2);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.record-consent svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--danger);
+}

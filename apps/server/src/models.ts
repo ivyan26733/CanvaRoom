@@ -409,6 +409,8 @@ export type Presence = {
   muted: boolean;
   /** The tab has been hidden for a while. */
   away?: boolean;
+  /** This tab is recording the session; everyone on the board is shown. */
+  recording?: boolean;
   /** Their microphone on the SFU, for others in the call to pull. */
   audio?: AudioTrack;
   updatedAt: number;

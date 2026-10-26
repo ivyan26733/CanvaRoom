@@ -59,6 +59,7 @@ type Connection = {
   /** Their microphone on the SFU while they are in the call. */
   audio: AudioTrack | undefined;
   away: boolean;
+  recording: boolean;
   presenceWrittenAt: number;
   /** When the browser was last heard from: any message, or a pong. */
   heard: Heard;
@@ -309,7 +310,10 @@ const roomPresence = new Map<
 
 function notePresence(boardId: string, peers: Presence[]) {
   const signature = peers
-    .map((peer) => `${peer.peerId}:${peer.inCall}:${peer.muted}:${peer.away}`)
+    .map(
+      (peer) =>
+        `${peer.peerId}:${peer.inCall}:${peer.muted}:${peer.away}:${peer.recording}`,
+    )
     .sort()
     .join('|');
   const changed = roomPresence.get(boardId)?.signature !== signature;
@@ -336,6 +340,7 @@ function presenceOf(connection: Connection): Presence {
     inCall: connection.inCall,
     muted: connection.muted,
     ...(connection.away ? { away: true } : {}),
+    ...(connection.recording ? { recording: true } : {}),
     ...(connection.inCall && connection.audio
       ? { audio: connection.audio }
       : {}),
@@ -702,6 +707,14 @@ function handleMessage(connection: Connection, message: ClientMessage) {
         await store.setPresence(boardId, presenceOf(connection));
         await broadcastPresence(boardId);
       });
+    case 'recording':
+      if (connection.recording === message.recording) return;
+      connection.recording = message.recording;
+      connection.presenceWrittenAt = Date.now();
+      return chore(connection, async () => {
+        await store.setPresence(boardId, presenceOf(connection));
+        await broadcastPresence(boardId);
+      });
     case 'bye':
       // Leave now rather than when the close reaches us, which a proxy or a
       // closing tab can delay.
@@ -777,6 +790,7 @@ async function authenticate(
       ? verifiedAudio(board.id, user, hello.audio)
       : undefined,
     away: hello.away ?? false,
+    recording: hello.recording ?? false,
     presenceWrittenAt: Date.now(),
     heard,
     writes: Promise.resolve(),

@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useEffectEvent, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Icon } from '../../components/icons';
 import { Modal } from '../../components/modal';
@@ -59,6 +59,7 @@ export function SessionRecorderControl({
   locked = false,
   needsAccount = false,
   onLocked,
+  onRecordingChange,
 }: {
   stageRef: React.RefObject<SVGSVGElement | null>;
   title: string;
@@ -73,6 +74,8 @@ export function SessionRecorderControl({
   /** Signed out or a guest: the way in is an account, not a payment. */
   needsAccount?: boolean;
   onLocked?: () => void;
+  /** Tells everyone on the board while this tab is recording. */
+  onRecordingChange?: (recording: boolean) => void;
 }) {
   const pathname = usePathname();
   const [accountPromptOpen, setAccountPromptOpen] = useState(false);
@@ -97,6 +100,16 @@ export function SessionRecorderControl({
   }, []);
 
   const active = status === 'recording' || status === 'paused';
+
+  // Nobody is recorded without knowing: the room is told as recording
+  // starts, and again when it stops or this tab leaves.
+  const reportRecording = useEffectEvent((recording: boolean) =>
+    onRecordingChange?.(recording),
+  );
+  useEffect(() => {
+    reportRecording(active);
+  }, [active]);
+  useEffect(() => () => reportRecording(false), []);
 
   // A plan that ends while the setup is open cannot start a recording.
   useEffect(() => {
@@ -297,6 +310,13 @@ export function SessionRecorderControl({
               zoom — with your voice. When you stop, the video downloads to this
               computer. Nothing is uploaded.
             </p>
+            {hasCall && (
+              <p className="record-consent" role="note">
+                <Icon name="record" size={14} /> Everyone on this board sees a
+                “recording” notice while you record. Let them know first, and
+                ask before recording anyone’s voice.
+              </p>
+            )}
             <fieldset className="record-options">
               <legend>Which resolution do you want?</legend>
               <div className="record-resolutions">

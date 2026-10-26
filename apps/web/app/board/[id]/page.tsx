@@ -363,6 +363,8 @@ export default function BoardPage() {
   useDismiss(menuOpen, setMenuOpen, menuRef);
   useDismiss(zoomMenuOpen, setZoomMenuOpen, zoomMenuRef);
   const callPeers = useRef(new Set<string>());
+  // Who was recording at the last presence update, to announce changes.
+  const recordingPeers = useRef(new Set<string>());
   // Mirrors `textEditor` so finishing is idempotent when both a click on the
   // canvas and the textarea's blur try to finish the same edit.
   const editorRef = useRef<TextEditor | null>(null);
@@ -527,6 +529,23 @@ export default function BoardPage() {
       : requestAnimationFrame(flushRemoteOperations);
   }
 
+  /** Tells this person when someone else starts or stops recording. */
+  function announceRecording(list: Peer[], self: string | undefined) {
+    const now = list.filter((peer) => peer.recording && peer.peerId !== self);
+    const started = now.filter(
+      (peer) => !recordingPeers.current.has(peer.peerId),
+    );
+    const stopped = [...recordingPeers.current].filter(
+      (peerId) => !now.some((peer) => peer.peerId === peerId),
+    );
+    if (started.length)
+      setNotice(
+        `${started.map((peer) => peer.name).join(' and ')} started recording this session.`,
+      );
+    else if (stopped.length && !now.length) setNotice('Recording stopped.');
+    recordingPeers.current = new Set(now.map((peer) => peer.peerId));
+  }
+
   const onServerMessage = useEffectEvent((message: ServerMessage) => {
     const client = clientRef.current;
     switch (message.t) {
@@ -548,6 +567,7 @@ export default function BoardPage() {
           ...current.filter((item) => item.pending),
         ]);
         setPeers(message.peers);
+        announceRecording(message.peers, client?.peerId);
         // Anything still being drawn, moved, or typed was not seen by peers
         // that joined (or rejoined) while this tab was reconnecting.
         const current = gesture.current;
@@ -649,6 +669,7 @@ export default function BoardPage() {
         if (started && !call.joined && callPeers.current.size === 0)
           setNotice(`${started.name} started audio. Join from the top bar.`);
         callPeers.current = new Set(nowInCall.map((peer) => peer.peerId));
+        announceRecording(message.peers, client?.peerId);
         return;
       }
       case 'signal':
@@ -2426,6 +2447,10 @@ export default function BoardPage() {
         : pending
           ? 'Saving…'
           : 'Saved';
+  // Others recording right now; everyone sees a banner while they do.
+  const recorders = peers.filter(
+    (peer) => peer.recording && peer.peerId !== selfPeerId,
+  );
   const editorObject = textEditor?.object;
   const editorFont = editorObject ? defaultFontSize(editorObject) : 0;
   const editorLayout =
@@ -2842,6 +2867,9 @@ export default function BoardPage() {
               'Session recording is a Premium feature. Upgrade to record your lessons in HD.',
             )
           }
+          onRecordingChange={(recording) =>
+            clientRef.current?.setRecording(recording)
+          }
         />
         <div className="menu-anchor" ref={menuRef}>
           <button
@@ -3016,6 +3044,18 @@ export default function BoardPage() {
             onStop={follow.stop}
             onGo={switchPage}
           />
+        )}
+        {recorders.length > 0 && (
+          <div className="recording-banner" role="status" aria-live="polite">
+            <span className="recording-dot" aria-hidden="true" />
+            <span>
+              <strong>
+                {recorders.map((peer) => peer.name).join(' and ')}
+              </strong>{' '}
+              {recorders.length === 1 ? 'is' : 'are'} recording this session.
+              Your voice and drawing may be in the video.
+            </span>
+          </div>
         )}
         {notice && (
           <div className="toast" role="status">
