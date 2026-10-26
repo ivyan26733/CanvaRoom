@@ -126,6 +126,11 @@ export type ConnectionStats = {
 export class RealtimeClient {
   readonly peerId = crypto.randomUUID();
   private pingSentAt = 0;
+  /**
+   * When the ping we're waiting on was sent (wall clock), or 0 when nothing
+   * is outstanding. The connection is dead only if that ping goes unanswered.
+   */
+  private awaitingSince = 0;
   private savesStarted = new Map<string, number>();
   private stats: ConnectionStats = {
     rtt: [],
@@ -275,6 +280,8 @@ export class RealtimeClient {
         if (this.socket?.readyState === WebSocket.OPEN) return;
       }
       this.lastHeard = Date.now();
+      // Anything from the server proves the connection is alive.
+      this.awaitingSince = 0;
       if (message.t === 'pong' && this.pingSentAt) {
         this.sample(this.stats.rtt, performance.now() - this.pingSentAt);
         this.pingSentAt = 0;
@@ -354,12 +361,24 @@ export class RealtimeClient {
 
   private startPing() {
     clearInterval(this.pingTimer);
+    this.awaitingSince = 0;
     this.pingTimer = setInterval(() => {
-      if (Date.now() - this.lastHeard > DEAD_AFTER_MS) {
-        this.socket?.close();
+      // Dead only when a ping we sent went unanswered. Chrome runs timers in
+      // a hidden tab about once a minute; judging by the time since we last
+      // heard anything, that gap alone looked like a dead connection and
+      // closed healthy sockets every couple of minutes.
+      if (this.awaitingSince) {
+        if (Date.now() - this.awaitingSince > DEAD_AFTER_MS)
+          this.socket?.close();
         return;
       }
-      if (this.rawSend({ t: 'ping' })) this.pingSentAt = performance.now();
+      if (this.rawSend({ t: 'ping' })) {
+        // Time a round trip only from a ping with no reply still in flight.
+        const now = performance.now();
+        if (!this.pingSentAt || now - this.pingSentAt > DEAD_AFTER_MS)
+          this.pingSentAt = now;
+        this.awaitingSince = Date.now();
+      }
     }, PING_EVERY_MS);
     clearInterval(this.rotateTimer);
     this.rotateTimer = setInterval(() => {
