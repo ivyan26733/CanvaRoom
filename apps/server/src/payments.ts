@@ -162,6 +162,13 @@ export async function sendCheckoutReminders(deps: CheckoutReminderDeps) {
         await store.releaseCheckoutReminder(reminder.orderId);
         continue;
       }
+      // Already Premium (paid another way, or granted): never nudge them, and
+      // settle the order so it isn't claimed again tomorrow.
+      if (account.paidUntil && Date.parse(account.paidUntil) > Date.now()) {
+        skipped++;
+        await store.markCheckoutReminderSent(reminder.orderId);
+        continue;
+      }
 
       const plan: PlanId = PLAN_IDS.some((id) => id === payment.plan)
         ? (payment.plan as PlanId)
