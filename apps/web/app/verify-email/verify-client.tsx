@@ -53,7 +53,10 @@ export function VerifyClient() {
         'POST',
         {},
       );
-      setNotice(result.message ?? 'A new code is on its way.');
+      setNotice(
+        result.message ??
+          'A new code is on its way. Check your inbox and spam folder.',
+      );
       setCooldown(result.cooldown ?? COOLDOWN);
       setCode('');
     } catch (caught) {
@@ -73,7 +76,9 @@ export function VerifyClient() {
       setUser(result.user);
       setChanging(false);
       setCode('');
-      setNotice(`We’ve sent a new code to ${result.user.email}.`);
+      setNotice(
+        `We’ve sent a new code to ${result.user.email}. Check your inbox and spam folder.`,
+      );
       setCooldown(COOLDOWN);
     } catch (caught) {
       setError((caught as Error).message);
@@ -135,7 +140,8 @@ export function VerifyClient() {
       <>
         <h1>Enter your code</h1>
         <p className="auth-lede">
-          We sent a 6-digit code to your email. It works for 10 minutes.
+          We sent a 6-digit code to your email. It works for 10 minutes. Check
+          your inbox and spam folder.
         </p>
         {changing ? (
           <form className="auth-form" onSubmit={changeEmail} noValidate>

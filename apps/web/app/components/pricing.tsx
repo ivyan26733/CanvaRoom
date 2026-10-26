@@ -79,7 +79,7 @@ function Mark({ value }: { value: Cell }) {
 /** Plans and Premium perks, in rupees in India and US dollars elsewhere. */
 export function Pricing({ currency }: { currency: Currency }) {
   const premiumPlans = PLANS_BY_CURRENCY[currency];
-  // The lowest monthly rate, for "from $5.00 / month".
+  // The lowest monthly rate, for "from $5.77 / month".
   const fromRate = Math.min(...premiumPlans.map((plan) => plan.perMonth));
   const money = (amount: number) => formatMoney(amount, currency);
   return (

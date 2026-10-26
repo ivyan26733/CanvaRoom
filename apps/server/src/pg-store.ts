@@ -12,6 +12,9 @@ import {
 import type {
   Account,
   AccountRole,
+  AdminBankTransferRequest,
+  BankTransferRequest,
+  BankTransferReviewResult,
   BoardMeta,
   BoardObject,
   Capture,
@@ -33,6 +36,7 @@ import type { BoardListItem, LiveStore, Store } from './store.js';
 import {
   PLANS_SINCE,
   planOfOrder,
+  termOfPlan,
   termOfOrder,
   type PremiumPlan,
 } from './plans.js';
@@ -124,6 +128,24 @@ type PaymentRow = {
   refunded_at?: Date | null;
 };
 
+type BankTransferRow = {
+  id: string;
+  user_id: string;
+  plan: string;
+  amount: number;
+  currency: 'USD';
+  months: number;
+  days: number;
+  reference: string;
+  status: BankTransferRequest['status'];
+  sender_reference: string | null;
+  created_at: Date;
+  submitted_at: Date | null;
+  reviewed_at: Date | null;
+  reviewed_by: string | null;
+  paid_until: Date | null;
+};
+
 /** Postgres's "undefined column": the database isn't migrated yet. */
 const missingColumn = (error: unknown) =>
   (error as { code?: string } | null)?.code === '42703';
@@ -144,6 +166,24 @@ const toPayment = (row: PaymentRow): Payment => ({
     ? { provider: row.provider }
     : {}),
   ...(row.refunded_at ? { refundedAt: iso(row.refunded_at) } : {}),
+});
+
+const toBankTransferRequest = (row: BankTransferRow): BankTransferRequest => ({
+  id: row.id,
+  userId: row.user_id,
+  plan: row.plan,
+  amount: row.amount,
+  currency: row.currency,
+  months: row.months,
+  days: row.days,
+  reference: row.reference,
+  status: row.status,
+  ...(row.sender_reference ? { senderReference: row.sender_reference } : {}),
+  createdAt: iso(row.created_at),
+  ...(row.submitted_at ? { submittedAt: iso(row.submitted_at) } : {}),
+  ...(row.reviewed_at ? { reviewedAt: iso(row.reviewed_at) } : {}),
+  ...(row.reviewed_by ? { reviewedBy: row.reviewed_by } : {}),
+  ...(row.paid_until ? { paidUntil: iso(row.paid_until) } : {}),
 });
 
 /** Builds `SET a = $2, b = $3` from the fields that are present. */
@@ -986,6 +1026,182 @@ export class PostgresStore implements Store {
 
   async deleteAdminSession(key: string) {
     await this.pool.query('DELETE FROM admin_sessions WHERE key = $1', [key]);
+  }
+
+  async createBankTransferRequest(input: {
+    id: string;
+    userId: string;
+    plan: PremiumPlan;
+    reference: string;
+  }) {
+    return this.transaction(async (client) => {
+      const account = await client.query<{ id: string }>(
+        'SELECT id FROM accounts WHERE id = $1 FOR UPDATE',
+        [input.userId],
+      );
+      if (!account.rows[0]) return undefined;
+      const existing = await client.query<BankTransferRow>(
+        `SELECT * FROM bank_transfer_requests
+          WHERE user_id = $1 AND plan = $2
+            AND status IN ('instructions', 'pending')
+          ORDER BY created_at DESC LIMIT 1`,
+        [input.userId, input.plan.id],
+      );
+      if (existing.rows[0]) return toBankTransferRequest(existing.rows[0]);
+      const { months, days } = termOfPlan(input.plan);
+      const { rows } = await client.query<BankTransferRow>(
+        `INSERT INTO bank_transfer_requests
+           (id, user_id, plan, amount, currency, months, days, reference, status)
+         VALUES ($1, $2, $3, $4, 'USD', $5, $6, $7, 'instructions')
+         RETURNING *`,
+        [
+          input.id,
+          input.userId,
+          input.plan.id,
+          input.plan.amount,
+          months,
+          days,
+          input.reference,
+        ],
+      );
+      return toBankTransferRequest(rows[0]!);
+    });
+  }
+
+  async submitBankTransferRequest(
+    id: string,
+    userId: string,
+    senderReference?: string,
+  ) {
+    return this.transaction(async (client) => {
+      const { rows } = await client.query<BankTransferRow>(
+        `SELECT * FROM bank_transfer_requests
+          WHERE id = $1 AND user_id = $2 FOR UPDATE`,
+        [id, userId],
+      );
+      const request = rows[0];
+      if (!request) return undefined;
+      if (request.status === 'instructions') {
+        const updated = await client.query<BankTransferRow>(
+          `UPDATE bank_transfer_requests
+              SET status = 'pending', sender_reference = $2, submitted_at = now()
+            WHERE id = $1 RETURNING *`,
+          [id, senderReference ?? null],
+        );
+        return toBankTransferRequest(updated.rows[0]!);
+      }
+      return toBankTransferRequest(request);
+    });
+  }
+
+  async listAdminBankTransfers(): Promise<AdminBankTransferRequest[]> {
+    const { rows } = await this.pool.query<
+      BankTransferRow & { email: string; name: string }
+    >(
+      `SELECT r.*, a.email, a.name
+         FROM bank_transfer_requests r
+         JOIN accounts a ON a.id = r.user_id
+        WHERE r.status = 'pending'
+        ORDER BY r.submitted_at, r.created_at
+        LIMIT 200`,
+    );
+    return rows.map((row) => ({
+      ...toBankTransferRequest(row),
+      email: row.email,
+      name: row.name,
+    }));
+  }
+
+  async confirmBankTransfer(
+    id: string,
+    username: string,
+    grantId: string,
+  ): Promise<BankTransferReviewResult> {
+    return this.transaction(async (client) => {
+      const { rows } = await client.query<BankTransferRow>(
+        `SELECT * FROM bank_transfer_requests WHERE id = $1 FOR UPDATE`,
+        [id],
+      );
+      const request = rows[0];
+      if (!request) return { outcome: 'unknown' };
+      if (request.status === 'confirmed')
+        return {
+          outcome: 'repeat',
+          userId: request.user_id,
+          ...(request.paid_until ? { paidUntil: iso(request.paid_until) } : {}),
+        };
+      if (request.status !== 'pending')
+        return { outcome: 'not_pending', userId: request.user_id };
+      const account = await client.query<{ paid_until: Date | null }>(
+        'SELECT paid_until FROM accounts WHERE id = $1 FOR UPDATE',
+        [request.user_id],
+      );
+      if (!account.rows[0]) return { outcome: 'unknown' };
+      const previous = account.rows[0].paid_until;
+      const updated = await client.query<{ paid_until: Date }>(
+        `UPDATE accounts
+            SET paid_until = greatest(coalesce(paid_until, now()), now())
+                  + make_interval(months => $2, days => $3)
+          WHERE id = $1 RETURNING paid_until`,
+        [request.user_id, request.months, request.days],
+      );
+      const paidUntil = updated.rows[0]!.paid_until;
+      const note = request.sender_reference
+        ? `Sender reference: ${request.sender_reference}`
+        : 'USD bank transfer confirmed';
+      await client.query(
+        `INSERT INTO admin_access_grants
+           (id, admin_username, user_id, months, days, method, reference, note,
+            previous_paid_until, paid_until)
+         VALUES ($1, $2, $3, $4, $5, 'bank_transfer', $6, $7, $8, $9)`,
+        [
+          grantId,
+          username,
+          request.user_id,
+          request.months,
+          request.days,
+          request.reference,
+          note,
+          previous,
+          paidUntil,
+        ],
+      );
+      await client.query(
+        `UPDATE bank_transfer_requests
+            SET status = 'confirmed', reviewed_at = now(), reviewed_by = $2,
+                paid_until = $3
+          WHERE id = $1`,
+        [id, username, paidUntil],
+      );
+      return {
+        outcome: 'confirmed',
+        userId: request.user_id,
+        paidUntil: iso(paidUntil),
+      };
+    });
+  }
+
+  async rejectBankTransfer(
+    id: string,
+    username: string,
+  ): Promise<BankTransferReviewResult> {
+    return this.transaction(async (client) => {
+      const { rows } = await client.query<BankTransferRow>(
+        `SELECT * FROM bank_transfer_requests WHERE id = $1 FOR UPDATE`,
+        [id],
+      );
+      const request = rows[0];
+      if (!request) return { outcome: 'unknown' };
+      if (request.status !== 'pending')
+        return { outcome: 'not_pending', userId: request.user_id };
+      await client.query(
+        `UPDATE bank_transfer_requests
+            SET status = 'rejected', reviewed_at = now(), reviewed_by = $2
+          WHERE id = $1`,
+        [id, username],
+      );
+      return { outcome: 'rejected', userId: request.user_id };
+    });
   }
 
   async listAdminAccounts(search: string, limit: number, offset: number) {

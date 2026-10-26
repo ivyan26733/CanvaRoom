@@ -211,6 +211,33 @@ CREATE TABLE IF NOT EXISTS admin_access_grants (
 CREATE INDEX IF NOT EXISTS admin_access_grants_user_idx
   ON admin_access_grants (user_id, created_at DESC);
 
+-- USD bank transfers are reviewed manually. Premium stays locked until an
+-- admin confirms receipt; the reference lets the incoming transfer be matched.
+CREATE TABLE IF NOT EXISTS bank_transfer_requests (
+  id text PRIMARY KEY,
+  user_id text NOT NULL REFERENCES accounts (id),
+  plan text NOT NULL,
+  amount integer NOT NULL CHECK (amount >= 100),
+  currency text NOT NULL CHECK (currency = 'USD'),
+  months integer NOT NULL CHECK (months >= 0),
+  days integer NOT NULL CHECK (days >= 0),
+  reference text NOT NULL UNIQUE,
+  status text NOT NULL CHECK (status IN ('instructions', 'pending', 'confirmed', 'rejected')),
+  sender_reference text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  submitted_at timestamptz,
+  reviewed_at timestamptz,
+  reviewed_by text,
+  paid_until timestamptz,
+  CHECK (months > 0 OR days > 0)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS bank_transfer_open_user_plan_idx
+  ON bank_transfer_requests (user_id, plan)
+  WHERE status IN ('instructions', 'pending');
+CREATE INDEX IF NOT EXISTS bank_transfer_pending_idx
+  ON bank_transfer_requests (created_at)
+  WHERE status = 'pending';
+
 -- The free plan keeps an owner's oldest board, found through this index.
 CREATE INDEX IF NOT EXISTS boards_owner_created_idx ON boards (owner_id, created_at);
 

@@ -39,7 +39,7 @@ export type Faq = { q: string; a: string };
 /** How the plans read in copy. The prices match the server's plans. */
 export const PLAN_COPY = {
   premium:
-    'a one-time payment of $25 for 3 months, $45 for 6 months plus 15 days free (save 10%), or $75 for 12 months plus a month free (save 25%) (in India: ₹499, ₹849 or ₹1,499), with nothing renewing on its own',
+    'a one-time payment of $25 for 3 months, $45 for 6 months plus 15 days free (save 10%), or $75 for 12 months plus a month free (save 25%) (in India: ₹2,350, ₹4,230 or ₹7,050), with nothing renewing on its own',
   trial:
     'Every new account gets a free trial of 30 minutes of active use (the clock only runs while CanvaRoom is open in front of you): up to two boards, with two people besides you on each, live drawing, voice, chat, and templates',
   free: 'After the trial, the free plan keeps your first board for you to use on your own',

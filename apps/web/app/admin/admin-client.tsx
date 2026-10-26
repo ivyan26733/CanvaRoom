@@ -42,6 +42,22 @@ type AdminUser = {
   grants: AdminGrant[];
 };
 type UserPage = { total: number; users: AdminUser[] };
+type AdminBankTransfer = {
+  id: string;
+  userId: string;
+  name: string;
+  email: string;
+  plan: string;
+  amount: number;
+  currency: string;
+  months: number;
+  days: number;
+  reference: string;
+  status: string;
+  senderReference?: string;
+  submittedAt?: string;
+};
+type BankTransferPage = { transfers: AdminBankTransfer[] };
 type AdminMe = {
   authenticated: boolean;
   configured: boolean;
@@ -116,6 +132,9 @@ export default function AdminClient() {
   const [loginError, setLoginError] = useState('');
   const [busy, setBusy] = useState(false);
   const [users, setUsers] = useState<AdminUser[]>([]);
+  const [bankTransfers, setBankTransfers] = useState<AdminBankTransfer[]>([]);
+  const [transferError, setTransferError] = useState('');
+  const [reviewingTransfer, setReviewingTransfer] = useState('');
   const [total, setTotal] = useState(0);
   const [query, setQuery] = useState('');
   const [page, setPage] = useState(1);
@@ -172,10 +191,31 @@ export default function AdminClient() {
     }
   }, [authenticated, page, query]);
 
+  const loadBankTransfers = useCallback(async () => {
+    if (!authenticated) return;
+    setTransferError('');
+    try {
+      const result = await api<BankTransferPage>('/admin/bank-transfers');
+      setBankTransfers(result.transfers);
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401)
+        setAuthenticated(false);
+      setTransferError(
+        error instanceof Error
+          ? error.message
+          : 'Could not load bank transfers.',
+      );
+    }
+  }, [authenticated]);
+
   useEffect(() => {
     const timer = window.setTimeout(() => void loadUsers(), 180);
     return () => window.clearTimeout(timer);
   }, [loadUsers]);
+
+  useEffect(() => {
+    void loadBankTransfers();
+  }, [loadBankTransfers]);
 
   const stats = useMemo(
     () => ({
@@ -252,6 +292,31 @@ export default function AdminClient() {
       );
     } finally {
       setGrantBusy(false);
+    }
+  }
+
+  async function reviewBankTransfer(
+    transfer: AdminBankTransfer,
+    action: 'confirm' | 'reject',
+  ) {
+    setReviewingTransfer(transfer.id);
+    setTransferError('');
+    try {
+      await send(
+        `/admin/bank-transfers/${encodeURIComponent(transfer.id)}/${action}`,
+        'POST',
+      );
+      setBankTransfers((current) =>
+        current.filter((item) => item.id !== transfer.id),
+      );
+      if (action === 'confirm') void loadUsers();
+    } catch (error) {
+      setTransferError(
+        error instanceof Error ? error.message : 'Could not review transfer.',
+      );
+      void loadBankTransfers();
+    } finally {
+      setReviewingTransfer('');
     }
   }
 
@@ -361,6 +426,76 @@ export default function AdminClient() {
             <small>Email not verified</small>
           </div>
         </section>
+        {(bankTransfers.length > 0 || transferError) && (
+          <section className="admin-directory admin-transfers">
+            <div className="admin-directory-head">
+              <div>
+                <h2>USD bank transfers</h2>
+                <p>
+                  Confirm only after matching the payment in the Wise USD
+                  balance. Confirmation grants the listed Premium term.
+                </p>
+              </div>
+              <span className="admin-pill is-waiting">
+                {bankTransfers.length} awaiting review
+              </span>
+            </div>
+            {transferError && (
+              <div className="admin-alert" role="alert">
+                {transferError}
+              </div>
+            )}
+            {bankTransfers.length > 0 && (
+              <ul className="admin-transfer-list">
+                {bankTransfers.map((transfer) => (
+                  <li key={transfer.id} className="admin-transfer-card">
+                    <div className="admin-transfer-info">
+                      <strong>{transfer.name}</strong>
+                      <span>{transfer.email}</span>
+                      <code>{transfer.userId}</code>
+                      <span>
+                        {paymentTerm(transfer)} ·{' '}
+                        {money(transfer.amount, transfer.currency)}
+                      </span>
+                      <span>
+                        App reference: <code>{transfer.reference}</code>
+                      </span>
+                      {transfer.senderReference && (
+                        <span>
+                          Sender reference:{' '}
+                          <code>{transfer.senderReference}</code>
+                        </span>
+                      )}
+                      <span>Submitted {dateTime(transfer.submittedAt)}</span>
+                    </div>
+                    <div className="admin-transfer-actions">
+                      <button
+                        className="button primary small"
+                        disabled={reviewingTransfer === transfer.id}
+                        onClick={() =>
+                          void reviewBankTransfer(transfer, 'confirm')
+                        }
+                      >
+                        {reviewingTransfer === transfer.id
+                          ? 'Reviewing…'
+                          : 'Confirm receipt & grant'}
+                      </button>
+                      <button
+                        className="button ghost small"
+                        disabled={reviewingTransfer === transfer.id}
+                        onClick={() =>
+                          void reviewBankTransfer(transfer, 'reject')
+                        }
+                      >
+                        Reject
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        )}
         <section className="admin-directory">
           <div className="admin-directory-head">
             <div>

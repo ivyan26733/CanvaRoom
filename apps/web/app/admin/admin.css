@@ -251,6 +251,46 @@
   font-size: 13px;
 }
 
+.admin-transfer-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.admin-transfer-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+.admin-transfer-info {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  color: var(--ink-2);
+  font-size: 12px;
+}
+.admin-transfer-info strong {
+  color: var(--ink);
+  font-size: 14px;
+}
+.admin-transfer-info code {
+  overflow-wrap: anywhere;
+  font: 500 11px var(--mono);
+}
+.admin-transfer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
 .admin-table-wrap {
   overflow-x: auto;
   border: 1px solid var(--line);
@@ -564,6 +604,13 @@
   .admin-directory-head {
     align-items: stretch;
     flex-direction: column;
+  }
+  .admin-transfer-card {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .admin-transfer-actions {
+    justify-content: flex-start;
   }
   .admin-search {
     width: 100%;

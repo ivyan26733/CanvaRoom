@@ -261,6 +261,36 @@ export type Payment = {
 
 export type PaymentProvider = 'razorpay' | 'paypal';
 
+export type BankTransferRequest = {
+  id: string;
+  userId: string;
+  plan: string;
+  amount: number;
+  currency: 'USD';
+  months: number;
+  days: number;
+  reference: string;
+  status: 'instructions' | 'pending' | 'confirmed' | 'rejected';
+  senderReference?: string;
+  createdAt: string;
+  submittedAt?: string;
+  reviewedAt?: string;
+  reviewedBy?: string;
+  paidUntil?: string;
+};
+
+export type AdminBankTransferRequest = BankTransferRequest & {
+  email: string;
+  name: string;
+};
+
+export type BankTransferReviewResult =
+  | { outcome: 'confirmed'; userId: string; paidUntil: string }
+  | { outcome: 'repeat'; userId: string; paidUntil?: string }
+  | { outcome: 'rejected'; userId: string }
+  | { outcome: 'not_pending'; userId: string }
+  | { outcome: 'unknown' };
+
 /** Who took an order: as stored, or else from the shape of its ID. */
 export const providerOf = (payment: Pick<Payment, 'orderId' | 'provider'>) =>
   payment.provider ??

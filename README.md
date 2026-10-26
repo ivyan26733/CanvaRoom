@@ -190,9 +190,9 @@ A fresh page shows a quiet guide to every tool and shortcut. It fades away the m
 
 | Plan      | Price | In India | Saving (USD / INR) | Bonus         |    Works out to    |
 | --------- | :---: | :------: | :----------------: | ------------- | :----------------: |
-| 3 months  |  $20  |   ₹499   |         —          | —             | $6.67 · ₹166/month |
-| 6 months  |  $35  |   ₹849   |     12% / 15%      | +15 days free | $5.38 · ₹131/month |
-| 12 months |  $65  |  ₹1,499  |     19% / 25%      | +1 month free | $5.00 · ₹115/month |
+| 3 months  |  $25  |  ₹2,350  |         —          | —             | $8.33 · ₹783/month |
+| 6 months  |  $45  |  ₹4,230  |     10% / 10%      | +15 days free | $6.92 · ₹651/month |
+| 12 months |  $75  |  ₹7,050  |     25% / 25%      | +1 month free | $5.77 · ₹542/month |
 
 The trial clock only runs while CanvaRoom is open in front of you; it pauses when you switch away. Scratch boards, used without an account, are always free.
 

@@ -433,6 +433,53 @@ app.post('/api/admin/users/:userId/grants', async (request, reply) => {
   return { ok: true, paidUntil };
 });
 
+app.get('/api/admin/bank-transfers', async (request, reply) => {
+  const username = await requireAdmin(request, reply);
+  if (!username || !adminStore) return;
+  if (config.usdBankTransferPreviewOnly) return { transfers: [] };
+  return { transfers: await adminStore.listAdminBankTransfers() };
+});
+
+app.post('/api/admin/bank-transfers/:id/confirm', async (request, reply) => {
+  const username = await requireAdmin(request, reply);
+  if (!username || !adminStore) return;
+  if (config.usdBankTransferPreviewOnly)
+    return apiError(reply, 503, 'Bank transfer review is disabled in Preview.');
+  const { id } = request.params as { id: string };
+  const result = await adminStore.confirmBankTransfer(
+    id,
+    username,
+    randomUUID(),
+  );
+  if (result.outcome === 'unknown')
+    return apiError(reply, 404, 'Bank transfer request not found.');
+  if (result.outcome === 'not_pending')
+    return apiError(reply, 409, 'This bank transfer is no longer pending.');
+  if (result.outcome === 'confirmed') {
+    const account = await store.getAccount(result.userId);
+    if (account)
+      refreshOwnerPlan(
+        result.userId,
+        planOf({ ...account, paidUntil: result.paidUntil }),
+      );
+  }
+  return result;
+});
+
+app.post('/api/admin/bank-transfers/:id/reject', async (request, reply) => {
+  const username = await requireAdmin(request, reply);
+  if (!username || !adminStore) return;
+  if (config.usdBankTransferPreviewOnly)
+    return apiError(reply, 503, 'Bank transfer review is disabled in Preview.');
+  const { id } = request.params as { id: string };
+  const result = await adminStore.rejectBankTransfer(id, username);
+  if (result.outcome === 'unknown')
+    return apiError(reply, 404, 'Bank transfer request not found.');
+  if (result.outcome === 'not_pending')
+    return apiError(reply, 409, 'This bank transfer is no longer pending.');
+  return result;
+});
+
 // ---- Accounts ----
 
 app.get('/api/auth/me', async (request) => ({
@@ -570,7 +617,7 @@ app.post('/api/auth/forgot', async (request, reply) => {
   }
   return {
     ok: true,
-    message: `If an account uses that email, we’ve sent it a 6-digit code. It works for ${RESET_CODE_MINUTES} minutes.`,
+    message: `If an account uses that email, we’ve sent it a 6-digit code. It works for ${RESET_CODE_MINUTES} minutes. Check your inbox and spam folder.`,
   };
 });
 
@@ -738,7 +785,7 @@ app.post('/api/auth/resend-verification', async (request, reply) => {
   return {
     ok: true,
     cooldown: RESEND_COOLDOWN_SECONDS,
-    message: `We’ve sent a new code to ${account.email}.`,
+    message: `We’ve sent a new code to ${account.email}. Check your inbox and spam folder.`,
   };
 });
 
@@ -1439,7 +1486,9 @@ async function applyRefund(
  * PayPal, wherever they are, so they can test without a VPN.
  */
 const currencyOf = (request: FastifyRequest, email?: string) =>
-  config.paypal?.mode === 'sandbox' && paypalAllowedFor(email)
+  config.usdBankTransferPreviewOnly
+    ? 'USD'
+    : config.paypal?.mode === 'sandbox' && paypalAllowedFor(email)
     ? 'USD'
     : currencyForCountry(
         request.headers['x-vercel-ip-country'] as string | undefined,
@@ -1450,10 +1499,17 @@ app.get('/api/billing/plan', async (request) => {
   const email = user && !user.guest ? user.email : undefined;
   const currency = currencyOf(request, email);
   const provider = checkoutFor(currency, email);
+  const bankTransferAvailable =
+    currency === 'USD' &&
+    Boolean(
+      config.usdBankTransfer &&
+        (adminStore || config.usdBankTransferPreviewOnly),
+    );
   return {
-    available: Boolean(provider),
+    available: Boolean(provider) || bankTransferAvailable,
     currency,
     provider: provider ?? null,
+    bankTransferAvailable,
     plans: plansFor(currency),
     // The client ID is public: PayPal's buttons load with it.
     ...(provider === 'paypal' && config.paypal
@@ -1466,6 +1522,87 @@ app.get('/api/billing/plan', async (request) => {
       : {}),
     limits: { trialBoards: TRIAL_BOARDS, trialGuests: TRIAL_GUESTS },
   };
+});
+
+app.post('/api/billing/bank-transfer', async (request, reply) => {
+  const user = await currentUser(request, reply);
+  if (!user) return;
+  if (user.guest)
+    return apiError(reply, 403, 'Create an account before upgrading.');
+  if (user.verifyAvailable && user.emailVerified === false)
+    return apiError(
+      reply,
+      403,
+      'Verify your email before upgrading. We’ve sent you a 6-digit code. Check your inbox and spam folder.',
+      'email_unverified',
+    );
+  if (!(await allow(reply, `bank-transfer:${user.id}`, 10, 3600))) return;
+  if (!config.usdBankTransfer || (!adminStore && !config.usdBankTransferPreviewOnly))
+    return apiError(reply, 503, 'Bank transfers aren’t available yet.');
+  if (currencyOf(request, user.email) !== 'USD')
+    return apiError(reply, 400, 'Bank transfers are available for USD plans.');
+  const body = z
+    .object({ plan: z.enum(PLAN_IDS) })
+    .safeParse(request.body ?? {});
+  if (!body.success) return apiError(reply, 400, 'Choose a plan.');
+  const plan = planById(body.data.plan, 'USD')!;
+  const bankReference = `CR-${randomBytes(5).toString('hex').toUpperCase()}`;
+  if (config.usdBankTransferPreviewOnly) {
+    const { months, days } = termOfPlan(plan);
+    return {
+      request: {
+        id: randomUUID(),
+        userId: user.id,
+        plan: plan.id,
+        amount: plan.amount,
+        currency: 'USD' as const,
+        months,
+        days,
+        reference: bankReference,
+        status: 'instructions' as const,
+      },
+      details: config.usdBankTransfer,
+      previewOnly: true,
+    };
+  }
+  const bankTransferStore = adminStore;
+  if (!bankTransferStore)
+    return apiError(reply, 503, 'Bank transfers aren’t available yet.');
+  const bankRequest = await bankTransferStore.createBankTransferRequest({
+    id: randomUUID(),
+    userId: user.id,
+    plan,
+    reference: bankReference,
+  });
+  if (!bankRequest)
+    return apiError(reply, 404, 'We couldn’t find your account.');
+  return { request: bankRequest, details: config.usdBankTransfer, previewOnly: false };
+});
+
+app.post('/api/billing/bank-transfer/:id/submit', async (request, reply) => {
+  const user = await currentUser(request, reply);
+  if (!user) return;
+  if (user.guest)
+    return apiError(reply, 403, 'Create an account before upgrading.');
+  if (config.usdBankTransferPreviewOnly)
+    return apiError(reply, 503, 'Bank transfer submissions are disabled in Preview.');
+  if (!(await allow(reply, `bank-transfer-submit:${user.id}`, 10, 3600)))
+    return;
+  const { id } = request.params as { id: string };
+  const body = z
+    .object({
+      senderReference: z.string().trim().max(120).optional(),
+    })
+    .safeParse(request.body ?? {});
+  if (!body.success) return apiError(reply, 400, firstIssue(body.error));
+  const bankRequest = await adminStore?.submitBankTransferRequest(
+    id,
+    user.id,
+    body.data.senderReference || undefined,
+  );
+  if (!bankRequest)
+    return apiError(reply, 404, 'Bank transfer request not found.');
+  return { request: bankRequest };
 });
 
 // While the app is open in a visible tab, the page beats every ~20 seconds;
@@ -1494,7 +1631,7 @@ app.post('/api/billing/create-order', async (request, reply) => {
     return apiError(
       reply,
       403,
-      'Verify your email before upgrading. We’ve sent you a 6-digit code.',
+      'Verify your email before upgrading. We’ve sent you a 6-digit code. Check your inbox and spam folder.',
       'email_unverified',
     );
   if (!(await allow(reply, `order:${user.id}`, 20, 3600))) return;

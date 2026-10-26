@@ -101,14 +101,14 @@ describe('prices by region', () => {
     assert.deepEqual(
       inr.map((plan) => [plan.id, plan.currency, plan.amount, plan.compareAt]),
       [
-        ['quarterly', 'INR', 49900, 49900],
-        ['half-year', 'INR', 84900, 99800],
-        ['yearly', 'INR', 149900, 199600],
+        ['quarterly', 'INR', 235000, 235000],
+        ['half-year', 'INR', 423000, 470000],
+        ['yearly', 'INR', 705000, 940000],
       ],
     );
     assert.deepEqual(
       inr.map((plan) => plan.savePercent),
-      [0, 15, 25],
+      [0, 10, 25],
     );
     // Foreign clients see the new dollar prices and discounts.
     assert.deepEqual(
@@ -125,7 +125,7 @@ describe('prices by region', () => {
     );
   });
 
-  test('a rupee order without a stored plan is read from its amount', () => {
+  test('an older rupee order without a stored plan keeps its term', () => {
     const plan = plans.planOfOrder({
       amount: 84900,
       currency: 'INR',
@@ -382,14 +382,14 @@ describe('PayPal webhook', () => {
           refund: {
             entity: {
               payment_id: 'pay_ABC123456',
-              amount: 49900,
+              amount: 235000,
               currency: 'INR',
               status: 'processed',
             },
           },
         },
       }),
-      { paymentId: 'pay_ABC123456', amount: 49900, currency: 'INR' },
+      { paymentId: 'pay_ABC123456', amount: 235000, currency: 'INR' },
     );
     assert.equal(webhookRefund({ event: 'payment.captured' }), undefined);
   });
@@ -513,14 +513,14 @@ function storeSuite(name: string, make: () => Store | undefined) {
           orderId,
           paymentId: unique('pay_'),
           source: 'webhook',
-          amount: 149900,
+          amount: 705000,
           currency: 'INR',
         },
         deps,
       );
       await settle();
       assert.equal(result.outcome, 'applied');
-      assert.equal(sent[0]!.welcome.amount, 149900);
+      assert.equal(sent[0]!.welcome.amount, 705000);
       assert.equal(sent[0]!.welcome.currency, 'INR');
       const until = Date.parse((await store.getAccount(userId))!.paidUntil!);
       assert.ok(

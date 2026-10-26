@@ -44,6 +44,14 @@ const environmentSchema = z.object({
   // Secret of the webhook set up in the Razorpay dashboard. Without it the
   // webhook route refuses every call.
   RAZORPAY_WEBHOOK_SECRET: z.string().optional(),
+  // Public receiving instructions, returned only to a signed-in USD buyer.
+  USD_BANK_ACCOUNT_NAME: z.string().optional(),
+  USD_BANK_ACCOUNT_TYPE: z.string().optional(),
+  USD_BANK_ROUTING_NUMBER: z.string().optional(),
+  USD_BANK_ACCOUNT_NUMBER: z.string().optional(),
+  USD_BANK_ADDRESS: z.string().optional(),
+  USD_BANK_SWIFT_BIC: z.string().optional(),
+  USD_BANK_TRANSFER_PREVIEW_ONLY: z.enum(['true', 'false']).default('false'),
   // PayPal Checkout for buyers outside India. PAYPAL_MODE picks the keys:
   // 'sandbox' (the default) uses the sandbox app and lets only the emails in
   // PAYPAL_SANDBOX_TESTERS pay; 'live' takes real money from everyone.
@@ -78,6 +86,18 @@ if (!parsed.success) {
 }
 
 const env = parsed.data;
+
+const usdBankTransferDetails = {
+  accountName: env.USD_BANK_ACCOUNT_NAME?.trim(),
+  accountType: env.USD_BANK_ACCOUNT_TYPE?.trim(),
+  routingNumber: env.USD_BANK_ROUTING_NUMBER?.trim(),
+  accountNumber: env.USD_BANK_ACCOUNT_NUMBER?.trim(),
+  address: env.USD_BANK_ADDRESS?.trim(),
+  swiftBic: env.USD_BANK_SWIFT_BIC?.trim(),
+};
+const usdBankTransfer = Object.values(usdBankTransferDetails).every(Boolean)
+  ? usdBankTransferDetails
+  : undefined;
 
 /** The PayPal app for the current mode, when both its keys are set. */
 function paypalConfig() {
@@ -127,6 +147,8 @@ export const config = {
       ? { keyId: env.RAZORPAY_KEY_ID, keySecret: env.RAZORPAY_KEY_SECRET }
       : undefined,
   paypal: paypalConfig(),
+  usdBankTransfer,
+  usdBankTransferPreviewOnly: env.USD_BANK_TRANSFER_PREVIEW_ONLY === 'true',
   razorpayWebhookSecret: env.RAZORPAY_WEBHOOK_SECRET?.trim() || undefined,
   passDays: env.BILLING_PASS_DAYS,
   cronSecret: env.CRON_SECRET?.trim() || undefined,

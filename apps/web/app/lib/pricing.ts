@@ -64,31 +64,31 @@ export const PLANS_BY_CURRENCY: Record<Currency, readonly PremiumPlan[]> = {
     {
       id: 'quarterly',
       currency: 'INR',
-      amount: 49900,
-      compareAt: 49900,
+      amount: 235000,
+      compareAt: 235000,
       savePercent: 0,
       ...QUARTERLY,
-      perMonth: 16633,
+      perMonth: 78333,
       bestValue: false,
     },
     {
       id: 'half-year',
       currency: 'INR',
-      amount: 84900,
-      compareAt: 99800,
-      savePercent: 15,
+      amount: 423000,
+      compareAt: 470000,
+      savePercent: 10,
       ...HALF_YEAR,
-      perMonth: 13062,
+      perMonth: 65077,
       bestValue: false,
     },
     {
       id: 'yearly',
       currency: 'INR',
-      amount: 149900,
-      compareAt: 199600,
+      amount: 705000,
+      compareAt: 940000,
       savePercent: 25,
       ...YEARLY,
-      perMonth: 11531,
+      perMonth: 54231,
       bestValue: true,
     },
   ],
@@ -111,7 +111,7 @@ export const formatMoney = (amount: number, currency: Currency = 'USD') =>
     maximumFractionDigits: amount % 100 ? 2 : 0,
   }).format(amount / 100);
 
-/** "$5.38" or "₹115", for the price of a month: cents for dollars only. */
+/** "$5.77" or "₹542", for the price of a month: cents for dollars only. */
 export const formatRate = (amount: number, currency: Currency = 'USD') =>
   new Intl.NumberFormat(locale(currency), {
     style: 'currency',

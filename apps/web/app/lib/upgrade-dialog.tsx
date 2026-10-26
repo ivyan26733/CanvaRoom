@@ -24,8 +24,37 @@ type Billing = {
   available: boolean;
   currency: Currency;
   provider: 'razorpay' | 'paypal' | null;
+  bankTransferAvailable: boolean;
   plans: Plan[];
   paypal?: { clientId: string; mode: 'sandbox' | 'live' };
+};
+
+type BankTransferDetails = {
+  accountName: string;
+  accountType: string;
+  routingNumber: string;
+  accountNumber: string;
+  address: string;
+  swiftBic: string;
+};
+
+type BankTransferRequest = {
+  id: string;
+  plan: PlanId;
+  amount: number;
+  currency: 'USD';
+  months: number;
+  days: number;
+  reference: string;
+  status: 'instructions' | 'pending' | 'confirmed' | 'rejected';
+  senderReference?: string;
+  paidUntil?: string;
+};
+
+type BankTransferStart = {
+  request: BankTransferRequest;
+  details: BankTransferDetails;
+  previewOnly?: boolean;
 };
 
 type Order = {
@@ -166,12 +195,76 @@ export default function UpgradeDialog({
   const [chosen, setChosen] = useState<PlanId>(initialPlan);
   const [available, setAvailable] = useState(true);
   const [phase, setPhase] = useState<Phase>({ step: 'idle' });
+  const [bankTransfer, setBankTransfer] = useState<BankTransferStart | null>(
+    null,
+  );
+  const [bankTransferBusy, setBankTransferBusy] = useState(false);
+  const [senderReference, setSenderReference] = useState('');
   const state = planState(user);
   const plans = billing?.plans ?? null;
   const currency = billing?.currency ?? 'USD';
   const pass = plans?.find((item) => item.id === chosen) ?? null;
+  const transferPlan = bankTransfer
+    ? plans?.find((item) => item.id === bankTransfer.request.plan)
+    : undefined;
   const money = (amount: number) => formatMoney(amount, currency);
   const paypal = billing?.provider === 'paypal' ? billing.paypal : undefined;
+
+  async function showBankTransfer() {
+    if (!user || user.guest || !billing?.bankTransferAvailable) return;
+    setBankTransferBusy(true);
+    setPhase({ step: 'idle' });
+    try {
+      const result = await send<BankTransferStart>(
+        '/billing/bank-transfer',
+        'POST',
+        { plan: chosen },
+      );
+      setBankTransfer(result);
+      setSenderReference(result.request.senderReference ?? '');
+      setChosen(result.request.plan);
+    } catch (error) {
+      setPhase({
+        step: 'idle',
+        tone: 'error',
+        message: (error as Error).message,
+      });
+    } finally {
+      setBankTransferBusy(false);
+    }
+  }
+
+  async function reportBankTransfer() {
+    if (!bankTransfer) return;
+    setBankTransferBusy(true);
+    try {
+      const result = await send<{ request: BankTransferRequest }>(
+        `/billing/bank-transfer/${encodeURIComponent(bankTransfer.request.id)}/submit`,
+        'POST',
+        { senderReference: senderReference.trim() || undefined },
+      );
+      setBankTransfer((current) =>
+        current ? { ...current, request: result.request } : current,
+      );
+      if (result.request.status === 'confirmed')
+        await finish(result.request.paidUntil);
+      else if (result.request.status === 'rejected')
+        setPhase({
+          step: 'idle',
+          tone: 'error',
+          message:
+            'This transfer request was declined. Contact us if you think this is a mistake.',
+        });
+    } catch (error) {
+      setPhase({
+        step: 'idle',
+        tone: 'error',
+        message: (error as Error).message,
+      });
+    } finally {
+      setBankTransferBusy(false);
+    }
+  }
 
   useEffect(() => {
     api<Billing>('/billing/plan')
@@ -356,7 +449,7 @@ export default function UpgradeDialog({
                 role="radio"
                 aria-checked={item.id === chosen}
                 className={`upgrade-plan ${item.id === chosen ? 'is-chosen' : ''}`}
-                disabled={busy}
+                disabled={busy || bankTransferBusy || Boolean(bankTransfer)}
                 onClick={() => setChosen(item.id)}
               >
                 <span className="upgrade-plan-length">
@@ -413,31 +506,19 @@ export default function UpgradeDialog({
           {phase.message}
         </p>
       )}
-      {paypal && pass && user && !user.guest && available ? (
-        <>
-          <p className="upgrade-paypal-label">
-            {phase.step === 'verifying'
-              ? 'Confirming payment…'
-              : `Pay ${money(pass.amount)} for ${planLength(pass)}`}
-          </p>
-          <PayPalCheckout
-            clientId={paypal.clientId}
-            plan={chosen}
-            disabled={busy}
-            onPaying={() => setPhase({ step: 'verifying' })}
-            onPaid={(paidUntil) => void finish(paidUntil)}
-            onPending={() => setPhase({ step: 'pending' })}
-            onStop={(message, tone) =>
-              setPhase({ step: 'idle', message, tone })
-            }
-          />
-          <div className="modal-actions">
-            <button className="button ghost" onClick={onClose}>
-              Not now
-            </button>
-          </div>
-        </>
-      ) : (
+      {bankTransfer?.request.status === 'pending' ? (
+        <div className="modal-actions">
+          <button className="button primary" onClick={onClose}>
+            Back to work
+          </button>
+        </div>
+      ) : paypal && pass && user && !user.guest && available ? (
+        <p className="upgrade-paypal-label">
+          {phase.step === 'verifying'
+            ? 'Confirming payment…'
+            : `Pay ${money(pass.amount)} for ${planLength(pass)}`}
+        </p>
+      ) : billing?.provider === 'razorpay' || !billing ? (
         <div className="modal-actions">
           <button className="button ghost" onClick={onClose}>
             Not now
@@ -458,7 +539,180 @@ export default function UpgradeDialog({
                     : 'Loading…'}
           </button>
         </div>
+      ) : billing.bankTransferAvailable ? (
+        <div className="modal-actions">
+          <button className="button ghost" onClick={onClose}>
+            Not now
+          </button>
+        </div>
+      ) : (
+        <div className="modal-actions">
+          <button className="button ghost" onClick={onClose}>
+            Not now
+          </button>
+          <button className="button primary" disabled>
+            Payments unavailable
+          </button>
+        </div>
       )}
+      {billing?.bankTransferAvailable && (
+        <section className="upgrade-bank-transfer">
+          {!bankTransfer ? (
+            <button
+              type="button"
+              className="button ghost wide"
+              disabled={
+                busy || bankTransferBusy || !user || user.guest || !pass
+              }
+              onClick={() => void showBankTransfer()}
+            >
+              {bankTransferBusy
+                ? 'Loading bank details…'
+                : 'Pay by bank transfer'}
+            </button>
+          ) : (
+            <>
+              <h3>USD bank transfer</h3>
+              {bankTransfer.previewOnly && (
+                <p className="upgrade-bank-status" role="status">
+                  Preview only. Do not send money; this transfer will not be
+                  recorded or reviewed.
+                </p>
+              )}
+              <p>
+                Send <strong>{money(bankTransfer.request.amount)}</strong> for{' '}
+                {transferPlan
+                  ? planLength(transferPlan)
+                  : `${bankTransfer.request.months} months`}
+                . Use the reference below so we can match your transfer.
+              </p>
+              <dl className="upgrade-bank-details">
+                <div>
+                  <dt>Recipient</dt>
+                  <dd>{bankTransfer.details.accountName}</dd>
+                </div>
+                <div>
+                  <dt>Account type</dt>
+                  <dd>{bankTransfer.details.accountType}</dd>
+                </div>
+                <div>
+                  <dt>Routing number (ACH and wire)</dt>
+                  <dd>
+                    <code>{bankTransfer.details.routingNumber}</code>
+                  </dd>
+                </div>
+                <div>
+                  <dt>Account number</dt>
+                  <dd>
+                    <code>{bankTransfer.details.accountNumber}</code>
+                  </dd>
+                </div>
+                <div>
+                  <dt>Bank address</dt>
+                  <dd>{bankTransfer.details.address}</dd>
+                </div>
+                <div>
+                  <dt>SWIFT/BIC (senders outside the U.S.)</dt>
+                  <dd>
+                    <code>{bankTransfer.details.swiftBic}</code>
+                  </dd>
+                </div>
+                <div className="upgrade-bank-reference">
+                  <dt>Transfer reference</dt>
+                  <dd>
+                    <code>{bankTransfer.request.reference}</code>
+                  </dd>
+                </div>
+              </dl>
+              <p className="upgrade-bank-note">
+                U.S. senders can use ACH or a domestic wire. Senders outside the
+                U.S. must send USD by SWIFT. Transfer and intermediary fees may
+                apply. After paying, email a screenshot of your payment
+                confirmation to{' '}
+                <a href="mailto:canvacollabroom@gmail.com">
+                  canvacollabroom@gmail.com
+                </a>{' '}
+                so we can verify it faster. We aim to grant Premium access
+                within 3–6 hours of your payment. Access starts after we verify
+                the funds.
+              </p>
+              {bankTransfer.previewOnly ? null : bankTransfer.request.status === 'instructions' ? (
+                <div className="upgrade-bank-submit">
+                  <label>
+                    Sender’s bank reference <span>(optional)</span>
+                    <input
+                      value={senderReference}
+                      maxLength={120}
+                      onChange={(event) =>
+                        setSenderReference(event.target.value)
+                      }
+                      placeholder="Reference from your transfer receipt"
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    className="button primary wide"
+                    disabled={bankTransferBusy}
+                    onClick={() => void reportBankTransfer()}
+                  >
+                    {bankTransferBusy
+                      ? 'Submitting…'
+                      : 'I’ve sent the transfer'}
+                  </button>
+                </div>
+              ) : bankTransfer.request.status === 'pending' ? (
+                <p className="upgrade-bank-status" role="status">
+                  Transfer reported. Premium will activate after we confirm the
+                  funds. You don’t need to pay again.
+                </p>
+              ) : bankTransfer.request.status === 'confirmed' ? (
+                <p className="upgrade-bank-status" role="status">
+                  Transfer confirmed. Premium is active.
+                </p>
+              ) : (
+                <p className="upgrade-bank-status" role="status">
+                  This transfer request was declined. Contact us if you need
+                  help.
+                </p>
+              )}
+              {bankTransfer.request.status === 'instructions' && (
+                <button
+                  type="button"
+                  className="upgrade-bank-change"
+                  onClick={() => setBankTransfer(null)}
+                >
+                  Choose a different plan
+                </button>
+              )}
+            </>
+          )}
+        </section>
+      )}
+      {paypal &&
+        pass &&
+        user &&
+        !user.guest &&
+        available &&
+        bankTransfer?.request.status !== 'pending' && (
+          <>
+            <PayPalCheckout
+              clientId={paypal.clientId}
+              plan={chosen}
+              disabled={busy}
+              onPaying={() => setPhase({ step: 'verifying' })}
+              onPaid={(paidUntil) => void finish(paidUntil)}
+              onPending={() => setPhase({ step: 'pending' })}
+              onStop={(message, tone) =>
+                setPhase({ step: 'idle', message, tone })
+              }
+            />
+            <div className="modal-actions">
+              <button className="button ghost" onClick={onClose}>
+                Not now
+              </button>
+            </div>
+          </>
+        )}
     </Modal>
   );
 }

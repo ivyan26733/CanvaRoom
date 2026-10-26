@@ -79,7 +79,10 @@ export function AuthForm({
           onDone?.(result.user);
           return;
         }
-        setSent(result.message ?? 'Check your email to finish signing up.');
+        setSent(
+          result.message ??
+            'Check your inbox and spam folder to finish signing up.',
+        );
         setBusy(false);
         return;
       }
