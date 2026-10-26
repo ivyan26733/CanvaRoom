@@ -8,8 +8,9 @@ import pg from 'pg';
 const { migrate } = await import('../src/db.js');
 const { PostgresStore } = await import('../src/pg-store.js');
 const { MemoryStore } = await import('../src/store.js');
-const { boardReportSchema, percentile, summarise } =
+const { boardReportSchema, classifyPoor, percentile, summarise } =
   await import('../src/perf.js');
+type PoorMinute = import('../src/perf.js').PoorMinute;
 type BoardReport = import('../src/perf.js').BoardReport;
 
 let sequence = 0;
@@ -157,5 +158,103 @@ describe('performance reports in Postgres', () => {
       [smooth.id],
     );
     assert.equal(rows.length, 0);
+  });
+});
+
+describe('whose problem a poor minute was', () => {
+  const minute = (overrides: Partial<PoorMinute>): PoorMinute => ({
+    id: Math.random().toString(36).slice(2),
+    at: Date.parse('2026-10-27T10:00:00Z'),
+    userId: 'u1',
+    rttP95: 120,
+    saveP95: null,
+    reconnects: 0,
+    offlineMs: 0,
+    slowFrameMs: 0,
+    worstFrameMs: 0,
+    errors: 0,
+    rejected: 0,
+    objects: 100,
+    mobile: false,
+    cores: 8,
+    memoryGb: 8,
+    ...overrides,
+  });
+  const sideOf = (
+    target: PoorMinute,
+    all: PoorMinute[],
+    releases: number[] = [],
+  ) => classifyPoor(all, releases).get(target.id)!;
+
+  test('script errors and refused edits are ours', () => {
+    const error = minute({ errors: 1 });
+    assert.equal(sideOf(error, [error]).side, 'ours');
+    const refused = minute({ rejected: 2 });
+    assert.equal(sideOf(refused, [refused]).side, 'ours');
+  });
+
+  test('slow saves: ours on a quick connection, theirs on a slow one', () => {
+    const quick = minute({ saveP95: 2600, rttP95: 130 });
+    assert.equal(sideOf(quick, [quick]).side, 'ours');
+    const slow = minute({ saveP95: 2600, rttP95: 1500 });
+    assert.equal(sideOf(slow, [slow]).side, 'user');
+  });
+
+  test('one person lagging is their network; several at once is ours', () => {
+    const alone = minute({ rttP95: 12_000 });
+    assert.equal(sideOf(alone, [alone]).side, 'user');
+    const a = minute({ userId: 'a', reconnects: 1 });
+    const b = minute({ userId: 'b', reconnects: 1, at: a.at + 60_000 });
+    const verdict = sideOf(a, [a, b]);
+    assert.equal(verdict.side, 'ours');
+    assert.match(verdict.why[0]!, /2 people/);
+  });
+
+  test('a drop right after an update is ours; a lone short drop is unclear', () => {
+    const drop = minute({ reconnects: 1, offlineMs: 1500 });
+    assert.equal(sideOf(drop, [drop], [drop.at - 2 * 60_000]).side, 'ours');
+    assert.equal(sideOf(drop, [drop]).side, 'unclear');
+  });
+
+  test('the same person dropping again and again is ours', () => {
+    const base = Date.parse('2026-10-26T16:30:00Z');
+    const drops = [0, 2, 4, 6].map((n) =>
+      minute({ reconnects: 1, offlineMs: 2000, at: base + n * 60_000 }),
+    );
+    const verdict = sideOf(drops[1]!, drops);
+    assert.equal(verdict.side, 'ours');
+    assert.match(verdict.why[0]!, /Dropped 4 times/);
+  });
+
+  test('freezes: big boards and normal devices are ours, weak devices theirs', () => {
+    const big = minute({ slowFrameMs: 2500, objects: 4000 });
+    assert.equal(sideOf(big, [big]).side, 'ours');
+    const phone = minute({ slowFrameMs: 2500, mobile: true });
+    assert.equal(sideOf(phone, [phone]).side, 'user');
+    const laptop = minute({ worstFrameMs: 800 });
+    assert.equal(sideOf(laptop, [laptop]).side, 'ours');
+  });
+});
+
+describe('versions in Postgres', () => {
+  test('reports can be narrowed to one version, with sides counted', async (t) => {
+    if (!store) return t.skip('no TEST_DATABASE_URL');
+    const version = unique('v')
+      .replace(/[^a-z0-9]/g, '')
+      .slice(0, 30);
+    await store.noteAppVersion(version, 'Test release');
+    const userId = unique('ver_user_');
+    const row = summarise(
+      { ...report({ errors: 1, firstError: 'Boom' }), version },
+      { id: unique('m_'), userId, guest: false },
+    );
+    await store.addBoardMetric(row);
+    const only = await store.performanceOverview(1, version);
+    assert.equal(only.totals.reports, 1);
+    assert.equal(only.sides.ours, 1);
+    assert.equal(only.worst[0]?.side, 'ours');
+    const listed = only.versions.find((item) => item.version === version);
+    assert.equal(listed?.message, 'Test release');
+    assert.equal(listed?.reports, 1);
   });
 });

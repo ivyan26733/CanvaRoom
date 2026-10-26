@@ -1847,3 +1847,111 @@ button.admin-kpi:hover {
     justify-content: flex-start;
   }
 }
+
+/* ---- Performance: versions and whose side ---- */
+
+.perf-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+.perf-version {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.perf-version select {
+  max-width: 280px;
+  min-height: 36px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 500;
+}
+.admin-legend .is-release {
+  width: 3px;
+  height: 12px;
+  border-radius: 0;
+  background: var(--blue);
+}
+.perf-release line {
+  stroke: var(--blue);
+  stroke-width: 2;
+  stroke-dasharray: 4 3;
+}
+.perf-sides {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.perf-side {
+  display: grid;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-2);
+  text-align: left;
+}
+.perf-side strong {
+  font: 700 20px var(--display);
+}
+.perf-side span {
+  color: var(--ink);
+  font-size: 12.5px;
+  font-weight: 650;
+}
+.perf-side small {
+  color: var(--ink-3);
+  font-size: 11px;
+  line-height: 1.35;
+}
+.perf-side.is-ours strong {
+  color: var(--danger);
+}
+.perf-side.is-user strong {
+  color: var(--blue);
+}
+.perf-side.is-active {
+  border-color: var(--ink);
+  box-shadow: inset 0 0 0 1px var(--ink);
+}
+.perf-badge {
+  display: inline-flex;
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: var(--bg-2);
+  color: var(--ink-2);
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.perf-badge.is-ours {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+.perf-badge.is-user {
+  background: var(--blue-soft);
+  color: var(--blue);
+}
+.perf-why {
+  margin-top: 5px;
+  color: var(--ink-2);
+}
+@media (max-width: 760px) {
+  .perf-sides {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .perf-filters {
+    justify-content: flex-start;
+  }
+}

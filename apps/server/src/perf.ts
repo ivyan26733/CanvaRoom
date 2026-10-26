@@ -11,6 +11,10 @@ const label = (max: number) => z.string().trim().max(max);
 
 export const boardReportSchema = z.object({
   boardId: z.string().min(1).max(100),
+  version: z
+    .string()
+    .regex(/^[a-z0-9]{1,40}$/)
+    .optional(),
   visibleMs: ms,
   rtt: z.array(ms).max(500),
   saves: z.array(ms).max(500),
@@ -101,6 +105,7 @@ export function poorReasons(summary: {
 
 export type BoardMetricRow = {
   id: string;
+  appVersion: string | null;
   userId: string;
   guest: boolean;
   boardId: string;
@@ -159,6 +164,7 @@ export function summarise(
   });
   return {
     id: who.id,
+    appVersion: report.version ?? null,
     userId: who.userId,
     guest: who.guest,
     boardId: report.boardId,
@@ -190,3 +196,149 @@ export function summarise(
 
 /** Reports are kept this long. */
 export const KEEP_METRICS_DAYS = 30;
+
+/** Whose problem a poor minute was. */
+export type Side = 'ours' | 'user' | 'unclear';
+
+/** What classification needs from each poor minute. */
+export type PoorMinute = {
+  id: string;
+  at: number;
+  userId: string;
+  rttP95: number | null;
+  saveP95: number | null;
+  reconnects: number;
+  offlineMs: number;
+  slowFrameMs: number;
+  worstFrameMs: number;
+  errors: number;
+  rejected: number;
+  objects: number;
+  mobile: boolean;
+  cores: number | null;
+  memoryGb: number | null;
+};
+
+/** Minutes this close together count as "at the same time". */
+const TOGETHER_MS = 3 * 60_000;
+/** Connections from before an update are replaced within about 5 minutes. */
+const AFTER_RELEASE_MS = 6 * 60_000;
+/** Lone drops this many times within the window are a pattern. */
+const REPEATS = 3;
+const REPEAT_WINDOW_MS = 15 * 60_000;
+/** A board this big is ours to make faster, whatever the device. */
+const LARGE_BOARD = 1_500;
+/** A connection this quick rules out the user's network. */
+const GOOD_RTT = 400;
+
+/**
+ * Decides, for each poor minute, whether it was our side (our app, server or
+ * an update we released), the user's side (their network or device), or
+ * unclear, with the reasons in plain words.
+ *
+ * - Script errors and refused edits: ours.
+ * - Slow saves: ours when their connection was quick, theirs when it wasn't.
+ * - Slow connection or a dropped one: ours when several people had it at
+ *   once, or it followed one of our updates; theirs when only they did
+ *   (and for a drop, when their connection had also stalled); otherwise a
+ *   lone short drop is unclear.
+ * - Screen freezes: ours on large boards or normal devices; theirs on a
+ *   phone or a low-powered computer.
+ */
+export function classifyPoor(minutes: PoorMinute[], releases: number[]) {
+  const result = new Map<string, { side: Side; why: string[] }>();
+  const connectionTrouble = (minute: PoorMinute) =>
+    minute.reconnects > 0 ||
+    minute.offlineMs > POOR.offlineMs ||
+    (minute.rttP95 ?? 0) > POOR.rttP95;
+  const othersAtOnce = (minute: PoorMinute) =>
+    new Set(
+      minutes
+        .filter(
+          (other) =>
+            other.userId !== minute.userId &&
+            Math.abs(other.at - minute.at) <= TOGETHER_MS &&
+            connectionTrouble(other),
+        )
+        .map((other) => other.userId),
+    ).size;
+  // The same person dropping again and again on a steady connection is a
+  // pattern, not bad luck: that is how last night's hidden-tab bug looked.
+  const steadyDrop = (minute: PoorMinute) =>
+    minute.reconnects > 0 && (minute.rttP95 ?? 0) <= POOR.rttP95;
+  const repeatedDrops = (minute: PoorMinute) =>
+    minutes.filter(
+      (other) =>
+        other.userId === minute.userId &&
+        Math.abs(other.at - minute.at) <= REPEAT_WINDOW_MS &&
+        steadyDrop(other),
+    ).length;
+  const afterRelease = (minute: PoorMinute) =>
+    releases.some(
+      (release) =>
+        minute.at >= release - 60_000 &&
+        minute.at - release <= AFTER_RELEASE_MS,
+    );
+
+  for (const minute of minutes) {
+    const ours: string[] = [];
+    const user: string[] = [];
+    const unclear: string[] = [];
+    const quick = minute.rttP95 !== null && minute.rttP95 <= GOOD_RTT;
+
+    if (minute.errors) ours.push('A script error in our app');
+    if (minute.rejected)
+      ours.push('Our server refused or failed to save edits');
+
+    if (minute.saveP95 !== null && minute.saveP95 > POOR.saveP95) {
+      if (quick)
+        ours.push(
+          'Saves were slow while their connection was quick (our server or database)',
+        );
+      else user.push('Saves were slow because their connection was slow');
+    }
+
+    if (connectionTrouble(minute)) {
+      const crowd = othersAtOnce(minute);
+      if (crowd >= 1)
+        ours.push(
+          `${crowd + 1} people had connection trouble at the same time`,
+        );
+      else if (afterRelease(minute))
+        ours.push('Right after we released an update (connections restart)');
+      else if ((minute.rttP95 ?? 0) > POOR.rttP95)
+        user.push('Only their connection was slow or stalled');
+      else if (steadyDrop(minute) && repeatedDrops(minute) >= REPEATS)
+        ours.push(
+          `Dropped ${repeatedDrops(minute)} times in 30 minutes on a steady connection: likely our app`,
+        );
+      else
+        unclear.push(
+          'A single short drop with a normal connection: most likely their network',
+        );
+    }
+
+    if (
+      minute.slowFrameMs > POOR.slowFrameMs ||
+      minute.worstFrameMs > POOR.worstFrameMs
+    ) {
+      const weak =
+        minute.mobile ||
+        (minute.cores !== null && minute.cores <= 4) ||
+        (minute.memoryGb !== null && minute.memoryGb <= 4);
+      if (minute.objects >= LARGE_BOARD)
+        ours.push(
+          `Screen froze on a large board (${minute.objects} items): our drawing code`,
+        );
+      else if (weak) user.push('Screen froze on a phone or low-powered device');
+      else ours.push('Screen froze on a normal device: our app');
+    }
+
+    const side: Side = ours.length ? 'ours' : user.length ? 'user' : 'unclear';
+    result.set(minute.id, {
+      side,
+      why: side === 'ours' ? ours : side === 'user' ? user : unclear,
+    });
+  }
+  return result;
+}

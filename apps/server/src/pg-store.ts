@@ -34,7 +34,7 @@ import type {
   SessionRecord,
   Snapshot,
 } from './models.js';
-import type { BoardMetricRow } from './perf.js';
+import { classifyPoor, type BoardMetricRow } from './perf.js';
 import type { BoardListItem, LiveStore, Store } from './store.js';
 import {
   CURRENCIES,
@@ -1363,10 +1363,11 @@ export class PostgresStore implements Store {
          rtt_p50, rtt_p95, rtt_max, save_p50, save_p95, save_max, saves,
          reconnects, rejected, offline_ms, slow_frames, slow_frame_ms,
          worst_frame_ms, errors, first_error, objects, zoom, mobile, browser,
-         os, cores, memory_gb, network, screen, country, poor, reasons)
+         os, cores, memory_gb, network, screen, country, poor, reasons,
+         app_version)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
                $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26,
-               $27, $28, $29, $30, $31, $32)`,
+               $27, $28, $29, $30, $31, $32, $33)`,
       [
         row.id,
         row.userId,
@@ -1400,7 +1401,18 @@ export class PostgresStore implements Store {
         row.country,
         row.poor,
         row.reasons,
+        row.appVersion,
       ],
+    );
+  }
+
+  /** Notes a build the first time it is seen; the earliest time is kept. */
+  async noteAppVersion(version: string, message?: string) {
+    await this.pool.query(
+      `INSERT INTO app_versions (version, message) VALUES ($1, $2)
+       ON CONFLICT (version) DO UPDATE
+         SET message = coalesce(app_versions.message, EXCLUDED.message)`,
+      [version, message?.slice(0, 200) ?? null],
     );
   }
 
@@ -1414,12 +1426,33 @@ export class PostgresStore implements Store {
   }
 
   /** How boards performed over the last `hours`, for the admin console. */
-  async performanceOverview(hours: number) {
-    const window = [hours];
-    const [totals, devices, countries, worst, errors, hourly] =
-      await Promise.all([
-        this.pool.query(
-          `SELECT count(*)::int AS reports,
+  async performanceOverview(hours: number, version: string | null = null) {
+    // "latest" means the most recently released build.
+    const onlyVersion =
+      version === 'latest'
+        ? ((
+            await this.pool
+              .query<{ version: string }>(
+                'SELECT version FROM app_versions ORDER BY first_seen_at DESC LIMIT 1',
+              )
+              .catch(() => ({ rows: [] as { version: string }[] }))
+          ).rows[0]?.version ?? null)
+        : version;
+    // Every query takes the time window ($1) and, optionally, one version ($2).
+    const window = [hours, onlyVersion];
+    const versionIs = `($2::text IS NULL OR app_version = $2)`;
+    const [
+      totals,
+      devices,
+      countries,
+      worst,
+      errors,
+      hourly,
+      poorAll,
+      versions,
+    ] = await Promise.all([
+      this.pool.query(
+        `SELECT count(*)::int AS reports,
                   count(DISTINCT user_id)::int AS people,
                   count(DISTINCT board_id)::int AS boards,
                   count(*) FILTER (WHERE poor)::int AS poor,
@@ -1431,36 +1464,36 @@ export class PostgresStore implements Store {
                   coalesce(sum(reconnects), 0)::int AS reconnects,
                   coalesce(sum(errors), 0)::int AS errors
              FROM board_metrics
-            WHERE created_at > now() - make_interval(hours => $1)`,
-          window,
-        ),
-        this.pool.query(
-          `SELECT os, browser, mobile, count(*)::int AS reports,
+            WHERE created_at > now() - make_interval(hours => $1) AND ${versionIs}`,
+        window,
+      ),
+      this.pool.query(
+        `SELECT os, browser, mobile, count(*)::int AS reports,
                   count(DISTINCT user_id)::int AS people,
                   percentile_cont(0.5) WITHIN GROUP (ORDER BY rtt_p50)::int AS rtt_median,
                   round(avg(slow_frame_ms))::int AS freeze_ms_per_min,
                   round(100.0 * count(*) FILTER (WHERE poor) / count(*))::int AS poor_percent
              FROM board_metrics
-            WHERE created_at > now() - make_interval(hours => $1)
+            WHERE created_at > now() - make_interval(hours => $1) AND ${versionIs}
             GROUP BY os, browser, mobile
             ORDER BY reports DESC
             LIMIT 12`,
-          window,
-        ),
-        this.pool.query(
-          `SELECT coalesce(country, '??') AS country, count(*)::int AS reports,
+        window,
+      ),
+      this.pool.query(
+        `SELECT coalesce(country, '??') AS country, count(*)::int AS reports,
                   count(DISTINCT user_id)::int AS people,
                   percentile_cont(0.5) WITHIN GROUP (ORDER BY rtt_p50)::int AS rtt_median,
                   round(100.0 * count(*) FILTER (WHERE poor) / count(*))::int AS poor_percent
              FROM board_metrics
-            WHERE created_at > now() - make_interval(hours => $1)
+            WHERE created_at > now() - make_interval(hours => $1) AND ${versionIs}
             GROUP BY 1
             ORDER BY reports DESC
             LIMIT 12`,
-          window,
-        ),
-        this.pool.query(
-          `SELECT m.id, m.created_at, m.user_id, m.guest, m.board_id,
+        window,
+      ),
+      this.pool.query(
+        `SELECT m.id, m.created_at, m.user_id, m.guest, m.board_id,
                   m.rtt_p95, m.save_p95, m.slow_frame_ms, m.worst_frame_ms,
                   m.reconnects, m.offline_ms, m.errors, m.first_error,
                   m.objects, m.zoom, m.mobile, m.browser, m.os, m.cores,
@@ -1470,32 +1503,89 @@ export class PostgresStore implements Store {
              LEFT JOIN accounts a ON a.id = m.user_id
              LEFT JOIN boards b ON b.id = m.board_id
             WHERE m.poor AND m.created_at > now() - make_interval(hours => $1)
+              AND ($2::text IS NULL OR m.app_version = $2)
             ORDER BY m.created_at DESC
             LIMIT 40`,
-          window,
-        ),
-        this.pool.query(
-          `SELECT first_error AS message, count(*)::int AS reports,
+        window,
+      ),
+      this.pool.query(
+        `SELECT first_error AS message, count(*)::int AS reports,
                   count(DISTINCT user_id)::int AS people, max(created_at) AS last_seen
              FROM board_metrics
             WHERE first_error IS NOT NULL
-              AND created_at > now() - make_interval(hours => $1)
+              AND created_at > now() - make_interval(hours => $1) AND ${versionIs}
             GROUP BY first_error
             ORDER BY reports DESC
             LIMIT 10`,
-          window,
-        ),
-        this.pool.query(
-          `SELECT date_trunc('hour', created_at) AS hour, count(*)::int AS reports,
+        window,
+      ),
+      this.pool.query(
+        `SELECT date_trunc('hour', created_at) AS hour, count(*)::int AS reports,
                   count(*) FILTER (WHERE poor)::int AS poor,
                   percentile_cont(0.5) WITHIN GROUP (ORDER BY rtt_p50)::int AS rtt_median
              FROM board_metrics
-            WHERE created_at > now() - make_interval(hours => $1)
+            WHERE created_at > now() - make_interval(hours => $1) AND ${versionIs}
             GROUP BY 1
             ORDER BY 1`,
-          window,
-        ),
-      ]);
+        window,
+      ),
+      this.pool.query(
+        `SELECT id, created_at, user_id, rtt_p95, save_p95, reconnects,
+                  offline_ms, slow_frame_ms, worst_frame_ms, errors, rejected,
+                  objects, mobile, cores, memory_gb
+             FROM board_metrics
+            WHERE poor AND created_at > now() - make_interval(hours => $1)
+              AND ${versionIs}
+            ORDER BY created_at
+            LIMIT 3000`,
+        window,
+      ),
+      this.pool
+        .query(
+          `SELECT v.version, v.first_seen_at, v.message,
+                    count(m.id)::int AS reports,
+                    count(m.id) FILTER (WHERE m.poor)::int AS poor
+               FROM app_versions v
+               LEFT JOIN board_metrics m
+                 ON m.app_version = v.version
+                AND m.created_at > now() - make_interval(hours => $1)
+              GROUP BY v.version, v.first_seen_at, v.message
+             HAVING v.first_seen_at > now() - make_interval(hours => $1)
+                 OR count(m.id) > 0
+              ORDER BY v.first_seen_at DESC
+              LIMIT 20`,
+          [hours],
+        )
+        .catch((error: unknown) => {
+          // Not migrated yet: no versions to show.
+          if ((error as { code?: string }).code === '42P01')
+            return { rows: [] };
+          throw error;
+        }),
+    ]);
+    const releases = versions.rows.map((row) => row.first_seen_at.getTime());
+    const sides = classifyPoor(
+      poorAll.rows.map((row) => ({
+        id: row.id,
+        at: row.created_at.getTime(),
+        userId: row.user_id,
+        rttP95: row.rtt_p95,
+        saveP95: row.save_p95,
+        reconnects: row.reconnects,
+        offlineMs: row.offline_ms,
+        slowFrameMs: row.slow_frame_ms,
+        worstFrameMs: row.worst_frame_ms,
+        errors: row.errors,
+        rejected: row.rejected,
+        objects: row.objects,
+        mobile: row.mobile,
+        cores: row.cores,
+        memoryGb: row.memory_gb,
+      })),
+      releases,
+    );
+    const sideCount = { ours: 0, user: 0, unclear: 0 };
+    for (const { side } of sides.values()) sideCount[side]++;
     const t = totals.rows[0]!;
     return {
       hours,
@@ -1556,6 +1646,8 @@ export class PostgresStore implements Store {
         network: row.network,
         country: row.country,
         reasons: row.reasons,
+        side: sides.get(row.id)?.side ?? 'unclear',
+        why: sides.get(row.id)?.why ?? [],
       })),
       errors: errors.rows.map((row) => ({
         message: row.message,
@@ -1563,6 +1655,15 @@ export class PostgresStore implements Store {
         people: row.people,
         lastSeen: iso(row.last_seen),
       })),
+      sides: sideCount,
+      versions: versions.rows.map((row) => ({
+        version: row.version,
+        firstSeen: iso(row.first_seen_at),
+        message: row.message,
+        reports: row.reports,
+        poor: row.poor,
+      })),
+      onlyVersion,
       hourly: hourly.rows.map((row) => ({
         hour: iso(row.hour),
         reports: row.reports,
