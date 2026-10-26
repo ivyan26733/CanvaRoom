@@ -1626,6 +1626,19 @@ export class PostgresStore implements Store {
     return rowCount === 1;
   }
 
+  /**
+   * Marks an address unconfirmed again. Its owner can ask for a fresh code
+   * on the verify-email page; until then upgrading is blocked as for any
+   * unverified account.
+   */
+  async adminUnverifyEmail(userId: string) {
+    const { rowCount } = await this.pool.query(
+      'UPDATE accounts SET email_verified = false WHERE id = $1',
+      [userId],
+    );
+    return rowCount === 1;
+  }
+
   /** Ends Premium now; returns the end date it had, or undefined if none. */
   async adminRevokePremium(userId: string) {
     return this.transaction(async (client) => {

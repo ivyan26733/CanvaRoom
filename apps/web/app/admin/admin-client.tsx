@@ -208,6 +208,7 @@ const ACTION_LABELS: Record<string, string> = {
   create_user: 'added an account',
   delete_user: 'removed an account',
   verify_email: 'verified an email',
+  unverify_email: 'marked an email unverified',
   revoke_premium: 'revoked Premium',
   set_prices: 'changed prices',
   reset_prices: 'reset prices to default',
@@ -1586,6 +1587,27 @@ function UserDrawer({
               }
             >
               {working === 'verify' ? 'Verifying…' : '✓ Verify email'}
+            </button>
+          )}
+          {user.emailVerified && (
+            <button
+              className="button ghost small"
+              disabled={Boolean(working)}
+              onClick={() => {
+                if (
+                  !window.confirm(
+                    `Mark ${user.email} as unverified? They’ll need to confirm their email with a new code before they can upgrade.`,
+                  )
+                )
+                  return;
+                void run(
+                  'unverify',
+                  () => send(`${path}/unverify`, 'POST', {}),
+                  () => onChanged(`${user.email} is now unverified.`),
+                );
+              }}
+            >
+              {working === 'unverify' ? 'Updating…' : 'Mark unverified'}
             </button>
           )}
           {premium && (

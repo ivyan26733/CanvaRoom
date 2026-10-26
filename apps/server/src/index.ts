@@ -600,6 +600,19 @@ app.post('/api/admin/users/:userId/verify', async (request, reply) => {
   return { ok: true };
 });
 
+app.post('/api/admin/users/:userId/unverify', async (request, reply) => {
+  const username = await requireAdmin(request, reply);
+  if (!username || !adminStore) return;
+  const { userId } = request.params as { userId: string };
+  if (!(await adminStore.adminUnverifyEmail(userId)))
+    return apiError(reply, 404, 'No account exists with that user ID.');
+  const account = await store.getAccount(userId);
+  await audit(username, 'unverify_email', userId, {
+    email: account?.email ?? null,
+  });
+  return { ok: true };
+});
+
 app.post('/api/admin/users/:userId/revoke', async (request, reply) => {
   const username = await requireAdmin(request, reply);
   if (!username || !adminStore) return;

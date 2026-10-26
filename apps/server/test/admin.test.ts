@@ -56,6 +56,14 @@ describe('admin console', () => {
     assert.equal(await store.adminVerifyEmail('missing-user'), false);
   });
 
+  test('marks a verified email unverified again', async (t) => {
+    if (!store) return t.skip('no TEST_DATABASE_URL');
+    const userId = await createUser({ emailVerified: true });
+    assert.equal(await store.adminUnverifyEmail(userId), true);
+    assert.equal((await store.getAccount(userId))?.emailVerified, false);
+    assert.equal(await store.adminUnverifyEmail('missing-user'), false);
+  });
+
   test('revokes Premium and remembers the end date it had', async (t) => {
     if (!store) return t.skip('no TEST_DATABASE_URL');
     const userId = await createUser();
