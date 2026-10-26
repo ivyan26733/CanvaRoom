@@ -1676,3 +1676,84 @@ button.admin-kpi:hover {
   color: var(--ink-3);
   font-size: 11px;
 }
+
+/* ---- Feedback ---- */
+
+.admin-kpis.is-four {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.admin-grid.is-thirds {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-bottom: 14px;
+}
+.fb-stars {
+  color: #f5a623;
+  letter-spacing: 1px;
+  white-space: nowrap;
+}
+.fb-stars.is-bad {
+  color: var(--danger);
+}
+.fb-ratings li {
+  grid-template-columns: 82px minmax(0, 1fr) 36px;
+}
+.fb-ratings .admin-mix-bar i {
+  background: #f5a623;
+}
+.fb-tag-bars li {
+  grid-template-columns: minmax(150px, 1.2fr) minmax(0, 1fr) 36px;
+}
+.fb-tag-bars.is-bad .admin-mix-bar i {
+  background: var(--danger);
+}
+.fb-tag-bars.is-good .admin-mix-bar i {
+  background: var(--green);
+}
+.fb-list {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.fb-list li {
+  display: grid;
+  gap: 6px;
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+}
+.fb-list li:first-child {
+  border-top: 0;
+}
+.fb-row-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.fb-row-head .admin-secondary {
+  margin: 0;
+}
+.fb-when {
+  margin-left: auto !important;
+}
+.fb-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.fb-message {
+  color: var(--ink);
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+@media (max-width: 1180px) {
+  .admin-grid.is-thirds {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (max-width: 600px) {
+  .admin-kpis.is-four {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

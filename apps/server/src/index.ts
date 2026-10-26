@@ -2847,6 +2847,93 @@ const FEEDBACK_CATEGORIES = [
   'other',
 ] as const;
 
+// The in-app prompt: a rating and one-tap answers, words optional. Stored
+// for the admin console, and every answer is emailed to the team, so a
+// frustrated user can be helped the same day.
+app.post('/api/feedback/quick', async (request, reply) => {
+  const user = await currentUser(request, reply);
+  if (!user) return;
+  if (user.guest)
+    return apiError(reply, 403, 'Sign in to send feedback this way.');
+  if (!(await allow(reply, `quick-feedback:${user.id}`, 5, 3600))) return;
+  const chip = z.string().regex(/^[a-z_]{2,30}$/);
+  const short = z.union([
+    z.string().trim().max(80),
+    z.number(),
+    z.boolean(),
+    z.null(),
+  ]);
+  const body = z
+    .object({
+      rating: z.number().int().min(1).max(5),
+      tags: z.array(chip).max(12).default([]),
+      features: z.array(chip).max(12).default([]),
+      message: z.string().trim().max(1000).optional(),
+      context: z.record(z.string().max(40), short).default({}),
+    })
+    .safeParse(request.body);
+  if (!body.success) return apiError(reply, 400, 'Invalid feedback.');
+  const country = request.headers['x-vercel-ip-country'];
+  const context: Record<string, unknown> = {
+    ...Object.fromEntries(Object.entries(body.data.context).slice(0, 20)),
+    ...(typeof country === 'string' ? { country } : {}),
+  };
+  const entry = {
+    id: randomUUID(),
+    userId: user.id,
+    rating: body.data.rating,
+    tags: [...new Set(body.data.tags)],
+    features: [...new Set(body.data.features)],
+    ...(body.data.message ? { message: body.data.message } : {}),
+    context,
+  };
+  request.log.info(
+    { feedback: 'quick', ...entry, message: undefined },
+    `Feedback: ${entry.rating} stars${entry.tags.length ? `, ${entry.tags.join(', ')}` : ''}`,
+  );
+  if (adminStore)
+    await adminStore
+      .addQuickFeedback(entry)
+      .catch((error: unknown) =>
+        request.log.error(error, 'Could not store quick feedback'),
+      );
+  if (teamMailConfigured())
+    sendMailInBackground(
+      sendFeedback({
+        email: user.email ?? 'unknown',
+        ...(user.name ? { name: user.name } : {}),
+        category: `prompt · ${entry.tags.join(', ') || 'no tags'}${entry.features.length ? ` · wants ${entry.features.join(', ')}` : ''}`,
+        rating: entry.rating,
+        message: entry.message ?? '(no words, only taps)',
+        ...(typeof context.page === 'string' ? { page: context.page } : {}),
+        account: true,
+      }),
+      request,
+      'Quick feedback email',
+    );
+  return { ok: true };
+});
+
+app.get('/api/admin/feedback', async (request, reply) => {
+  const username = await requireAdmin(request, reply);
+  if (!username || !adminStore) return;
+  const query = z
+    .object({ days: z.coerce.number().int().min(1).max(365).default(30) })
+    .safeParse(request.query);
+  if (!query.success) return apiError(reply, 400, 'Invalid time range.');
+  try {
+    return await adminStore.feedbackOverview(query.data.days);
+  } catch (error) {
+    if ((error as { code?: string }).code === '42P01')
+      return apiError(
+        reply,
+        503,
+        'Feedback answers need the database migration (npm run db:migrate).',
+      );
+    throw error;
+  }
+});
+
 app.post('/api/feedback', async (request, reply) => {
   const user = await userFromRequest(request.raw);
   const body = z

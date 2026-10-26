@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ApiError, api, send } from '../lib/api';
 import './admin.css';
+import { FeedbackSection } from './feedback';
 import { PerformanceSection } from './performance';
 
 type AdminPayment = {
@@ -122,7 +123,8 @@ type AdminMe = {
   username?: string;
 };
 type GrantMethod = 'cash' | 'bank_transfer' | 'complimentary' | 'other';
-type Section = 'overview' | 'users' | 'performance' | 'pricing' | 'transfers';
+type Section =
+  'overview' | 'users' | 'performance' | 'feedback' | 'pricing' | 'transfers';
 type Filter = 'all' | 'online' | 'premium' | 'unverified' | 'admins';
 
 const PAGE_SIZE = 50;
@@ -259,6 +261,7 @@ const NAV: { id: Section; label: string; icon: string }[] = [
   { id: 'overview', label: 'Overview', icon: '◎' },
   { id: 'users', label: 'Users', icon: '◍' },
   { id: 'performance', label: 'Performance', icon: '◷' },
+  { id: 'feedback', label: 'Feedback', icon: '☆' },
   { id: 'pricing', label: 'Pricing', icon: '◈' },
   { id: 'transfers', label: 'Bank transfers', icon: '⇄' },
 ];
@@ -794,6 +797,10 @@ export default function AdminClient() {
 
         {section === 'performance' && (
           <PerformanceSection onUnauthorized={signedOut} />
+        )}
+
+        {section === 'feedback' && (
+          <FeedbackSection onUnauthorized={signedOut} />
         )}
 
         {section === 'transfers' && (

@@ -11,6 +11,22 @@ import type { ConnectionStats, RealtimeClient } from './realtime';
  */
 
 const REPORT_EVERY_MS = 60_000;
+
+/** Fired after each report with the minute's visible time and connection. */
+export const BOARD_TIME_EVENT = 'canvaroom:board-time';
+export type BoardTimeDetail = {
+  visibleMs: number;
+  rttMedian: number | null;
+  slowFrameMs: number;
+  reconnects: number;
+  boardId: string;
+};
+
+const median = (values: number[]) => {
+  if (!values.length) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[Math.floor(sorted.length / 2)]!;
+};
 /** Minutes with less visible time than this aren't worth a report. */
 const MIN_VISIBLE_MS = 10_000;
 
@@ -135,6 +151,19 @@ export function useBoardMetrics(options: {
       zoom: Math.round(options.zoom() * 100) / 100,
       device: describeDevice(),
     };
+    // The feedback prompt counts board time, and attaches how the board was
+    // running to any feedback given soon after.
+    window.dispatchEvent(
+      new CustomEvent(BOARD_TIME_EVENT, {
+        detail: {
+          visibleMs,
+          rttMedian: median(connection.rtt),
+          slowFrameMs: Math.round(frames.current.total),
+          reconnects: connection.reconnects,
+          boardId,
+        },
+      }),
+    );
     frames.current = { count: 0, total: 0, worst: 0 };
     errors.current = { count: 0, first: '' };
     visible.current.ms = 0;

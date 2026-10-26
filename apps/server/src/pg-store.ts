@@ -1125,6 +1125,129 @@ export class PostgresStore implements Store {
     );
   }
 
+  async addQuickFeedback(entry: {
+    id: string;
+    userId: string;
+    rating: number;
+    tags: string[];
+    features: string[];
+    message?: string;
+    context: Record<string, unknown>;
+  }) {
+    await this.pool.query(
+      `INSERT INTO quick_feedback (id, user_id, rating, tags, features, message, context)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [
+        entry.id,
+        entry.userId,
+        entry.rating,
+        entry.tags,
+        entry.features,
+        entry.message ?? null,
+        JSON.stringify(entry.context),
+      ],
+    );
+  }
+
+  /** What people said, for the admin console's Feedback page. */
+  async feedbackOverview(days: number) {
+    const window = [days];
+    const [totals, ratings, tags, features, recent, messages] =
+      await Promise.all([
+        this.pool.query(
+          `SELECT count(*)::int AS answers,
+                  count(DISTINCT user_id)::int AS people,
+                  round(avg(rating)::numeric, 2)::float AS average,
+                  count(*) FILTER (WHERE rating >= 4)::int AS happy,
+                  count(*) FILTER (WHERE rating <= 2)::int AS unhappy
+             FROM quick_feedback
+            WHERE created_at > now() - make_interval(days => $1)`,
+          window,
+        ),
+        this.pool.query(
+          `SELECT rating, count(*)::int AS count FROM quick_feedback
+            WHERE created_at > now() - make_interval(days => $1)
+            GROUP BY rating`,
+          window,
+        ),
+        this.pool.query(
+          `SELECT tag, count(*)::int AS count,
+                  round(avg(rating)::numeric, 1)::float AS average
+             FROM quick_feedback, unnest(tags) AS tag
+            WHERE created_at > now() - make_interval(days => $1)
+            GROUP BY tag ORDER BY count DESC`,
+          window,
+        ),
+        this.pool.query(
+          `SELECT feature, count(*)::int AS count
+             FROM quick_feedback, unnest(features) AS feature
+            WHERE created_at > now() - make_interval(days => $1)
+            GROUP BY feature ORDER BY count DESC`,
+          window,
+        ),
+        this.pool.query(
+          `SELECT q.id, q.created_at, q.rating, q.tags, q.features, q.message,
+                  q.context, a.name, a.email
+             FROM quick_feedback q LEFT JOIN accounts a ON a.id = q.user_id
+            WHERE q.created_at > now() - make_interval(days => $1)
+            ORDER BY q.created_at DESC LIMIT 60`,
+          window,
+        ),
+        this.pool.query(
+          `SELECT id, created_at, email, name, category, rating, message, page
+             FROM feedback
+            WHERE created_at > now() - make_interval(days => $1)
+            ORDER BY created_at DESC LIMIT 30`,
+          window,
+        ),
+      ]);
+    const t = totals.rows[0]!;
+    return {
+      days,
+      totals: {
+        answers: t.answers,
+        people: t.people,
+        average: t.average,
+        happy: t.happy,
+        unhappy: t.unhappy,
+      },
+      ratings: [1, 2, 3, 4, 5].map((rating) => ({
+        rating,
+        count: ratings.rows.find((row) => row.rating === rating)?.count ?? 0,
+      })),
+      tags: tags.rows.map((row) => ({
+        id: row.tag,
+        count: row.count,
+        average: row.average,
+      })),
+      features: features.rows.map((row) => ({
+        id: row.feature,
+        count: row.count,
+      })),
+      recent: recent.rows.map((row) => ({
+        id: row.id,
+        at: iso(row.created_at),
+        rating: row.rating,
+        tags: row.tags,
+        features: row.features,
+        message: row.message,
+        context: row.context,
+        name: row.name,
+        email: row.email,
+      })),
+      messages: messages.rows.map((row) => ({
+        id: row.id,
+        at: iso(row.created_at),
+        email: row.email,
+        name: row.name,
+        category: row.category,
+        rating: row.rating,
+        message: row.message,
+        page: row.page,
+      })),
+    };
+  }
+
   async addBoardMetric(row: BoardMetricRow) {
     await this.pool.query(
       `INSERT INTO board_metrics (

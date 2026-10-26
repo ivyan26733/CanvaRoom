@@ -180,3 +180,37 @@ describe('admin console', () => {
     assert.equal(latest?.action, 'verify_email');
   });
 });
+
+describe('quick feedback', () => {
+  test('is stored and summarised for the admin', async (t) => {
+    if (!store) return t.skip('no TEST_DATABASE_URL');
+    const userId = await createUser({ emailVerified: true });
+    await store.addQuickFeedback({
+      id: unique('qf_'),
+      userId,
+      rating: 2,
+      tags: ['lag', 'network'],
+      features: ['pdf'],
+      message: 'Strokes arrive late in class',
+      context: { page: '/dashboard', os: 'Windows', rttMedian: 240 },
+    });
+    await store.addQuickFeedback({
+      id: unique('qf_'),
+      userId,
+      rating: 5,
+      tags: ['smooth'],
+      features: ['pdf', 'maths'],
+      context: {},
+    });
+    const overview = await store.feedbackOverview(1);
+    assert.ok(overview.totals.answers >= 2);
+    assert.ok(overview.ratings.find((row) => row.rating === 2)!.count >= 1);
+    assert.ok(overview.tags.some((row) => row.id === 'lag'));
+    const pdf = overview.features.find((row) => row.id === 'pdf');
+    assert.ok(pdf && pdf.count >= 2);
+    const mine = overview.recent.find(
+      (row) => row.message === 'Strokes arrive late in class',
+    );
+    assert.equal(mine?.context.rttMedian, 240);
+  });
+});
