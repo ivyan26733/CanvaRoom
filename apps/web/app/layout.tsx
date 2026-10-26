@@ -1,5 +1,6 @@
 import { Analytics } from '@vercel/analytics/next';
 import { SpeedInsights } from '@vercel/speed-insights/next';
+import { Clarity } from './components/clarity';
 import type { Metadata, Viewport } from 'next';
 import { Bricolage_Grotesque, Geist, Geist_Mono } from 'next/font/google';
 import { FeedbackProvider } from './components/feedback';
@@ -83,6 +84,7 @@ export default function RootLayout({
         </AuthProvider>
         <Analytics />
         <SpeedInsights />
+        <Clarity />
       </body>
     </html>
   );

@@ -4914,3 +4914,27 @@ button.plan-chip.is-pro {
   margin-top: 2px;
   color: var(--danger);
 }
+
+/* Asking EU/UK visitors before analytics recording starts. */
+.consent-bar {
+  position: fixed;
+  z-index: 80;
+  right: 16px;
+  bottom: 16px;
+  display: grid;
+  gap: 12px;
+  width: min(420px, calc(100vw - 32px));
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-3);
+  color: var(--ink-2);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.consent-bar > div {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}

@@ -794,6 +794,16 @@ app.get('/api/admin/performance', async (request, reply) => {
   }
 });
 
+// The visitor's country, as Vercel's edge sees it. The site asks for consent
+// before loading analytics where the law requires it (EU, UK, Switzerland).
+app.get('/api/geo', async (request, reply) => {
+  const country = request.headers['x-vercel-ip-country'];
+  reply.header('Cache-Control', 'private, max-age=3600');
+  return {
+    country: typeof country === 'string' ? country.toUpperCase() : null,
+  };
+});
+
 // ---- Accounts ----
 
 app.get('/api/auth/me', async (request) => ({
