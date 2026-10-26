@@ -66,7 +66,8 @@
 .contact-ways a {
   justify-self: start;
   color: var(--ink);
-  font: 700 clamp(22px, 2.6vw, 34px) / 1.15 var(--display);
+  /* 6vw keeps the full address on one line on a phone. */
+  font: 700 clamp(17px, min(6vw, max(22px, 2.6vw)), 34px) / 1.15 var(--display);
   letter-spacing: -0.03em;
   overflow-wrap: anywhere;
   text-decoration: underline;
