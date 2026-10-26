@@ -1345,20 +1345,31 @@ export class MemoryStore implements Store {
   async claimCheckoutReminders(olderThanHours: number, limit: number) {
     const cutoff = Date.now() - olderThanHours * 3_600_000;
     const due: CheckoutReminder[] = [];
+    const seenUsers = new Set<string>();
     for (const payment of [...this.payments.values()].sort((a, b) =>
-      a.createdAt.localeCompare(b.createdAt),
+      b.createdAt.localeCompare(a.createdAt),
     )) {
       if (
         due.length >= limit ||
         payment.status !== 'created' ||
         Date.parse(payment.createdAt) > cutoff ||
         this.checkoutReminderClaims.has(payment.orderId) ||
-        this.checkoutReminded.has(payment.orderId)
+        this.checkoutReminded.has(payment.orderId) ||
+        seenUsers.has(payment.userId) ||
+        [...this.payments.values()].some(
+          (newer) =>
+            newer.userId === payment.userId &&
+            newer.status === 'created' &&
+            Date.parse(newer.createdAt) <= cutoff &&
+            newer.createdAt > payment.createdAt &&
+            !this.checkoutReminded.has(newer.orderId),
+        )
       )
         continue;
       const account = this.accounts.get(payment.userId);
       if (!account?.email) continue;
       this.checkoutReminderClaims.add(payment.orderId);
+      seenUsers.add(payment.userId);
       due.push({
         orderId: payment.orderId,
         userId: payment.userId,
@@ -1373,7 +1384,16 @@ export class MemoryStore implements Store {
 
   async markCheckoutReminderSent(orderId: string) {
     this.checkoutReminderClaims.delete(orderId);
-    this.checkoutReminded.add(orderId);
+    const selected = this.payments.get(orderId);
+    if (!selected) return;
+    for (const payment of this.payments.values()) {
+      if (
+        payment.userId === selected.userId &&
+        payment.status === 'created' &&
+        payment.createdAt <= selected.createdAt
+      )
+        this.checkoutReminded.add(payment.orderId);
+    }
   }
 
   async releaseCheckoutReminder(orderId: string) {

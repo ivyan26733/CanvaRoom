@@ -976,6 +976,14 @@ export class PostgresStore implements Store {
             AND (p.checkout_reminder_claimed_at IS NULL
               OR p.checkout_reminder_claimed_at < now() - interval '6 hours')
             AND btrim(a.email) <> ''
+            AND NOT EXISTS (
+              SELECT 1 FROM payments newer
+               WHERE newer.user_id = p.user_id
+                 AND newer.status = 'created'
+                 AND newer.created_at <= now() - make_interval(hours => $1)
+                 AND newer.checkout_reminded_at IS NULL
+                 AND newer.created_at > p.created_at
+            )
           ORDER BY p.created_at
           LIMIT $2
           FOR UPDATE OF p SKIP LOCKED
@@ -1005,7 +1013,16 @@ export class PostgresStore implements Store {
     await this.pool.query(
       `UPDATE payments
           SET checkout_reminded_at = now(), checkout_reminder_claimed_at = NULL
-        WHERE order_id = $1 AND status = 'created'`,
+        WHERE order_id IN (
+          SELECT older.order_id
+            FROM payments selected
+            JOIN payments older
+              ON older.user_id = selected.user_id
+             AND older.status = 'created'
+             AND older.created_at <= selected.created_at
+             AND older.checkout_reminded_at IS NULL
+           WHERE selected.order_id = $1
+        )`,
       [orderId],
     );
   }

@@ -135,9 +135,10 @@ export type CheckoutReminderDeps = {
 };
 
 /**
- * Sends at most one recovery email per unpaid order. Claims prevent concurrent
- * cron invocations from sending duplicates; failures release the claim so the
- * next run can retry. Email verification is intentionally not a filter.
+ * Sends one recovery email for the newest overdue checkout per account, and
+ * coalesces its older unpaid orders. Claims prevent concurrent cron runs from
+ * duplicating emails; failures release the claim for a retry. Verification is
+ * intentionally not a filter.
  */
 export async function sendCheckoutReminders(deps: CheckoutReminderDeps) {
   const { store, log } = deps;
