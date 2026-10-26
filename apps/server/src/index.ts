@@ -2848,8 +2848,8 @@ const FEEDBACK_CATEGORIES = [
 ] as const;
 
 // The in-app prompt: a rating and one-tap answers, words optional. Stored
-// for the admin console; low ratings and written notes are also emailed to
-// the team, so a frustrated user can be helped the same day.
+// for the admin console, and every answer is emailed to the team, so a
+// frustrated user can be helped the same day.
 app.post('/api/feedback/quick', async (request, reply) => {
   const user = await currentUser(request, reply);
   if (!user) return;
@@ -2897,7 +2897,7 @@ app.post('/api/feedback/quick', async (request, reply) => {
       .catch((error: unknown) =>
         request.log.error(error, 'Could not store quick feedback'),
       );
-  if (teamMailConfigured() && (entry.rating <= 2 || entry.message))
+  if (teamMailConfigured())
     sendMailInBackground(
       sendFeedback({
         email: user.email ?? 'unknown',

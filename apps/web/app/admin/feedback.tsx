@@ -142,7 +142,7 @@ export function FeedbackSection({
         <div className="admin-kpi">
           <span>People who answered</span>
           <strong>{totals?.people ?? '—'}</strong>
-          <small>Signed-in users</small>
+          <small>Every answer is emailed to you</small>
         </div>
         <div className="admin-kpi">
           <span>Happy (4–5 ★)</span>
@@ -160,7 +160,7 @@ export function FeedbackSection({
               ? `${Math.round((totals.unhappy / totals.answers) * 100)}%`
               : '—'}
           </strong>
-          <small>Each one is emailed to you</small>
+          <small>{totals?.unhappy ?? 0} people</small>
         </div>
       </section>
 
