@@ -1,6 +1,10 @@
 import type { Capture, CaptureResult } from './models.js';
-import type { PremiumReminderMail, PremiumWelcome } from './mail.js';
-import { planOfOrder, termLabel } from './plans.js';
+import type {
+  CheckoutReminderMail,
+  PremiumReminderMail,
+  PremiumWelcome,
+} from './mail.js';
+import { planOfOrder, termLabel, PLAN_IDS, type PlanId } from './plans.js';
 import type { Store } from './store.js';
 
 type Log = {
@@ -117,4 +121,78 @@ export async function sendRenewalReminders(deps: ReminderDeps) {
     }
   }
   return { due: due.length, sent, failed };
+}
+
+/** Unpaid checkout emails become due one day after order creation. */
+export const CHECKOUT_REMINDER_AFTER_HOURS = 24;
+
+export type CheckoutReminderDeps = {
+  store: Store;
+  appUrl: string;
+  log: Log;
+  remind: (to: string, reminder: CheckoutReminderMail) => Promise<void>;
+  limit?: number;
+};
+
+/**
+ * Sends one recovery email for the newest overdue checkout per account, and
+ * coalesces its older unpaid orders. Claims prevent concurrent cron runs from
+ * duplicating emails; failures release the claim for a retry. Verification is
+ * intentionally not a filter.
+ */
+export async function sendCheckoutReminders(deps: CheckoutReminderDeps) {
+  const { store, log } = deps;
+  const due = await store.claimCheckoutReminders(
+    CHECKOUT_REMINDER_AFTER_HOURS,
+    deps.limit ?? 100,
+  );
+  let sent = 0;
+  let failed = 0;
+  let skipped = 0;
+
+  for (const reminder of due) {
+    try {
+      const [payment, account] = await Promise.all([
+        store.getPayment(reminder.orderId),
+        store.getAccount(reminder.userId),
+      ]);
+      // A webhook or a new account state may have changed after the claim.
+      if (!payment || payment.status !== 'created' || !account?.email) {
+        skipped++;
+        await store.releaseCheckoutReminder(reminder.orderId);
+        continue;
+      }
+
+      const plan: PlanId = PLAN_IDS.some((id) => id === payment.plan)
+        ? (payment.plan as PlanId)
+        : 'quarterly';
+      const checkout = new URL('/login', deps.appUrl);
+      checkout.searchParams.set('next', `/dashboard?upgrade=${plan}`);
+      await deps.remind(account.email, {
+        name: account.name,
+        checkoutUrl: checkout.toString(),
+      });
+      await store.markCheckoutReminderSent(reminder.orderId);
+      sent++;
+    } catch (error) {
+      failed++;
+      log.error(
+        { orderId: reminder.orderId, userId: reminder.userId, error },
+        'Checkout reminder email failed',
+      );
+      await store
+        .releaseCheckoutReminder(reminder.orderId)
+        .catch((releaseError: unknown) =>
+          log.error(
+            {
+              orderId: reminder.orderId,
+              userId: reminder.userId,
+              error: releaseError,
+            },
+            'Could not unclaim a failed checkout reminder',
+          ),
+        );
+    }
+  }
+  return { due: due.length, sent, failed, skipped };
 }

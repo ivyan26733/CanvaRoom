@@ -25,6 +25,7 @@ import type {
   BoardObject,
   Capture,
   CaptureResult,
+  CheckoutReminder,
   ChatMessage,
   Member,
   Operation,
@@ -187,6 +188,13 @@ export interface Store {
   ): Promise<PremiumReminder[]>;
   /** Unmarks a reminder that couldn't be sent, so the next run retries it. */
   releasePremiumReminder(userId: string, paidUntil: string): Promise<void>;
+  /** Claims unpaid orders at least `olderThanHours` old, including unverified accounts. */
+  claimCheckoutReminders(
+    olderThanHours: number,
+    limit: number,
+  ): Promise<CheckoutReminder[]>;
+  markCheckoutReminderSent(orderId: string): Promise<void>;
+  releaseCheckoutReminder(orderId: string): Promise<void>;
 }
 
 /** The oldest of an owner's boards, given each board's owner and creation. */
@@ -830,6 +838,15 @@ export class RedisStore implements Store {
   }
 
   async releasePremiumReminder() {}
+
+  async claimCheckoutReminders(): Promise<CheckoutReminder[]> {
+    // Only Postgres can reliably list and claim payments across instances.
+    return [];
+  }
+
+  async markCheckoutReminderSent() {}
+
+  async releaseCheckoutReminder() {}
 }
 
 type MemoryBoard = {
@@ -853,6 +870,8 @@ export class MemoryStore implements Store {
     { userId: string; expiresAt: number }
   >();
   private payments = new Map<string, Payment>();
+  private checkoutReminderClaims = new Set<string>();
+  private checkoutReminded = new Set<string>();
   private library = new Map<string, Set<string>>();
   private feedback: Feedback[] = [];
   private saveTimer: ReturnType<typeof setTimeout> | undefined;
@@ -1321,6 +1340,64 @@ export class MemoryStore implements Store {
     delete unmarked.premiumRemindedFor;
     this.accounts.set(userId, unmarked);
     this.scheduleSave();
+  }
+
+  async claimCheckoutReminders(olderThanHours: number, limit: number) {
+    const cutoff = Date.now() - olderThanHours * 3_600_000;
+    const due: CheckoutReminder[] = [];
+    const seenUsers = new Set<string>();
+    for (const payment of [...this.payments.values()].sort((a, b) =>
+      b.createdAt.localeCompare(a.createdAt),
+    )) {
+      if (
+        due.length >= limit ||
+        payment.status !== 'created' ||
+        Date.parse(payment.createdAt) > cutoff ||
+        this.checkoutReminderClaims.has(payment.orderId) ||
+        this.checkoutReminded.has(payment.orderId) ||
+        seenUsers.has(payment.userId) ||
+        [...this.payments.values()].some(
+          (newer) =>
+            newer.userId === payment.userId &&
+            newer.status === 'created' &&
+            Date.parse(newer.createdAt) <= cutoff &&
+            newer.createdAt > payment.createdAt &&
+            !this.checkoutReminded.has(newer.orderId),
+        )
+      )
+        continue;
+      const account = this.accounts.get(payment.userId);
+      if (!account?.email) continue;
+      this.checkoutReminderClaims.add(payment.orderId);
+      seenUsers.add(payment.userId);
+      due.push({
+        orderId: payment.orderId,
+        userId: payment.userId,
+        email: account.email,
+        name: account.name,
+        ...(payment.plan ? { plan: payment.plan } : {}),
+        createdAt: payment.createdAt,
+      });
+    }
+    return due;
+  }
+
+  async markCheckoutReminderSent(orderId: string) {
+    this.checkoutReminderClaims.delete(orderId);
+    const selected = this.payments.get(orderId);
+    if (!selected) return;
+    for (const payment of this.payments.values()) {
+      if (
+        payment.userId === selected.userId &&
+        payment.status === 'created' &&
+        payment.createdAt <= selected.createdAt
+      )
+        this.checkoutReminded.add(payment.orderId);
+    }
+  }
+
+  async releaseCheckoutReminder(orderId: string) {
+    this.checkoutReminderClaims.delete(orderId);
   }
 }
 

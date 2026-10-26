@@ -19,6 +19,7 @@ import type {
   BoardObject,
   Capture,
   CaptureResult,
+  CheckoutReminder,
   ChatMessage,
   Member,
   Operation,
@@ -993,6 +994,84 @@ export class PostgresStore implements Store {
       `UPDATE accounts SET premium_reminded_for = NULL
         WHERE id = $1 AND premium_reminded_for = $2`,
       [userId, paidUntil],
+    );
+  }
+
+  async claimCheckoutReminders(olderThanHours: number, limit: number) {
+    const { rows } = await this.pool.query<{
+      order_id: string;
+      user_id: string;
+      email: string;
+      name: string;
+      plan: string | null;
+      created_at: Date;
+    }>(
+      `WITH due AS (
+         SELECT p.order_id
+           FROM payments p
+           JOIN accounts a ON a.id = p.user_id
+          WHERE p.status = 'created'
+            AND p.created_at <= now() - make_interval(hours => $1)
+            AND p.checkout_reminded_at IS NULL
+            AND (p.checkout_reminder_claimed_at IS NULL
+              OR p.checkout_reminder_claimed_at < now() - interval '6 hours')
+            AND btrim(a.email) <> ''
+            AND NOT EXISTS (
+              SELECT 1 FROM payments newer
+               WHERE newer.user_id = p.user_id
+                 AND newer.status = 'created'
+                 AND newer.created_at <= now() - make_interval(hours => $1)
+                 AND newer.checkout_reminded_at IS NULL
+                 AND newer.created_at > p.created_at
+            )
+          ORDER BY p.created_at
+          LIMIT $2
+          FOR UPDATE OF p SKIP LOCKED
+       ), claimed AS (
+         UPDATE payments p
+            SET checkout_reminder_claimed_at = now()
+           FROM due d
+          WHERE p.order_id = d.order_id
+         RETURNING p.order_id, p.user_id, p.plan, p.created_at
+       )
+       SELECT c.order_id, c.user_id, a.email, a.name, c.plan, c.created_at
+         FROM claimed c
+         JOIN accounts a ON a.id = c.user_id`,
+      [olderThanHours, limit],
+    );
+    return rows.map((row): CheckoutReminder => ({
+      orderId: row.order_id,
+      userId: row.user_id,
+      email: row.email,
+      name: row.name,
+      ...(row.plan ? { plan: row.plan } : {}),
+      createdAt: iso(row.created_at),
+    }));
+  }
+
+  async markCheckoutReminderSent(orderId: string) {
+    await this.pool.query(
+      `UPDATE payments
+          SET checkout_reminded_at = now(), checkout_reminder_claimed_at = NULL
+        WHERE order_id IN (
+          SELECT older.order_id
+            FROM payments selected
+            JOIN payments older
+              ON older.user_id = selected.user_id
+             AND older.status = 'created'
+             AND older.created_at <= selected.created_at
+             AND older.checkout_reminded_at IS NULL
+           WHERE selected.order_id = $1
+        )`,
+      [orderId],
+    );
+  }
+
+  async releaseCheckoutReminder(orderId: string) {
+    await this.pool.query(
+      `UPDATE payments SET checkout_reminder_claimed_at = NULL
+        WHERE order_id = $1 AND checkout_reminded_at IS NULL`,
+      [orderId],
     );
   }
 

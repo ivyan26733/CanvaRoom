@@ -290,3 +290,44 @@ export async function sendPremiumReminder(
   const { subject, html, text } = premiumReminderEmail(reminder);
   await send(to, subject, html, text, SUPPORT_EMAIL);
 }
+
+export type CheckoutReminderMail = {
+  name: string;
+  checkoutUrl: string;
+};
+
+/** A gentle note for someone who started Premium checkout but hasn't paid. */
+export function checkoutReminderEmail(reminder: CheckoutReminderMail) {
+  const subject = 'Still considering CanvaRoom Premium?';
+  const text = `Hi ${reminder.name},
+
+It looks like you started checking out CanvaRoom Premium, but we haven't been able to confirm a completed payment yet.
+
+If Premium would help you keep ideas moving with unlimited boards and collaborators, easy exports, image uploads and recording, you can continue securely here:
+${reminder.checkoutUrl}
+
+Your boards are safe either way, and Premium is a one-time pass that doesn't renew automatically. If you've already paid, please ignore this note. If the payment screen got stuck or you ran into another problem, just reply to this email and we'll get back to you as soon as we can.
+
+The CanvaRoom team`;
+  const html = `<div style="font-family:system-ui,-apple-system,Segoe UI,sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;color:#141413;line-height:1.55">
+  <p style="font-size:20px;font-weight:700;margin:0 0 24px">CanvaRoom</p>
+  <p style="font-size:22px;font-weight:700;margin:0 0 16px">Still considering Premium?</p>
+  <p style="margin:0 0 16px">Hi ${escapeHtml(reminder.name)},</p>
+  <p style="margin:0 0 16px">It looks like you started checking out CanvaRoom Premium, but we haven’t been able to confirm a completed payment yet.</p>
+  <p style="margin:0 0 24px">If Premium would help you keep ideas moving with unlimited boards and collaborators, easy exports, image uploads and recording, you can continue securely here.</p>
+  <p style="margin:0 0 28px"><a href="${escapeHtml(reminder.checkoutUrl)}" style="display:inline-block;background:#ff4f1f;color:#fff;text-decoration:none;font-weight:600;padding:12px 22px;border-radius:999px">Continue to Premium</a></p>
+  <p style="margin:0 0 16px;color:#57544d;font-size:14px">Your boards are safe either way, and Premium is a one-time pass that doesn’t renew automatically. If you’ve already paid, please ignore this note.</p>
+  <p style="margin:0 0 24px">If the payment screen got stuck or you ran into another problem, just reply to this email and we’ll get back to you as soon as we can.</p>
+  <p style="margin:0">The CanvaRoom team</p>
+</div>`;
+  return { subject, html, text };
+}
+
+/** Sends a single checkout recovery email, with replies routed to support. */
+export async function sendCheckoutReminder(
+  to: string,
+  reminder: CheckoutReminderMail,
+) {
+  const { subject, html, text } = checkoutReminderEmail(reminder);
+  await send(to, subject, html, text, SUPPORT_EMAIL);
+}

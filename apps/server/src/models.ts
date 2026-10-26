@@ -291,6 +291,16 @@ export type BankTransferReviewResult =
   | { outcome: 'not_pending'; userId: string }
   | { outcome: 'unknown' };
 
+/** An old unpaid checkout with the address to reach its account. */
+export type CheckoutReminder = {
+  orderId: string;
+  userId: string;
+  email: string;
+  name: string;
+  plan?: string;
+  createdAt: string;
+};
+
 /** Who took an order: as stored, or else from the shape of its ID. */
 export const providerOf = (payment: Pick<Payment, 'orderId' | 'provider'>) =>
   payment.provider ??
