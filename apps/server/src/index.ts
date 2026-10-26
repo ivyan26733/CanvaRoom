@@ -259,9 +259,7 @@ async function adminFromRequest(request: FastifyRequest) {
   // Let admin accounts use that session in the console too, so opening the
   // Admin panel from the dashboard does not ask for a second set of creds.
   const user = await userFromRequest(request.raw);
-  return user && !user.guest && user.role === 'admin'
-    ? user.email
-    : undefined;
+  return user && !user.guest && user.role === 'admin' ? user.email : undefined;
 }
 const requireAdmin = async (request: FastifyRequest, reply: FastifyReply) => {
   const username = await adminFromRequest(request);
@@ -346,11 +344,7 @@ app.post('/api/admin/login', async (request, reply) => {
     account?.passwordHash ?? (await decoyPasswordHash()),
   );
   if (!account || account.role !== 'admin' || !valid)
-    return apiError(
-      reply,
-      401,
-      'That admin email and password do not match.',
-    );
+    return apiError(reply, 401, 'That admin email and password do not match.');
   const username = account.email;
   const token = randomBytes(32).toString('base64url');
   await adminStore.createAdminSession(
@@ -594,7 +588,10 @@ app.post('/api/admin/users/:userId/verify', async (request, reply) => {
   const { userId } = request.params as { userId: string };
   if (!(await adminStore.adminVerifyEmail(userId)))
     return apiError(reply, 404, 'No account exists with that user ID.');
-  await audit(username, 'verify_email', userId);
+  const verified = await store.getAccount(userId);
+  await audit(username, 'verify_email', userId, {
+    email: verified?.email ?? null,
+  });
   return { ok: true };
 });
 
@@ -609,11 +606,12 @@ app.post('/api/admin/users/:userId/revoke', async (request, reply) => {
   const result = await adminStore.adminRevokePremium(userId);
   if (!result.found)
     return apiError(reply, 404, 'No account exists with that user ID.');
+  const account = await store.getAccount(userId);
   await audit(username, 'revoke_premium', userId, {
+    email: account?.email ?? null,
     previousPaidUntil: result.previous ?? null,
     ...(body.data.note ? { note: body.data.note } : {}),
   });
-  const account = await store.getAccount(userId);
   if (account) refreshOwnerPlan(userId, planOf(account));
   return { ok: true };
 });
@@ -623,13 +621,23 @@ app.delete('/api/admin/users/:userId', async (request, reply) => {
   if (!username || !adminStore) return;
   const { userId } = request.params as { userId: string };
   const target = await store.getAccount(userId);
-  if (!target) return apiError(reply, 404, 'No account exists with that user ID.');
+  if (!target)
+    return apiError(reply, 404, 'No account exists with that user ID.');
   if (target.email === username)
-    return apiError(reply, 400, 'You can’t remove the account you’re signed in with.');
+    return apiError(
+      reply,
+      400,
+      'You can’t remove the account you’re signed in with.',
+    );
   if (target.role === 'admin')
-    return apiError(reply, 400, 'Remove the Admin role before deleting an admin account.');
+    return apiError(
+      reply,
+      400,
+      'Remove the Admin role before deleting an admin account.',
+    );
   const deleted = await adminStore.adminDeleteAccount(userId);
-  if (!deleted) return apiError(reply, 404, 'No account exists with that user ID.');
+  if (!deleted)
+    return apiError(reply, 404, 'No account exists with that user ID.');
   await audit(username, 'delete_user', userId, {
     email: deleted.email,
     name: deleted.name,
@@ -1705,10 +1713,10 @@ const currencyOf = (request: FastifyRequest, email?: string) =>
   config.usdBankTransferPreviewOnly
     ? 'USD'
     : config.paypal?.mode === 'sandbox' && paypalAllowedFor(email)
-    ? 'USD'
-    : currencyForCountry(
-        request.headers['x-vercel-ip-country'] as string | undefined,
-      );
+      ? 'USD'
+      : currencyForCountry(
+          request.headers['x-vercel-ip-country'] as string | undefined,
+        );
 
 app.get('/api/billing/plan', async (request) => {
   const user = await userFromRequest(request.raw).catch(() => undefined);
@@ -1719,7 +1727,7 @@ app.get('/api/billing/plan', async (request) => {
     currency === 'USD' &&
     Boolean(
       config.usdBankTransfer &&
-        (adminStore || config.usdBankTransferPreviewOnly),
+      (adminStore || config.usdBankTransferPreviewOnly),
     );
   return {
     available: Boolean(provider) || bankTransferAvailable,
@@ -1753,7 +1761,10 @@ app.post('/api/billing/bank-transfer', async (request, reply) => {
       'email_unverified',
     );
   if (!(await allow(reply, `bank-transfer:${user.id}`, 10, 3600))) return;
-  if (!config.usdBankTransfer || (!adminStore && !config.usdBankTransferPreviewOnly))
+  if (
+    !config.usdBankTransfer ||
+    (!adminStore && !config.usdBankTransferPreviewOnly)
+  )
     return apiError(reply, 503, 'Bank transfers aren’t available yet.');
   if (currencyOf(request, user.email) !== 'USD')
     return apiError(reply, 400, 'Bank transfers are available for USD plans.');
@@ -1792,7 +1803,11 @@ app.post('/api/billing/bank-transfer', async (request, reply) => {
   });
   if (!bankRequest)
     return apiError(reply, 404, 'We couldn’t find your account.');
-  return { request: bankRequest, details: config.usdBankTransfer, previewOnly: false };
+  return {
+    request: bankRequest,
+    details: config.usdBankTransfer,
+    previewOnly: false,
+  };
 });
 
 app.post('/api/billing/bank-transfer/:id/submit', async (request, reply) => {
@@ -1801,7 +1816,11 @@ app.post('/api/billing/bank-transfer/:id/submit', async (request, reply) => {
   if (user.guest)
     return apiError(reply, 403, 'Create an account before upgrading.');
   if (config.usdBankTransferPreviewOnly)
-    return apiError(reply, 503, 'Bank transfer submissions are disabled in Preview.');
+    return apiError(
+      reply,
+      503,
+      'Bank transfer submissions are disabled in Preview.',
+    );
   if (!(await allow(reply, `bank-transfer-submit:${user.id}`, 10, 3600)))
     return;
   const { id } = request.params as { id: string };

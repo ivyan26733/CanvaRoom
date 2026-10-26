@@ -177,6 +177,7 @@ export function BillingProvider({ children }: { children: React.ReactNode }) {
     null,
   );
   const trial = useTrialClock();
+  usePresenceBeat();
   useEffect(() => {
     // API errors send the reason as a string; openUpgrade sends an object.
     const show = (event: Event) => {
@@ -228,6 +229,23 @@ function useActive() {
     };
   }, []);
   return active;
+}
+
+/**
+ * Tells the server a signed-in person has the site open and visible, about
+ * once a minute, so the admin console can show who is online.
+ */
+function usePresenceBeat() {
+  const { user } = useAuth();
+  const active = useActive();
+  const signedIn = Boolean(user && !user.guest);
+  useEffect(() => {
+    if (!signedIn || !active) return;
+    const beat = () => void send('/presence', 'POST', {}).catch(() => {});
+    beat();
+    const timer = window.setInterval(beat, 60_000);
+    return () => window.clearInterval(timer);
+  }, [signedIn, active]);
 }
 
 /**
