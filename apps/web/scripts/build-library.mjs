@@ -24,6 +24,7 @@ import {
   trigonometry,
 } from './library/maths.mjs';
 import { geometry, physics, symbols, templates } from './library/science.mjs';
+import { formulaTables, vectors } from './library/tables.mjs';
 import { CATEGORIES, ELEMENTS, position } from './library/elements.mjs';
 
 export const VERSION = 1;
@@ -219,6 +220,57 @@ const shapeDiagrams = {
       line(72, 70, 116, 32) +
       label('r', 90, 42),
   }),
+  // ---- Vectors ----
+  vectorTriangle: () => ({
+    width: 210,
+    height: 150,
+    svg:
+      vector(20, 125, 120, 125) +
+      vector(120, 125, 185, 30) +
+      vector(20, 125, 185, 30, ' stroke-dasharray="7 5"') +
+      label('\\vec a', 70, 140) +
+      label('\\vec b', 170, 85) +
+      label('\\vec a + \\vec b', 78, 62, 17),
+  }),
+  dotAngle: () => ({
+    width: 200,
+    height: 140,
+    svg:
+      vector(25, 115, 180, 115) +
+      vector(25, 115, 120, 25) +
+      `<path d="M70 115 A45 45 0 0 0 58 84" fill="none" stroke="currentColor" stroke-width="1.5"/>` +
+      line(120, 25, 120, 115, dashed + ' stroke-width="1.5"') +
+      label('\\theta', 82, 100, 17) +
+      label('\\vec a', 165, 130) +
+      label('\\vec b', 62, 58) +
+      label('|\\vec b|\\cos\\theta', 75, 130, 13),
+  }),
+  crossRight: () => ({
+    width: 190,
+    height: 170,
+    svg:
+      vector(60, 120, 170, 120) +
+      vector(60, 120, 15, 160) +
+      vector(60, 120, 60, 18) +
+      `<path d="M60 102 L76 102 L76 120" fill="none" stroke="currentColor" stroke-width="1.2"/>` +
+      label('\\vec a', 160, 136) +
+      label('\\vec b', 18, 128) +
+      label('\\vec a\\times\\vec b', 108, 30, 17),
+  }),
+  axes3d: () => ({
+    width: 190,
+    height: 170,
+    svg:
+      vector(70, 110, 180, 110) +
+      vector(70, 110, 70, 15) +
+      vector(70, 110, 18, 160) +
+      label('x', 8, 146, 17) +
+      label('y', 172, 126, 17) +
+      label('z', 84, 20, 17) +
+      label('\\hat\\imath', 34, 122, 16) +
+      label('\\hat\\jmath', 128, 98, 16) +
+      label('\\hat k', 56, 60, 16),
+  }),
 };
 
 const arrowHead = (x, y, angle) => {
@@ -227,6 +279,11 @@ const arrowHead = (x, y, angle) => {
     `${r1(x + dx * Math.cos(a) - dy * Math.sin(a))} ${r1(y + dx * Math.sin(a) + dy * Math.cos(a))}`;
   return `<path d="M${p(-12, -6)} L${x} ${y} L${p(-12, 6)}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>`;
 };
+
+/** A line from (x1, y1) with an arrowhead at (x2, y2). */
+const vector = (x1, y1, x2, y2, extra = '') =>
+  line(x1, y1, x2, y2, ' stroke-width="2.5"' + extra) +
+  arrowHead(x2, y2, (Math.atan2(y2 - y1, x2 - x1) * 180) / Math.PI);
 
 const largeDiagrams = {
   unitCircle() {
@@ -775,7 +832,9 @@ const PACKS = [
   differentiation,
   integration,
   differentialEquations,
+  vectors,
   geometry,
+  formulaTables,
   statistics,
   periodic,
   physics,
