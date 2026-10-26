@@ -1,12 +1,6 @@
-import {
-  formatMoney,
-  formatRate,
-  planBonus,
-  planLength,
-  PLANS_BY_CURRENCY,
-  type Currency,
-} from '../lib/pricing';
-import { PlanButton, PricingCta } from './plan-cta';
+import { type Currency } from '../lib/pricing';
+import { FromRate, PlanCards } from './live-plans';
+import { PricingCta } from './plan-cta';
 import { Icon, type IconName } from './icons';
 import './pricing.css';
 
@@ -78,10 +72,6 @@ function Mark({ value }: { value: Cell }) {
 
 /** Plans and Premium perks, in rupees in India and US dollars elsewhere. */
 export function Pricing({ currency }: { currency: Currency }) {
-  const premiumPlans = PLANS_BY_CURRENCY[currency];
-  // The lowest monthly rate, for "from $5.77 / month".
-  const fromRate = Math.min(...premiumPlans.map((plan) => plan.perMonth));
-  const money = (amount: number) => formatMoney(amount, currency);
   return (
     <section className="pr" id="pricing" aria-labelledby="pricing-heading">
       <div className="pr-head">
@@ -115,13 +105,7 @@ export function Pricing({ currency }: { currency: Currency }) {
             >
               <strong>{plan.name}</strong>
               <small>
-                {index === 2 ? (
-                  <>
-                    From {formatRate(fromRate, currency)} <span>/ month</span>
-                  </>
-                ) : (
-                  plan.note
-                )}
+                {index === 2 ? <FromRate currency={currency} /> : plan.note}
               </small>
             </span>
           ))}
@@ -145,49 +129,7 @@ export function Pricing({ currency }: { currency: Currency }) {
         ))}
       </div>
 
-      <div className="pr-plan-cards" id="premium-plans">
-        {premiumPlans.map((plan) => {
-          const bonus = planBonus(plan);
-          return (
-            <article
-              key={plan.id}
-              className={`pr-plan ${plan.bestValue ? 'is-best' : ''}`}
-              aria-label={`Premium for ${planLength(plan)}`}
-            >
-              {plan.bestValue && (
-                <span className="pr-plan-badge">Best value</span>
-              )}
-              <h3>{planLength(plan)}</h3>
-              <p className="pr-plan-price">
-                {plan.compareAt > plan.amount && (
-                  <s aria-label={`Was ${money(plan.compareAt)}`}>
-                    {money(plan.compareAt)}
-                  </s>
-                )}
-                <strong>{money(plan.amount)}</strong>
-              </p>
-              <p className="pr-plan-tags">
-                {plan.savePercent > 0 && (
-                  <span className="pr-save">Save {plan.savePercent}%</span>
-                )}
-                {bonus && <span className="pr-bonus">{bonus}</span>}
-                {!plan.savePercent && !bonus && (
-                  <span className="pr-plain">Pay once</span>
-                )}
-              </p>
-              <p className="pr-plan-rate">
-                {formatRate(plan.perMonth, currency)} a month
-                {bonus ? ', counting the free time' : ''}
-              </p>
-              <PlanButton
-                plan={plan.id}
-                label={planLength(plan)}
-                primary={plan.bestValue}
-              />
-            </article>
-          );
-        })}
-      </div>
+      <PlanCards currency={currency} />
 
       <div className="pr-premium">
         <aside className="pr-card" aria-label="About Premium">
