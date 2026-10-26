@@ -108,8 +108,18 @@ export function SessionRecorderControl({
   );
   useEffect(() => {
     reportRecording(active);
+    // Pop-ups (like the feedback prompt) stay away while recording, so they
+    // never end up in someone's lesson video.
+    if (active) document.documentElement.dataset.recording = 'true';
+    else delete document.documentElement.dataset.recording;
   }, [active]);
-  useEffect(() => () => reportRecording(false), []);
+  useEffect(
+    () => () => {
+      reportRecording(false);
+      delete document.documentElement.dataset.recording;
+    },
+    [],
+  );
 
   // A plan that ends while the setup is open cannot start a recording.
   useEffect(() => {

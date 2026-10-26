@@ -1,6 +1,8 @@
 import { Analytics } from '@vercel/analytics/next';
 import { SpeedInsights } from '@vercel/speed-insights/next';
+import { Suspense } from 'react';
 import { Clarity } from './components/clarity';
+import { FeedbackPrompt } from './components/feedback-prompt';
 import type { Metadata, Viewport } from 'next';
 import { Bricolage_Grotesque, Geist, Geist_Mono } from 'next/font/google';
 import { FeedbackProvider } from './components/feedback';
@@ -81,6 +83,9 @@ export default function RootLayout({
         <AuthProvider>
           <BillingProvider>{children}</BillingProvider>
           <FeedbackProvider />
+          <Suspense>
+            <FeedbackPrompt />
+          </Suspense>
         </AuthProvider>
         <Analytics />
         <SpeedInsights />
