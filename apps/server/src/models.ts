@@ -417,3 +417,21 @@ export type Presence = {
   /** The server instance holding this tab's socket. */
   instance?: string;
 };
+
+/** A notice shown to everyone: maintenance, downtime, repairs or news. */
+export type Notice = {
+  id: string;
+  kind: 'maintenance' | 'outage' | 'info' | 'update';
+  title: string;
+  message: string;
+  /** When the event itself happens, if it has a time (like maintenance). */
+  startsAt: string | null;
+  endsAt: string | null;
+  /** The banner shows from this time until `showUntil` (or until removed). */
+  showFrom: string;
+  showUntil: string | null;
+  published: boolean;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+};

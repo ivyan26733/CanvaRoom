@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ApiError, api, send } from '../lib/api';
 import './admin.css';
 import { FeedbackSection } from './feedback';
+import { NoticesSection } from './notices';
 import { PerformanceSection } from './performance';
 
 type AdminPayment = {
@@ -124,7 +125,13 @@ type AdminMe = {
 };
 type GrantMethod = 'cash' | 'bank_transfer' | 'complimentary' | 'other';
 type Section =
-  'overview' | 'users' | 'performance' | 'feedback' | 'pricing' | 'transfers';
+  | 'overview'
+  | 'users'
+  | 'performance'
+  | 'feedback'
+  | 'notices'
+  | 'pricing'
+  | 'transfers';
 type Filter = 'all' | 'online' | 'premium' | 'unverified' | 'admins';
 
 const PAGE_SIZE = 50;
@@ -262,6 +269,7 @@ const NAV: { id: Section; label: string; icon: string }[] = [
   { id: 'users', label: 'Users', icon: '◍' },
   { id: 'performance', label: 'Performance', icon: '◷' },
   { id: 'feedback', label: 'Feedback', icon: '☆' },
+  { id: 'notices', label: 'Notices', icon: '📢' },
   { id: 'pricing', label: 'Pricing', icon: '◈' },
   { id: 'transfers', label: 'Bank transfers', icon: '⇄' },
 ];
@@ -801,6 +809,15 @@ export default function AdminClient() {
 
         {section === 'feedback' && (
           <FeedbackSection onUnauthorized={signedOut} />
+        )}
+
+        {section === 'notices' && (
+          <NoticesSection
+            onUnauthorized={signedOut}
+            onToast={(text, failed) =>
+              setToast(failed ? { text, tone: 'error' } : { text })
+            }
+          />
         )}
 
         {section === 'transfers' && (

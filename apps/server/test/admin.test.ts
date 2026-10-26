@@ -214,3 +214,70 @@ describe('quick feedback', () => {
     assert.equal(mine?.context.rttMedian, 240);
   });
 });
+
+describe('notices', () => {
+  test('show only while published and inside their display window', async (t) => {
+    if (!store) return t.skip('no TEST_DATABASE_URL');
+    const hour = 3_600_000;
+    const at = (offset: number) => new Date(Date.now() + offset).toISOString();
+    const base = {
+      kind: 'maintenance' as const,
+      message: 'Boards will be read-only.',
+      startsAt: at(2 * hour),
+      endsAt: at(3 * hour),
+      createdBy: 'admin@test.invalid',
+    };
+    const live = await store.saveNotice({
+      ...base,
+      id: unique('notice_'),
+      title: 'Live now',
+      showFrom: at(-hour),
+      showUntil: at(4 * hour),
+      published: true,
+    });
+    const later = await store.saveNotice({
+      ...base,
+      id: unique('notice_'),
+      title: 'Not yet',
+      showFrom: at(hour),
+      showUntil: null,
+      published: true,
+    });
+    const draft = await store.saveNotice({
+      ...base,
+      id: unique('notice_'),
+      title: 'Draft',
+      showFrom: at(-hour),
+      showUntil: null,
+      published: false,
+    });
+    const over = await store.saveNotice({
+      ...base,
+      id: unique('notice_'),
+      title: 'Finished',
+      showFrom: at(-5 * hour),
+      showUntil: at(-hour),
+      published: true,
+    });
+    const ids = (await store.listLiveNotices()).map((notice) => notice.id);
+    assert.ok(ids.includes(live.id));
+    for (const hidden of [later, draft, over])
+      assert.ok(!ids.includes(hidden.id), `${hidden.title} should be hidden`);
+    const history = (await store.listRecentNotices(30)).map((n) => n.id);
+    assert.ok(history.includes(over.id));
+    assert.ok(!history.includes(draft.id));
+
+    const edited = await store.saveNotice({
+      ...base,
+      id: live.id,
+      title: 'Live now (updated)',
+      showFrom: live.showFrom,
+      showUntil: live.showUntil,
+      published: true,
+    });
+    assert.equal(edited.title, 'Live now (updated)');
+    assert.ok(Date.parse(edited.updatedAt) >= Date.parse(live.updatedAt));
+    assert.equal(await store.deleteNotice(live.id), true);
+    assert.equal(await store.deleteNotice(live.id), false);
+  });
+});

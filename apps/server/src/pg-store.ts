@@ -20,6 +20,7 @@ import type {
   Capture,
   CaptureResult,
   CheckoutReminder,
+  Notice,
   ChatMessage,
   Member,
   Operation,
@@ -183,6 +184,36 @@ const PAID_REVENUE = `${PAID_ORDERS}
   UNION ALL
   SELECT amount, currency, reviewed_at AS paid_at, false AS refunded
     FROM bank_transfer_requests WHERE status = 'confirmed'`;
+
+type NoticeRow = {
+  id: string;
+  kind: Notice['kind'];
+  title: string;
+  message: string;
+  starts_at: Date | null;
+  ends_at: Date | null;
+  show_from: Date;
+  show_until: Date | null;
+  published: boolean;
+  created_by: string;
+  created_at: Date;
+  updated_at: Date;
+};
+
+const toNotice = (row: NoticeRow): Notice => ({
+  id: row.id,
+  kind: row.kind,
+  title: row.title,
+  message: row.message,
+  startsAt: row.starts_at ? iso(row.starts_at) : null,
+  endsAt: row.ends_at ? iso(row.ends_at) : null,
+  showFrom: iso(row.show_from),
+  showUntil: row.show_until ? iso(row.show_until) : null,
+  published: row.published,
+  createdBy: row.created_by,
+  createdAt: iso(row.created_at),
+  updatedAt: iso(row.updated_at),
+});
 
 /** Postgres's "undefined table": the database isn't migrated yet. */
 const missingTable = (error: unknown) =>
@@ -1123,6 +1154,83 @@ export class PostgresStore implements Store {
         WHERE order_id = $1 AND checkout_reminded_at IS NULL`,
       [orderId],
     );
+  }
+
+  /** Published notices whose display window is open now. */
+  async listLiveNotices() {
+    const { rows } = await this.pool
+      .query<NoticeRow>(
+        `SELECT * FROM notices
+          WHERE published AND show_from <= now()
+            AND (show_until IS NULL OR show_until > now())
+          ORDER BY coalesce(starts_at, show_from)`,
+      )
+      .catch((error: unknown) => {
+        if ((error as { code?: string }).code === '42P01') return { rows: [] };
+        throw error;
+      });
+    return rows.map(toNotice);
+  }
+
+  /** Published notices from the last `days`, newest first, for /status. */
+  async listRecentNotices(days: number) {
+    const { rows } = await this.pool
+      .query<NoticeRow>(
+        `SELECT * FROM notices
+          WHERE published AND show_from <= now()
+            AND coalesce(show_until, now()) > now() - make_interval(days => $1)
+          ORDER BY coalesce(starts_at, show_from) DESC
+          LIMIT 50`,
+        [days],
+      )
+      .catch((error: unknown) => {
+        if ((error as { code?: string }).code === '42P01') return { rows: [] };
+        throw error;
+      });
+    return rows.map(toNotice);
+  }
+
+  async adminListNotices() {
+    const { rows } = await this.pool.query<NoticeRow>(
+      `SELECT * FROM notices ORDER BY created_at DESC LIMIT 100`,
+    );
+    return rows.map(toNotice);
+  }
+
+  async saveNotice(notice: Omit<Notice, 'createdAt' | 'updatedAt'>) {
+    const { rows } = await this.pool.query<NoticeRow>(
+      `INSERT INTO notices (id, kind, title, message, starts_at, ends_at,
+                            show_from, show_until, published, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       ON CONFLICT (id) DO UPDATE SET
+         kind = EXCLUDED.kind, title = EXCLUDED.title,
+         message = EXCLUDED.message, starts_at = EXCLUDED.starts_at,
+         ends_at = EXCLUDED.ends_at, show_from = EXCLUDED.show_from,
+         show_until = EXCLUDED.show_until, published = EXCLUDED.published,
+         updated_at = now()
+       RETURNING *`,
+      [
+        notice.id,
+        notice.kind,
+        notice.title,
+        notice.message,
+        notice.startsAt,
+        notice.endsAt,
+        notice.showFrom,
+        notice.showUntil,
+        notice.published,
+        notice.createdBy,
+      ],
+    );
+    return toNotice(rows[0]!);
+  }
+
+  async deleteNotice(id: string) {
+    const { rowCount } = await this.pool.query(
+      'DELETE FROM notices WHERE id = $1',
+      [id],
+    );
+    return rowCount === 1;
   }
 
   async addQuickFeedback(entry: {

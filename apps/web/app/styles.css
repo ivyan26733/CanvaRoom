@@ -5094,3 +5094,94 @@ button.plan-chip.is-pro {
     animation: none;
   }
 }
+
+/* ---- Notices from the team (maintenance, downtime, repairs) ---- */
+.site-notice {
+  position: relative;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 44px 10px 16px;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--blue) 10%, var(--surface));
+  color: var(--ink);
+  font-size: 13.5px;
+}
+.site-notice.is-maintenance {
+  background: color-mix(in srgb, var(--amber) 18%, var(--surface));
+}
+.site-notice.is-outage {
+  background: color-mix(in srgb, var(--danger) 14%, var(--surface));
+}
+.site-notice.is-update {
+  background: color-mix(in srgb, var(--green) 12%, var(--surface));
+}
+.site-notice-icon {
+  font-size: 18px;
+}
+.site-notice-body {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+.site-notice-body p {
+  margin: 0;
+}
+.site-notice-when {
+  margin-left: 10px;
+  color: var(--ink-2);
+  font-weight: 500;
+}
+.site-notice-message {
+  overflow: hidden;
+  color: var(--ink-2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.site-notice-link {
+  flex: none;
+  color: var(--ink);
+  font-weight: 650;
+  text-decoration: underline;
+}
+.site-notice-close {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  color: var(--ink-2);
+  font-size: 20px;
+  line-height: 1;
+  transform: translateY(-50%);
+}
+.site-notice-close:hover {
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
+}
+/* On a board the canvas fills the screen, so the notice floats over it. */
+.site-notice.is-floating {
+  position: fixed;
+  top: 72px;
+  left: 50%;
+  width: min(560px, calc(100vw - 24px));
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: var(--shadow-2);
+  transform: translateX(-50%);
+}
+@media (max-width: 640px) {
+  .site-notice {
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
+  .site-notice-when {
+    display: block;
+    margin-left: 0;
+  }
+  .site-notice-message {
+    white-space: normal;
+  }
+}
