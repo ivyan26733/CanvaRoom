@@ -84,6 +84,8 @@ type Overview = {
     rttMedian: number | null;
   }[];
   sides: Record<Side, number>;
+  /** Minutes nobody had the board on screen; never counted as poor. */
+  background: { minutes: number; reconnects: number; people: number };
   versions: Release[];
   onlyVersion: string | null;
 };
@@ -194,7 +196,8 @@ export function PerformanceSection({
           <h1 className="admin-title">Performance</h1>
           <p>
             How boards feel for people: lag, freezes, dropped connections and
-            errors. Each open board reports once a minute.
+            errors. Each open board reports once a minute; only minutes with the
+            board on screen count.
           </p>
         </div>
         <div className="perf-filters">
@@ -270,7 +273,12 @@ export function PerformanceSection({
         <div className="admin-kpi">
           <span>Reconnects</span>
           <strong>{totals?.reconnects ?? '—'}</strong>
-          <small>Dropped connections</small>
+          <small>
+            While boards were on screen
+            {data?.background.reconnects
+              ? ` · +${data.background.reconnects} in background tabs (not felt)`
+              : ''}
+          </small>
         </div>
         <div className="admin-kpi">
           <span>Script errors</span>

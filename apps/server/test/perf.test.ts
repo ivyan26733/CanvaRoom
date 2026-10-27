@@ -90,6 +90,16 @@ describe('performance summary', () => {
     assert.equal(row.country, 'IN');
   });
 
+  test('a minute nobody saw is never poor', () => {
+    const hidden = summarise(
+      report({ visibleMs: 0, reconnects: 1, offlineMs: 16_000 }),
+      { id: 'bg', userId: 'u', guest: false },
+    );
+    assert.equal(hidden.poor, false);
+    // The reasons are still kept, for the background figure.
+    assert.ok(hidden.reasons.some((reason) => reason.includes('reconnect')));
+  });
+
   test('the schema refuses absurd numbers and board content', () => {
     assert.equal(
       boardReportSchema.safeParse({ ...report(), rtt: [-1] }).success,
@@ -256,5 +266,35 @@ describe('versions in Postgres', () => {
     const listed = only.versions.find((item) => item.version === version);
     assert.equal(listed?.message, 'Test release');
     assert.equal(listed?.reports, 1);
+  });
+});
+
+describe('background tabs in Postgres', () => {
+  test('are left out of poor minutes and counted separately', async (t) => {
+    if (!store) return t.skip('no TEST_DATABASE_URL');
+    const version = unique('bg')
+      .replace(/[^a-z0-9]/g, '')
+      .slice(0, 30);
+    const userId = unique('bg_user_');
+    const seen = summarise(
+      { ...report({ reconnects: 1, offlineMs: 3000 }), version },
+      { id: unique('m_'), userId, guest: false },
+    );
+    const unseen = summarise(
+      {
+        ...report({ visibleMs: 0, reconnects: 1, offlineMs: 17_000 }),
+        version,
+      },
+      { id: unique('m_'), userId, guest: false },
+    );
+    await store.addBoardMetric(seen);
+    await store.addBoardMetric(unseen);
+    const overview = await store.performanceOverview(1, version);
+    assert.equal(overview.totals.reports, 1);
+    assert.equal(overview.totals.poor, 1);
+    assert.equal(overview.worst.length, 1);
+    assert.equal(overview.worst[0]!.id, seen.id);
+    assert.equal(overview.background.minutes, 1);
+    assert.equal(overview.background.reconnects, 1);
   });
 });

@@ -189,7 +189,9 @@ export function summarise(
     network: report.device.network ?? null,
     screen: report.device.screen,
     country: who.country ?? null,
-    poor: reasons.length > 0,
+    // A minute nobody saw (a background tab, a sleeping computer) isn't a
+    // poor experience, whatever happened to its connection.
+    poor: reasons.length > 0 && report.visibleMs > 0,
     reasons,
   };
 }
