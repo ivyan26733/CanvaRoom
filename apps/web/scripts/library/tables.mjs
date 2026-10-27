@@ -471,3 +471,43 @@ export const numberRules = {
     ),
   ],
 };
+
+// Times tables from 2 to 20, one item each, plus a chart of them all.
+const timesTable = (n) => ({
+  type: 'formula',
+  id: `table-${n}`,
+  title: `Table of ${n}`,
+  lines: [
+    `\\begin{aligned} ${Array.from(
+      { length: 10 },
+      (_, i) => `${n} \\times ${i + 1} &= ${n * (i + 1)}`,
+    ).join(' \\\\ ')} \\end{aligned}`,
+  ],
+  keywords: `multiplication times table ${n} pahade`,
+});
+
+export const multiplicationTables = {
+  id: 'multiplication-tables',
+  title: 'Multiplication tables',
+  subject: 'Maths',
+  description:
+    'Times tables from 2 to 20 (each up to × 10), one card per table, plus a chart of them all.',
+  glyph: '×',
+  color: '#f08c00',
+  items: [
+    table(
+      'times-chart',
+      'Multiplication chart 2 to 20',
+      ['\\times', ...Array.from({ length: 10 }, (_, i) => String(i + 1))],
+      Array.from({ length: 19 }, (_, row) => {
+        const n = row + 2;
+        return [
+          String(n),
+          ...Array.from({ length: 10 }, (_, i) => String(n * (i + 1))),
+        ];
+      }),
+      'multiplication chart grid times tables 2 to 20',
+    ),
+    ...Array.from({ length: 19 }, (_, i) => timesTable(i + 2)),
+  ],
+};
