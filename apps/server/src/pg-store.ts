@@ -1441,6 +1441,10 @@ export class PostgresStore implements Store {
     // Every query takes the time window ($1) and, optionally, one version ($2).
     const window = [hours, onlyVersion];
     const versionIs = `($2::text IS NULL OR app_version = $2)`;
+    // Minutes when nobody had the board on screen (a background tab, a
+    // sleeping computer) aren't felt, so they don't count towards anything
+    // but the separate background-reconnect figure.
+    const onScreen = `${versionIs} AND visible_ms > 0`;
     const [
       totals,
       devices,
@@ -1450,6 +1454,7 @@ export class PostgresStore implements Store {
       hourly,
       poorAll,
       versions,
+      background,
     ] = await Promise.all([
       this.pool.query(
         `SELECT count(*)::int AS reports,
@@ -1464,7 +1469,7 @@ export class PostgresStore implements Store {
                   coalesce(sum(reconnects), 0)::int AS reconnects,
                   coalesce(sum(errors), 0)::int AS errors
              FROM board_metrics
-            WHERE created_at > now() - make_interval(hours => $1) AND ${versionIs}`,
+            WHERE created_at > now() - make_interval(hours => $1) AND ${onScreen}`,
         window,
       ),
       this.pool.query(
@@ -1474,7 +1479,7 @@ export class PostgresStore implements Store {
                   round(avg(slow_frame_ms))::int AS freeze_ms_per_min,
                   round(100.0 * count(*) FILTER (WHERE poor) / count(*))::int AS poor_percent
              FROM board_metrics
-            WHERE created_at > now() - make_interval(hours => $1) AND ${versionIs}
+            WHERE created_at > now() - make_interval(hours => $1) AND ${onScreen}
             GROUP BY os, browser, mobile
             ORDER BY reports DESC
             LIMIT 12`,
@@ -1486,7 +1491,7 @@ export class PostgresStore implements Store {
                   percentile_cont(0.5) WITHIN GROUP (ORDER BY rtt_p50)::int AS rtt_median,
                   round(100.0 * count(*) FILTER (WHERE poor) / count(*))::int AS poor_percent
              FROM board_metrics
-            WHERE created_at > now() - make_interval(hours => $1) AND ${versionIs}
+            WHERE created_at > now() - make_interval(hours => $1) AND ${onScreen}
             GROUP BY 1
             ORDER BY reports DESC
             LIMIT 12`,
@@ -1502,7 +1507,8 @@ export class PostgresStore implements Store {
              FROM board_metrics m
              LEFT JOIN accounts a ON a.id = m.user_id
              LEFT JOIN boards b ON b.id = m.board_id
-            WHERE m.poor AND m.created_at > now() - make_interval(hours => $1)
+            WHERE m.poor AND m.visible_ms > 0
+              AND m.created_at > now() - make_interval(hours => $1)
               AND ($2::text IS NULL OR m.app_version = $2)
             ORDER BY m.created_at DESC
             LIMIT 40`,
@@ -1524,7 +1530,7 @@ export class PostgresStore implements Store {
                   count(*) FILTER (WHERE poor)::int AS poor,
                   percentile_cont(0.5) WITHIN GROUP (ORDER BY rtt_p50)::int AS rtt_median
              FROM board_metrics
-            WHERE created_at > now() - make_interval(hours => $1) AND ${versionIs}
+            WHERE created_at > now() - make_interval(hours => $1) AND ${onScreen}
             GROUP BY 1
             ORDER BY 1`,
         window,
@@ -1535,7 +1541,7 @@ export class PostgresStore implements Store {
                   objects, mobile, cores, memory_gb
              FROM board_metrics
             WHERE poor AND created_at > now() - make_interval(hours => $1)
-              AND ${versionIs}
+              AND ${onScreen}
             ORDER BY created_at
             LIMIT 3000`,
         window,
@@ -1549,6 +1555,7 @@ export class PostgresStore implements Store {
                LEFT JOIN board_metrics m
                  ON m.app_version = v.version
                 AND m.created_at > now() - make_interval(hours => $1)
+                AND m.visible_ms > 0
               GROUP BY v.version, v.first_seen_at, v.message
              HAVING v.first_seen_at > now() - make_interval(hours => $1)
                  OR count(m.id) > 0
@@ -1562,6 +1569,16 @@ export class PostgresStore implements Store {
             return { rows: [] };
           throw error;
         }),
+      this.pool.query<{ minutes: number; reconnects: number; people: number }>(
+        `SELECT count(*)::int AS minutes,
+                coalesce(sum(reconnects), 0)::int AS reconnects,
+                count(DISTINCT user_id)::int AS people
+           FROM board_metrics
+          WHERE visible_ms = 0
+            AND created_at > now() - make_interval(hours => $1)
+            AND ${versionIs}`,
+        window,
+      ),
     ]);
     const releases = versions.rows.map((row) => row.first_seen_at.getTime());
     const sides = classifyPoor(
@@ -1656,6 +1673,11 @@ export class PostgresStore implements Store {
         lastSeen: iso(row.last_seen),
       })),
       sides: sideCount,
+      background: background.rows[0] ?? {
+        minutes: 0,
+        reconnects: 0,
+        people: 0,
+      },
       versions: versions.rows.map((row) => ({
         version: row.version,
         firstSeen: iso(row.first_seen_at),
