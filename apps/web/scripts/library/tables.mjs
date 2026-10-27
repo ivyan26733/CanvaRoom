@@ -112,21 +112,9 @@ export const vectors = {
           '\\vec a\\cdot\\vec b = \\vec b\\cdot\\vec a',
           '\\vec a\\times\\vec b = -\\,\\vec b\\times\\vec a',
         ],
-        [
-          '\\text{Parallel}',
-          '\\pm|\\vec a|\\,|\\vec b|',
-          '\\vec 0',
-        ],
-        [
-          '\\text{Perpendicular}',
-          '0',
-          '|\\vec a|\\,|\\vec b|\\;\\hat n',
-        ],
-        [
-          '\\text{With itself}',
-          '|\\vec a|^2',
-          '\\vec 0',
-        ],
+        ['\\text{Parallel}', '\\pm|\\vec a|\\,|\\vec b|', '\\vec 0'],
+        ['\\text{Perpendicular}', '0', '|\\vec a|\\,|\\vec b|\\;\\hat n'],
+        ['\\text{With itself}', '|\\vec a|^2', '\\vec 0'],
       ],
       'compare scalar vector product properties commutative',
     ),
@@ -182,17 +170,17 @@ export const formulaTables = {
         ['\\text{Square}', 'a^2', '4a'],
         ['\\text{Rectangle}', 'l\\,b', '2(l + b)'],
         ['\\text{Triangle}', '\\tfrac12\\,b\\,h', 'a + b + c'],
-        [
-          '\\text{Triangle (Heron)}',
-          '\\sqrt{s(s-a)(s-b)(s-c)}',
-          '2s',
-        ],
+        ['\\text{Triangle (Heron)}', '\\sqrt{s(s-a)(s-b)(s-c)}', '2s'],
         ['\\text{Equilateral triangle}', '\\tfrac{\\sqrt3}{4}\\,a^2', '3a'],
         ['\\text{Parallelogram}', 'b\\,h', '2(a + b)'],
         ['\\text{Rhombus}', '\\tfrac12\\,d_1 d_2', '4a'],
         ['\\text{Trapezium}', '\\tfrac12\\,(a + b)\\,h', 'a + b + c + d'],
         ['\\text{Circle}', '\\pi r^2', '2\\pi r'],
-        ['\\text{Sector (angle θ)}', '\\tfrac{\\theta}{360^\\circ}\\,\\pi r^2', '2r + \\tfrac{\\theta}{360^\\circ}\\,2\\pi r'],
+        [
+          '\\text{Sector (angle θ)}',
+          '\\tfrac{\\theta}{360^\\circ}\\,\\pi r^2',
+          '2r + \\tfrac{\\theta}{360^\\circ}\\,2\\pi r',
+        ],
       ],
       'mensuration area perimeter circumference shapes 2d',
     ),
@@ -235,7 +223,11 @@ export const formulaTables = {
         ['\\tan x', '\\sec^2 x', '\\ln|\\sec x| + C'],
         ['\\sec x', '\\sec x\\tan x', '\\ln|\\sec x + \\tan x| + C'],
         ['\\dfrac{1}{1+x^2}', '-\\dfrac{2x}{(1+x^2)^2}', '\\tan^{-1} x + C'],
-        ['\\dfrac{1}{\\sqrt{1-x^2}}', '\\dfrac{x}{(1-x^2)^{3/2}}', '\\sin^{-1} x + C'],
+        [
+          '\\dfrac{1}{\\sqrt{1-x^2}}',
+          '\\dfrac{x}{(1-x^2)^{3/2}}',
+          '\\sin^{-1} x + C',
+        ],
       ],
       'calculus derivative integral antiderivative table differentiation',
     ),
@@ -284,7 +276,11 @@ export const formulaTables = {
           '\\tfrac{n}{2}\\,[2a + (n-1)\\,d]',
           '\\dfrac{a\\,(r^n - 1)}{r - 1}',
         ],
-        ['\\text{Sum to infinity}', '\\text{—}', '\\dfrac{a}{1 - r},\\ |r| < 1'],
+        [
+          '\\text{Sum to infinity}',
+          '\\text{—}',
+          '\\dfrac{a}{1 - r},\\ |r| < 1',
+        ],
         ['\\text{Mean of a and b}', '\\dfrac{a + b}{2}', '\\sqrt{ab}'],
       ],
       'sequence series ap gp nth term sum progression',
@@ -327,6 +323,151 @@ export const formulaTables = {
         ];
       }),
       'squares cubes square roots table numbers',
+    ),
+  ],
+};
+
+// Sign rules and counting: the basics students get wrong most often.
+const plus = '(+)';
+const minus = '(-)';
+const nCrRows = Array.from({ length: 11 }, (_, n) => [
+  String(n),
+  ...Array.from({ length: 11 }, (_, r) => {
+    if (r > n) return '\\text{}';
+    let value = 1;
+    for (let k = 1; k <= r; k++) value = (value * (n - r + k)) / k;
+    return String(Math.round(value));
+  }),
+]);
+const factorial = (n) => (n <= 1 ? 1 : n * factorial(n - 1));
+
+export const numberRules = {
+  id: 'number-rules',
+  title: 'Number rules & counting',
+  subject: 'Maths',
+  description:
+    'Sign rules for plus, minus, multiply and divide, order of operations, factorials, and permutation and combination tables.',
+  glyph: '±',
+  color: '#d6336c',
+  items: [
+    table(
+      'sign-multiply',
+      'Signs when multiplying',
+      ['\\times', plus, minus],
+      [
+        [plus, plus, minus],
+        [minus, minus, plus],
+      ],
+      'sign rules multiply multiplication negative positive same different',
+    ),
+    table(
+      'sign-divide',
+      'Signs when dividing',
+      ['\\div', plus, minus],
+      [
+        [plus, plus, minus],
+        [minus, minus, plus],
+      ],
+      'sign rules divide division negative positive',
+    ),
+    f(
+      'sign-rules',
+      'Sign rules in short',
+      [
+        '(+)\\times(+) = + \\qquad (-)\\times(-) = +',
+        '(+)\\times(-) = - \\qquad (-)\\times(+) = -',
+        '(+)\\div(+) = + \\qquad (-)\\div(-) = +',
+        '(+)\\div(-) = - \\qquad (-)\\div(+) = -',
+        '\\text{Same signs give } +,\\ \\text{different signs give } -',
+        '-(-a) = a \\qquad -(+a) = -a',
+      ],
+      'sign rules summary same different positive negative',
+    ),
+    table(
+      'sign-add-subtract',
+      'Adding and subtracting signed numbers',
+      ['\\text{Case}', '\\text{Rule}', '\\text{Example}'],
+      [
+        ['(+a) + (+b)', '\\text{Add, answer is positive}', '3 + 5 = 8'],
+        ['(-a) + (-b)', '\\text{Add, answer is negative}', '-3 + (-5) = -8'],
+        [
+          '(+a) + (-b)',
+          '\\text{Subtract, keep the sign of the bigger}',
+          '7 + (-3) = 4',
+        ],
+        [
+          '(-a) + (+b)',
+          '\\text{Subtract, keep the sign of the bigger}',
+          '-7 + 3 = -4',
+        ],
+        ['a - (+b)', '\\text{Same as a − b}', '5 - (+2) = 3'],
+        ['a - (-b)', '\\text{Same as a + b}', '5 - (-2) = 7'],
+      ],
+      'add subtract plus minus negative numbers integers sign',
+    ),
+    table(
+      'order-of-operations',
+      'Order of operations (BODMAS / PEMDAS)',
+      ['\\text{Step}', '\\text{Do}', '\\text{Example}'],
+      [
+        ['1', '\\text{Brackets}', '2\\times(3+4) = 2\\times 7'],
+        ['2', '\\text{Orders: powers and roots}', '3 + 2^3 = 3 + 8'],
+        [
+          '3',
+          '\\text{Division and multiplication, left to right}',
+          '12 \\div 3 \\times 2 = 8',
+        ],
+        [
+          '4',
+          '\\text{Addition and subtraction, left to right}',
+          '10 - 4 + 1 = 7',
+        ],
+      ],
+      'bodmas pemdas bidmas order of operations brackets precedence',
+    ),
+    f(
+      'permutations-combinations',
+      'Permutations and combinations',
+      [
+        'n! = n\\,(n-1)\\,(n-2)\\cdots 2\\cdot 1, \\qquad 0! = 1',
+        '{}^{n}P_{r} = \\dfrac{n!}{(n-r)!} \\quad \\text{(order matters)}',
+        '{}^{n}C_{r} = \\binom{n}{r} = \\dfrac{n!}{r!\\,(n-r)!} \\quad \\text{(order doesn’t matter)}',
+        '\\binom{n}{r} = \\binom{n}{n-r} \\qquad \\binom{n}{r} + \\binom{n}{r-1} = \\binom{n+1}{r}',
+        '\\sum_{r=0}^{n} \\binom{n}{r} = 2^n \\qquad {}^{n}P_{r} = r!\\,\\binom{n}{r}',
+      ],
+      'permutation combination npr ncr factorial choose arrangements selections',
+    ),
+    table(
+      'combinations-table',
+      'Combinations table nCr (Pascal’s triangle)',
+      ['n \\backslash r', ...Array.from({ length: 11 }, (_, r) => String(r))],
+      nCrRows,
+      'ncr combinations table pascal triangle binomial coefficients choose',
+    ),
+    table(
+      'permutations-table',
+      'Permutations table nPr',
+      ['n \\backslash r', '1', '2', '3', '4', '5'],
+      Array.from({ length: 9 }, (_, i) => {
+        const n = i + 2;
+        return [
+          String(n),
+          ...[1, 2, 3, 4, 5].map((r) =>
+            r > n ? '\\text{}' : String(factorial(n) / factorial(n - r)),
+          ),
+        ];
+      }),
+      'npr permutations table arrangements order',
+    ),
+    table(
+      'factorials',
+      'Factorials 0! to 12!',
+      ['n', 'n!'],
+      Array.from({ length: 13 }, (_, n) => [
+        String(n),
+        factorial(n).toLocaleString('en-US').replace(/,/g, '{,}'),
+      ]),
+      'factorial table n! values',
     ),
   ],
 };

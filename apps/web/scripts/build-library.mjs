@@ -24,7 +24,7 @@ import {
   trigonometry,
 } from './library/maths.mjs';
 import { geometry, physics, symbols, templates } from './library/science.mjs';
-import { formulaTables, vectors } from './library/tables.mjs';
+import { formulaTables, numberRules, vectors } from './library/tables.mjs';
 import { CATEGORIES, ELEMENTS, position } from './library/elements.mjs';
 
 export const VERSION = 1;
@@ -829,6 +829,7 @@ const periodic = {
 const PACKS = [
   trigonometry,
   algebra,
+  numberRules,
   differentiation,
   integration,
   differentialEquations,
