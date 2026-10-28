@@ -1955,3 +1955,112 @@ button.admin-kpi:hover {
     justify-content: flex-start;
   }
 }
+
+/* ---- Performance trends: one small chart per measure ---- */
+
+.perf-trends {
+  margin-bottom: 14px;
+}
+.perf-trend-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+}
+.perf-trend {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 12px 14px 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-2);
+}
+.perf-trend figcaption {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.perf-trend figcaption > span {
+  display: grid;
+}
+.perf-trend figcaption small {
+  color: var(--ink-3);
+  font-size: 11px;
+  font-weight: 500;
+}
+.perf-trend figcaption strong {
+  margin-left: auto;
+  color: var(--ink);
+  font: 700 15px var(--display);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.perf-trend-plot {
+  position: relative;
+}
+.perf-trend-plot svg {
+  display: block;
+  width: 100%;
+  height: 92px;
+  overflow: visible;
+}
+.perf-trend-cursor {
+  stroke: var(--ink);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  opacity: 0.55;
+}
+.perf-trend-empty {
+  position: absolute;
+  inset: 34% 0 auto;
+  color: var(--ink-3);
+  font-size: 12px;
+  text-align: center;
+}
+.perf-trend-tip {
+  position: absolute;
+  z-index: 2;
+  top: -6px;
+  display: grid;
+  gap: 2px;
+  padding: 6px 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: var(--shadow-2);
+  font-size: 11px;
+  pointer-events: none;
+  transform: translate(-50%, -100%);
+  white-space: nowrap;
+}
+.perf-trend-tip > span:first-child {
+  color: var(--ink-3);
+}
+.perf-trend-tip i,
+.perf-trend-legend i {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 5px;
+  border-radius: 2px;
+  vertical-align: 0;
+}
+.perf-trend-axis {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--ink-3);
+  font-size: 10.5px;
+}
+.perf-trend-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  color: var(--ink-2);
+  font-size: 11px;
+}

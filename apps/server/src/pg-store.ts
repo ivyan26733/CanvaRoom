@@ -215,6 +215,71 @@ const toNotice = (row: NoticeRow): Notice => ({
   updatedAt: iso(row.updated_at),
 });
 
+/** Trend charts: hourly up to 2 days, 6-hourly up to a week, then daily. */
+const bucketSeconds = (hours: number) =>
+  hours <= 48 ? 3_600 : hours <= 168 ? 6 * 3_600 : 86_400;
+
+type TrendRow = {
+  at: Date;
+  minutes: number;
+  reports: number;
+  poor: number;
+  rtt_median: number | null;
+  rtt_p95: number | null;
+  frozen_ms: number;
+  reconnects: number;
+  background_reconnects: number;
+  errors: number;
+};
+
+/**
+ * One point per bucket across the whole window, including empty ones, so
+ * every chart shares the same time axis. Our side / user side / unclear
+ * counts come from the classified poor minutes.
+ */
+function buildTrend(
+  hours: number,
+  rows: TrendRow[],
+  poor: { id: string; created_at: Date }[],
+  sides: Map<string, { side: 'ours' | 'user' | 'unclear' }>,
+) {
+  const step = bucketSeconds(hours) * 1000;
+  const end = Math.floor(Date.now() / step) * step;
+  const start = Math.floor((Date.now() - hours * 3_600_000) / step) * step;
+  const byTime = new Map(rows.map((row) => [row.at.getTime(), row]));
+  const sideCounts = new Map<
+    number,
+    { ours: number; user: number; unclear: number }
+  >();
+  for (const minute of poor) {
+    const key = Math.floor(minute.created_at.getTime() / step) * step;
+    const counts = sideCounts.get(key) ?? { ours: 0, user: 0, unclear: 0 };
+    counts[sides.get(minute.id)?.side ?? 'unclear']++;
+    sideCounts.set(key, counts);
+  }
+  const points = [];
+  for (let at = start; at <= end; at += step) {
+    const row = byTime.get(at);
+    const counts = sideCounts.get(at) ?? { ours: 0, user: 0, unclear: 0 };
+    points.push({
+      at: new Date(at).toISOString(),
+      minutes: row?.minutes ?? 0,
+      reports: row?.reports ?? 0,
+      poor: row?.poor ?? 0,
+      poorPercent:
+        row && row.reports ? Math.round((row.poor / row.reports) * 100) : null,
+      rttMedian: row?.rtt_median ?? null,
+      rttP95: row?.rtt_p95 ?? null,
+      frozenMs: row?.frozen_ms ?? 0,
+      reconnects: row?.reconnects ?? 0,
+      backgroundReconnects: row?.background_reconnects ?? 0,
+      errors: row?.errors ?? 0,
+      ...counts,
+    });
+  }
+  return { bucketHours: step / 3_600_000, points };
+}
+
 /** Postgres's "undefined table": the database isn't migrated yet. */
 const missingTable = (error: unknown) =>
   (error as { code?: string } | null)?.code === '42P01';
@@ -1455,6 +1520,7 @@ export class PostgresStore implements Store {
       poorAll,
       versions,
       background,
+      trend,
     ] = await Promise.all([
       this.pool.query(
         `SELECT count(*)::int AS reports,
@@ -1579,6 +1645,31 @@ export class PostgresStore implements Store {
             AND ${versionIs}`,
         window,
       ),
+      this.pool.query(
+        `SELECT date_bin(make_interval(secs => $3), created_at,
+                         timestamptz '1970-01-01 00:00:00+00') AS at,
+                round(coalesce(sum(visible_ms) FILTER (WHERE visible_ms > 0), 0)
+                      / 60000.0)::int AS minutes,
+                count(*) FILTER (WHERE visible_ms > 0)::int AS reports,
+                count(*) FILTER (WHERE poor AND visible_ms > 0)::int AS poor,
+                (percentile_cont(0.5) WITHIN GROUP (ORDER BY rtt_p50)
+                   FILTER (WHERE visible_ms > 0))::int AS rtt_median,
+                (percentile_cont(0.95) WITHIN GROUP (ORDER BY rtt_p95)
+                   FILTER (WHERE visible_ms > 0))::int AS rtt_p95,
+                coalesce(sum(slow_frame_ms) FILTER (WHERE visible_ms > 0), 0)::int
+                  AS frozen_ms,
+                coalesce(sum(reconnects) FILTER (WHERE visible_ms > 0), 0)::int
+                  AS reconnects,
+                coalesce(sum(reconnects) FILTER (WHERE visible_ms = 0), 0)::int
+                  AS background_reconnects,
+                coalesce(sum(errors), 0)::int AS errors
+           FROM board_metrics
+          WHERE created_at > now() - make_interval(hours => $1)
+            AND ${versionIs}
+          GROUP BY 1
+          ORDER BY 1`,
+        [hours, onlyVersion, bucketSeconds(hours)],
+      ),
     ]);
     const releases = versions.rows.map((row) => row.first_seen_at.getTime());
     const sides = classifyPoor(
@@ -1686,6 +1777,7 @@ export class PostgresStore implements Store {
         poor: row.poor,
       })),
       onlyVersion,
+      trend: buildTrend(hours, trend.rows, poorAll.rows, sides),
       hourly: hourly.rows.map((row) => ({
         hour: iso(row.hour),
         reports: row.reports,

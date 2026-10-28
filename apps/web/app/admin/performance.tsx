@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ApiError, api } from '../lib/api';
+import { PerfTrends, type TrendPoint } from './perf-trends';
 
 /**
  * How boards are performing for people: connection speed, save delays,
@@ -86,6 +87,7 @@ type Overview = {
   sides: Record<Side, number>;
   /** Minutes nobody had the board on screen; never counted as poor. */
   background: { minutes: number; reconnects: number; people: number };
+  trend: { bucketHours: number; points: TrendPoint[] };
   versions: Release[];
   onlyVersion: string | null;
 };
@@ -288,6 +290,13 @@ export function PerformanceSection({
           <small>Crashes on a board</small>
         </div>
       </section>
+
+      {data?.trend && (
+        <PerfTrends
+          points={data.trend.points}
+          bucketHours={data.trend.bucketHours}
+        />
+      )}
 
       <section className="admin-card">
         <div className="admin-card-head">

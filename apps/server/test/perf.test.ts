@@ -298,3 +298,44 @@ describe('background tabs in Postgres', () => {
     assert.equal(overview.background.reconnects, 1);
   });
 });
+
+describe('performance trend in Postgres', () => {
+  test('has a point per bucket with each measure, and sides', async (t) => {
+    if (!store) return t.skip('no TEST_DATABASE_URL');
+    const version = unique('tr')
+      .replace(/[^a-z0-9]/g, '')
+      .slice(0, 30);
+    const userId = unique('trend_user_');
+    await store.addBoardMetric(
+      summarise(
+        {
+          ...report({ errors: 1, slowFrameMs: 300, rtt: [100, 140] }),
+          version,
+        },
+        { id: unique('m_'), userId, guest: false },
+      ),
+    );
+    await store.addBoardMetric(
+      summarise(
+        { ...report({ visibleMs: 0, reconnects: 1 }), version },
+        { id: unique('m_'), userId, guest: false },
+      ),
+    );
+    const { trend } = await store.performanceOverview(24, version);
+    assert.equal(trend.bucketHours, 1);
+    assert.ok(trend.points.length >= 24 && trend.points.length <= 26);
+    const last = trend.points.at(-1)!;
+    assert.equal(last.minutes, 1);
+    assert.equal(last.errors, 1);
+    assert.equal(last.frozenMs, 300);
+    assert.equal(last.backgroundReconnects, 1);
+    assert.equal(last.poor, 1);
+    assert.equal(last.ours, 1);
+    assert.equal(last.poorPercent, 100);
+    assert.equal(trend.points[0]!.minutes, 0);
+    const week = await store.performanceOverview(168, version);
+    assert.equal(week.trend.bucketHours, 6);
+    const month = await store.performanceOverview(720, version);
+    assert.equal(month.trend.bucketHours, 24);
+  });
+});
