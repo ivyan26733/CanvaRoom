@@ -231,6 +231,12 @@ const colorFor = (id: string) => {
   for (const char of id) hash = (hash * 31 + char.charCodeAt(0)) | 0;
   return PROFILE_COLORS[Math.abs(hash) % PROFILE_COLORS.length]!;
 };
+/** Money an admin received by hand, in rupees or dollars (at least 1). */
+const manualAmount = z
+  .number()
+  .finite()
+  .min(1, 'Enter an amount of at least 1.')
+  .max(10_000_000);
 const firstIssue = (error: z.ZodError) =>
   error.issues[0]?.message ?? 'Check the form and try again.';
 const getAccess = async (boardId: string, userId: string) => {
@@ -431,12 +437,30 @@ app.post('/api/admin/users/:userId/grants', async (request, reply) => {
         .max(500)
         .optional()
         .transform((value) => value || undefined),
+      // What they paid, in rupees or dollars (not paise or cents).
+      amount: manualAmount.optional(),
+      currency: z.enum(['USD', 'INR']).optional(),
     })
     .refine((value) => value.months > 0 || value.days > 0, {
       message: 'Choose a Premium duration greater than zero.',
     })
+    .refine(
+      (value) =>
+        value.method === 'complimentary' ||
+        (value.amount !== undefined && value.currency !== undefined),
+      { message: 'Enter the amount received, so it counts as revenue.' },
+    )
     .safeParse(request.body);
   if (!body.success) return apiError(reply, 400, firstIssue(body.error));
+  const payment =
+    body.data.method !== 'complimentary' &&
+    body.data.amount !== undefined &&
+    body.data.currency
+      ? {
+          amount: Math.round(body.data.amount * 100),
+          currency: body.data.currency,
+        }
+      : undefined;
   const paidUntil = await adminStore.grantAdminAccess({
     id: randomUUID(),
     username,
@@ -446,12 +470,41 @@ app.post('/api/admin/users/:userId/grants', async (request, reply) => {
     method: body.data.method,
     ...(body.data.reference ? { reference: body.data.reference } : {}),
     ...(body.data.note ? { note: body.data.note } : {}),
+    ...(payment ? { payment } : {}),
   });
   if (!paidUntil)
     return apiError(reply, 404, 'No account exists with that user ID.');
   const account = await store.getAccount(userId);
   if (account) refreshOwnerPlan(userId, planOf({ ...account, paidUntil }));
   return { ok: true, paidUntil };
+});
+
+// Records the money for an earlier paid grant that was saved without it.
+app.post('/api/admin/grants/:grantId/payment', async (request, reply) => {
+  const username = await requireAdmin(request, reply);
+  if (!username || !adminStore) return;
+  const { grantId } = request.params as { grantId: string };
+  const body = z
+    .object({ amount: manualAmount, currency: z.enum(['USD', 'INR']) })
+    .safeParse(request.body);
+  if (!body.success) return apiError(reply, 400, firstIssue(body.error));
+  const amount = Math.round(body.data.amount * 100);
+  const result = await adminStore.addGrantPayment(grantId, {
+    amount,
+    currency: body.data.currency,
+  });
+  if (result.outcome === 'unknown')
+    return apiError(reply, 404, 'That grant no longer exists.');
+  if (result.outcome === 'exists')
+    return apiError(reply, 409, 'This grant already has its payment recorded.');
+  if (result.outcome === 'complimentary')
+    return apiError(reply, 400, 'Complimentary access has no payment.');
+  await audit(username, 'add_grant_payment', result.userId, {
+    grantId,
+    amount,
+    currency: body.data.currency,
+  });
+  return { ok: true };
 });
 
 app.get('/api/admin/bank-transfers', async (request, reply) => {

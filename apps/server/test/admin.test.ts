@@ -281,3 +281,90 @@ describe('notices', () => {
     assert.equal(await store.deleteNotice(live.id), false);
   });
 });
+
+describe('manual grants with payments', () => {
+  test('a paid grant books its money as revenue', async (t) => {
+    if (!store || !pool) return t.skip('no TEST_DATABASE_URL');
+    const userId = await createUser({ emailVerified: true });
+    const before = await store.adminOverview(150);
+    const inr = (rows: typeof before.revenue) =>
+      rows.find((row) => row.currency === 'INR')?.total ?? 0;
+    const grantId = unique('grant_');
+    await store.grantAdminAccess({
+      id: grantId,
+      username: 'admin@test.invalid',
+      userId,
+      months: 3,
+      days: 0,
+      method: 'cash',
+      payment: { amount: 235000, currency: 'INR' },
+    });
+    const after = await store.adminOverview(150);
+    assert.equal(inr(after.revenue), inr(before.revenue) + 235000);
+    const { rows } = await pool.query(
+      `SELECT provider, status, plan, amount FROM payments WHERE order_id = $1`,
+      [`manual_${grantId}`],
+    );
+    assert.deepEqual(rows[0], {
+      provider: 'manual',
+      status: 'paid',
+      plan: 'quarterly',
+      amount: 235000,
+    });
+    const listed = await store.listAdminAccounts(userId, 5, 0);
+    assert.equal(
+      listed.users[0]?.grants[0]?.paymentOrderId,
+      `manual_${grantId}`,
+    );
+  });
+
+  test('an earlier grant can be given its payment, on the day of the grant', async (t) => {
+    if (!store || !pool) return t.skip('no TEST_DATABASE_URL');
+    const userId = await createUser({ emailVerified: true });
+    const grantId = unique('grant_');
+    await store.grantAdminAccess({
+      id: grantId,
+      username: 'admin@test.invalid',
+      userId,
+      months: 6,
+      days: 15,
+      method: 'bank_transfer',
+    });
+    await pool.query(
+      `UPDATE admin_access_grants SET created_at = now() - interval '5 days' WHERE id = $1`,
+      [grantId],
+    );
+    assert.equal(
+      (await store.addGrantPayment(grantId, { amount: 4500, currency: 'USD' }))
+        .outcome,
+      'added',
+    );
+    assert.equal(
+      (await store.addGrantPayment(grantId, { amount: 4500, currency: 'USD' }))
+        .outcome,
+      'exists',
+    );
+    const { rows } = await pool.query(
+      `SELECT plan, paid_at < now() - interval '4 days' AS backdated
+         FROM payments WHERE order_id = $1`,
+      [`manual_${grantId}`],
+    );
+    assert.equal(rows[0].plan, 'half-year');
+    assert.equal(rows[0].backdated, true);
+
+    const free = unique('grant_');
+    await store.grantAdminAccess({
+      id: free,
+      username: 'admin@test.invalid',
+      userId,
+      months: 1,
+      days: 0,
+      method: 'complimentary',
+    });
+    assert.equal(
+      (await store.addGrantPayment(free, { amount: 100, currency: 'USD' }))
+        .outcome,
+      'complimentary',
+    );
+  });
+});

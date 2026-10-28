@@ -379,6 +379,10 @@ CREATE TABLE IF NOT EXISTS app_versions (
   message text
 );
 
+-- A manual Premium grant that was paid for (cash, bank transfer...) records
+-- that money as a 'manual' payment, linked here, so it counts as revenue.
+ALTER TABLE admin_access_grants ADD COLUMN IF NOT EXISTS payment_order_id text;
+
 -- The free plan keeps an owner's oldest board, found through this index.
 CREATE INDEX IF NOT EXISTS boards_owner_created_idx ON boards (owner_id, created_at);
 

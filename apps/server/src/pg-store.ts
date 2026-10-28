@@ -39,6 +39,7 @@ import type { BoardListItem, LiveStore, Store } from './store.js';
 import {
   CURRENCIES,
   PLAN_IDS,
+  planById,
   PLANS_SINCE,
   planOfOrder,
   type Currency,
@@ -1983,7 +1984,8 @@ export class PostgresStore implements Store {
                  'id', g.id, 'adminUsername', g.admin_username,
                  'months', g.months, 'days', g.days, 'method', g.method,
                  'reference', g.reference, 'note', g.note,
-                 'paidUntil', g.paid_until, 'createdAt', g.created_at
+                 'paidUntil', g.paid_until, 'createdAt', g.created_at,
+                 'paymentOrderId', g.payment_order_id
                ) ORDER BY g.created_at DESC), '[]'::jsonb)
                  FROM (SELECT * FROM admin_access_grants WHERE user_id = a.id
                         ORDER BY created_at DESC LIMIT 10) g) AS grants,
@@ -2026,6 +2028,8 @@ export class PostgresStore implements Store {
     method: string;
     reference?: string;
     note?: string;
+    /** Money received for it, in the currency's smallest unit. */
+    payment?: { amount: number; currency: 'USD' | 'INR' };
   }) {
     return this.transaction(async (client) => {
       const account = await client.query<{ paid_until: Date | null }>(
@@ -2059,7 +2063,98 @@ export class PostgresStore implements Store {
           paidUntil,
         ],
       );
+      if (input.payment)
+        await this.recordManualPayment(client, {
+          grantId: input.id,
+          userId: input.userId,
+          months: input.months,
+          days: input.days,
+          amount: input.payment.amount,
+          currency: input.payment.currency,
+        });
       return iso(paidUntil);
+    });
+  }
+
+  /**
+   * Books the money for a manual grant as a paid 'manual' payment (dated
+   * `at`, default now) and links it to the grant, so revenue counts it.
+   */
+  private async recordManualPayment(
+    client: pg.PoolClient,
+    input: {
+      grantId: string;
+      userId: string;
+      months: number;
+      days: number;
+      amount: number;
+      currency: 'USD' | 'INR';
+      at?: Date;
+    },
+  ) {
+    const orderId = `manual_${input.grantId}`;
+    // A grant matching a plan's term counts as that plan in "Plans sold".
+    const plan =
+      PLAN_IDS.find((id) => {
+        const term = termOfPlan(planById(id, input.currency)!);
+        return term.months === input.months && term.days === input.days;
+      }) ?? null;
+    const at = input.at ?? new Date();
+    await client.query(
+      `INSERT INTO payments
+         (order_id, user_id, amount, currency, status, payment_id, created_at,
+          paid_at, plan, months, days, provider)
+       VALUES ($1, $2, $3, $4, 'paid', $1, $5, $5, $6, $7, $8, 'manual')`,
+      [
+        orderId,
+        input.userId,
+        input.amount,
+        input.currency,
+        at,
+        plan,
+        input.months,
+        input.days,
+      ],
+    );
+    await client.query(
+      'UPDATE admin_access_grants SET payment_order_id = $2 WHERE id = $1',
+      [input.grantId, orderId],
+    );
+  }
+
+  /** Adds the payment for an earlier paid grant that was recorded without one. */
+  async addGrantPayment(
+    grantId: string,
+    payment: { amount: number; currency: 'USD' | 'INR' },
+  ) {
+    return this.transaction(async (client) => {
+      const { rows } = await client.query<{
+        user_id: string;
+        months: number;
+        days: number;
+        method: string;
+        created_at: Date;
+        payment_order_id: string | null;
+      }>(
+        `SELECT user_id, months, days, method, created_at, payment_order_id
+           FROM admin_access_grants WHERE id = $1 FOR UPDATE`,
+        [grantId],
+      );
+      const grant = rows[0];
+      if (!grant) return { outcome: 'unknown' as const };
+      if (grant.payment_order_id) return { outcome: 'exists' as const };
+      if (grant.method === 'complimentary')
+        return { outcome: 'complimentary' as const };
+      await this.recordManualPayment(client, {
+        grantId,
+        userId: grant.user_id,
+        months: grant.months,
+        days: grant.days,
+        amount: payment.amount,
+        currency: payment.currency,
+        at: grant.created_at,
+      });
+      return { outcome: 'added' as const, userId: grant.user_id };
     });
   }
 
@@ -2215,8 +2310,10 @@ export class PostgresStore implements Store {
           GROUP BY 1, 2 ORDER BY 1`,
       ),
       this.pool.query<{ plan: string | null; count: number }>(
-        `SELECT plan, count(*)::int AS count FROM payments
-          WHERE status = 'paid' AND refunded_at IS NULL GROUP BY plan`,
+        `SELECT coalesce(plan, CASE WHEN provider = 'manual' THEN 'manual' END) AS plan,
+                count(*)::int AS count
+           FROM payments
+          WHERE status = 'paid' AND refunded_at IS NULL GROUP BY 1`,
       ),
     ]);
     const row = accounts.rows[0]!;

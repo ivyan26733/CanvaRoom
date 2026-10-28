@@ -35,6 +35,8 @@ type AdminGrant = {
   note: string | null;
   paidUntil: string;
   createdAt: string;
+  /** The 'manual' payment that records its money, if it was paid for. */
+  paymentOrderId?: string | null;
 };
 type AdminUser = {
   id: string;
@@ -177,6 +179,7 @@ const methodLabel = (value: string) =>
       other: 'Other',
       razorpay: 'Razorpay',
       paypal: 'PayPal',
+      manual: 'Manual',
     }) as Record<string, string>
   )[value] ?? value;
 const money = (amount: number, currency: string, compact = false) => {
@@ -1268,6 +1271,7 @@ function PlanMix({ plans }: { plans: { plan: string; count: number }[] }) {
     'half-year': '6 months',
     yearly: '12 months',
     legacy: 'Older monthly',
+    manual: 'Manual grants',
   };
   const total = plans.reduce((sum, item) => sum + item.count, 0);
   if (!total) return <p className="admin-muted">No Premium plans sold yet.</p>;
@@ -1506,6 +1510,13 @@ function UserDrawer({
   const [months, setMonths] = useState(3);
   const [days, setDays] = useState(0);
   const [method, setMethod] = useState<GrantMethod>('complimentary');
+  const [amount, setAmount] = useState('');
+  const [currency, setCurrency] = useState<'USD' | 'INR'>('USD');
+  const [prices, setPrices] = useState<Record<
+    'USD' | 'INR',
+    { months: number; bonusMonths: number; bonusDays: number; amount: number }[]
+  > | null>(null);
+  const paid = method !== 'complimentary';
   const [reference, setReference] = useState('');
   const [note, setNote] = useState('');
   const [error, setError] = useState('');
@@ -1514,6 +1525,17 @@ function UserDrawer({
   const premium = statusFor(user, now) === 'Premium';
   const isSelf = user.email === me;
   const path = `/admin/users/${encodeURIComponent(user.id)}`;
+
+  // Current plan prices, to suggest the amount for a matching term.
+  useEffect(() => {
+    api<{ plans: NonNullable<typeof prices> }>('/billing/prices')
+      .then((result) => setPrices(result.plans))
+      .catch(() => {});
+  }, []);
+  const suggested = prices?.[currency].find(
+    (plan) =>
+      plan.months + plan.bonusMonths === months && plan.bonusDays === days,
+  );
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -1688,8 +1710,14 @@ function UserDrawer({
                   method,
                   ...(reference.trim() ? { reference: reference.trim() } : {}),
                   ...(note.trim() ? { note: note.trim() } : {}),
+                  ...(paid ? { amount: Number(amount), currency } : {}),
                 }),
-              () => onChanged(`Premium granted to ${user.email}.`),
+              () =>
+                onChanged(
+                  paid
+                    ? `Premium granted to ${user.email}, and ${money(Math.round(Number(amount) * 100), currency)} added to revenue.`
+                    : `Premium granted to ${user.email}.`,
+                ),
             );
           }}
         >
@@ -1751,6 +1779,50 @@ function UserDrawer({
               </select>
             </label>
           </div>
+          {paid && (
+            <div className="admin-grant-duration grant-money">
+              <label>
+                Amount received
+                <input
+                  type="number"
+                  min="1"
+                  step="0.01"
+                  inputMode="decimal"
+                  value={amount}
+                  onChange={(event) => setAmount(event.target.value)}
+                  placeholder={suggested ? String(suggested.amount / 100) : '0'}
+                  required
+                />
+              </label>
+              <label>
+                Currency
+                <select
+                  value={currency}
+                  onChange={(event) =>
+                    setCurrency(event.target.value as 'USD' | 'INR')
+                  }
+                >
+                  <option value="USD">$ USD</option>
+                  <option value="INR">₹ INR</option>
+                </select>
+              </label>
+              <p className="grant-money-note">
+                Added to revenue as a manual payment.
+                {suggested && !amount && (
+                  <>
+                    {' '}
+                    <button
+                      type="button"
+                      className="admin-link"
+                      onClick={() => setAmount(String(suggested.amount / 100))}
+                    >
+                      Use plan price {money(suggested.amount, currency)}
+                    </button>
+                  </>
+                )}
+              </p>
+            </div>
+          )}
           <label>
             <span>
               Reference <span className="admin-optional">Optional</span>
@@ -1776,7 +1848,11 @@ function UserDrawer({
           </label>
           <button
             className="button primary wide"
-            disabled={Boolean(working) || (months === 0 && days === 0)}
+            disabled={
+              Boolean(working) ||
+              (months === 0 && days === 0) ||
+              (paid && !(Number(amount) >= 1))
+            }
           >
             {working === 'grant'
               ? 'Saving…'
@@ -1843,6 +1919,14 @@ function UserDrawer({
                       </span>
                       {grant.note && <span>{grant.note}</span>}
                       {grant.reference && <span>Ref: {grant.reference}</span>}
+                      {grant.paymentOrderId ? (
+                        <span className="grant-paid">Payment recorded</span>
+                      ) : grant.method !== 'complimentary' ? (
+                        <AddGrantPayment
+                          grantId={grant.id}
+                          onAdded={(text) => onChanged(text)}
+                        />
+                      ) : null}
                     </div>
                     <div>
                       <span>Through</span>
@@ -2050,5 +2134,80 @@ function AddUserDialog({
         </form>
       </section>
     </div>
+  );
+}
+
+/** Records the money for an earlier paid grant that was saved without it. */
+function AddGrantPayment({
+  grantId,
+  onAdded,
+}: {
+  grantId: string;
+  onAdded: (text: string) => Promise<void>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [amount, setAmount] = useState('');
+  const [currency, setCurrency] = useState<'USD' | 'INR'>('USD');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  if (!open)
+    return (
+      <button
+        type="button"
+        className="admin-link grant-add-payment"
+        onClick={() => setOpen(true)}
+      >
+        No payment recorded · Add payment
+      </button>
+    );
+  return (
+    <form
+      className="grant-payment-form"
+      onSubmit={async (event) => {
+        event.preventDefault();
+        setBusy(true);
+        setError('');
+        try {
+          await send(
+            `/admin/grants/${encodeURIComponent(grantId)}/payment`,
+            'POST',
+            { amount: Number(amount), currency },
+          );
+          await onAdded(
+            `${money(Math.round(Number(amount) * 100), currency)} added to revenue.`,
+          );
+        } catch (caught) {
+          setError(caught instanceof Error ? caught.message : 'Could not add.');
+          setBusy(false);
+        }
+      }}
+    >
+      <input
+        type="number"
+        min="1"
+        step="0.01"
+        inputMode="decimal"
+        value={amount}
+        onChange={(event) => setAmount(event.target.value)}
+        placeholder="Amount"
+        aria-label="Amount received"
+        required
+      />
+      <select
+        value={currency}
+        onChange={(event) => setCurrency(event.target.value as 'USD' | 'INR')}
+        aria-label="Currency"
+      >
+        <option value="USD">$ USD</option>
+        <option value="INR">₹ INR</option>
+      </select>
+      <button
+        className="button primary small"
+        disabled={busy || !(Number(amount) >= 1)}
+      >
+        {busy ? 'Adding…' : 'Add'}
+      </button>
+      {error && <span className="grant-payment-error">{error}</span>}
+    </form>
   );
 }
