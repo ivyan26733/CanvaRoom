@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 /**
  * One small chart per measure, all on the same time axis, so a spike in one
@@ -169,6 +169,22 @@ export function PerfTrends({
   bucketHours: number;
 }) {
   const [hover, setHover] = useState<number | null>(null);
+  const [view, setView] = useState<'combined' | 'separate'>('combined');
+  useEffect(() => {
+    try {
+      if (localStorage.getItem(VIEW_KEY) === 'separate') setView('separate');
+    } catch {
+      // Storage blocked: keep the combined chart.
+    }
+  }, []);
+  const choose = (next: 'combined' | 'separate') => {
+    setView(next);
+    try {
+      localStorage.setItem(VIEW_KEY, next);
+    } catch {
+      // Storage blocked: the choice lasts until the page reloads.
+    }
+  };
   if (!points.length) return null;
   const every =
     bucketHours >= 24
@@ -180,22 +196,35 @@ export function PerfTrends({
     <section className="admin-card perf-trends">
       <div className="admin-card-head">
         <h2>Trends</h2>
-        <span className="admin-secondary">
-          {every} · hover any chart to compare the same moment on all of them
-        </span>
+        <span className="admin-secondary">{every}</span>
+        <div className="admin-segment perf-trend-view">
+          {(['combined', 'separate'] as const).map((option) => (
+            <button
+              key={option}
+              className={view === option ? 'is-active' : ''}
+              onClick={() => choose(option)}
+            >
+              {option === 'combined' ? 'One chart' : 'Separate'}
+            </button>
+          ))}
+        </div>
       </div>
-      <div className="perf-trend-grid" onMouseLeave={() => setHover(null)}>
-        {CHARTS.map((chart) => (
-          <TrendChart
-            key={chart.title}
-            chart={chart}
-            points={points}
-            bucketHours={bucketHours}
-            hover={hover}
-            onHover={setHover}
-          />
-        ))}
-      </div>
+      {view === 'combined' ? (
+        <CombinedTrend points={points} bucketHours={bucketHours} />
+      ) : (
+        <div className="perf-trend-grid" onMouseLeave={() => setHover(null)}>
+          {CHARTS.map((chart) => (
+            <TrendChart
+              key={chart.title}
+              chart={chart}
+              points={points}
+              bucketHours={bucketHours}
+              hover={hover}
+              onHover={setHover}
+            />
+          ))}
+        </div>
+      )}
     </section>
   );
 }
@@ -364,5 +393,266 @@ function TrendChart({
         </div>
       )}
     </figure>
+  );
+}
+
+const VIEW_KEY = 'canvaroom.admin.perfTrendView';
+
+type Measure = {
+  key: keyof TrendPoint;
+  label: string;
+  /** Categorical slot, coloured by --trend-N (validated light and dark). */
+  slot: number;
+  format: (value: number) => string;
+  total: (points: TrendPoint[]) => string;
+};
+
+/** Fixed order: a measure keeps its colour whichever lines are switched off. */
+const MEASURES: Measure[] = [
+  {
+    key: 'minutes',
+    label: 'Board time',
+    slot: 1,
+    format: (value) => `${value} min`,
+    total: (points) => `${sum(points, 'minutes')} min`,
+  },
+  {
+    key: 'rttMedian',
+    label: 'Typical connection',
+    slot: 2,
+    format: (value) => `${value} ms`,
+    total: CHARTS[1]!.total,
+  },
+  {
+    key: 'poorPercent',
+    label: 'Poor minutes',
+    slot: 3,
+    format: (value) => `${value}%`,
+    total: CHARTS[2]!.total,
+  },
+  {
+    key: 'frozenMs',
+    label: 'Screen freezes',
+    slot: 4,
+    format: (value) => `${(value / 1000).toFixed(1)} s`,
+    total: CHARTS[3]!.total,
+  },
+  {
+    key: 'reconnects',
+    label: 'Reconnects',
+    slot: 5,
+    format: (value) => String(value),
+    total: (points) => String(sum(points, 'reconnects')),
+  },
+  {
+    key: 'errors',
+    label: 'Script errors',
+    slot: 6,
+    format: (value) => String(value),
+    total: CHARTS[5]!.total,
+  },
+  {
+    key: 'ours',
+    label: 'Our side',
+    slot: 7,
+    format: (value) => `${value} min`,
+    total: (points) => `${sum(points, 'ours')} min`,
+  },
+  {
+    key: 'user',
+    label: 'User side',
+    slot: 8,
+    format: (value) => `${value} min`,
+    total: (points) => `${sum(points, 'user')} min`,
+  },
+];
+
+const C_WIDTH = 960;
+const C_HEIGHT = 240;
+
+/**
+ * Every measure on one chart. Their units differ (minutes, ms, %, seconds,
+ * counts), so each line is drawn against its own peak in the period: the top
+ * of the chart is "the most it reached". Lines rising together moved
+ * together; the real values are in the legend and on hover.
+ */
+function CombinedTrend({
+  points,
+  bucketHours,
+}: {
+  points: TrendPoint[];
+  bucketHours: number;
+}) {
+  const [hidden, setHidden] = useState<Set<keyof TrendPoint>>(new Set());
+  const [hover, setHover] = useState<number | null>(null);
+  const [focus, setFocus] = useState<keyof TrendPoint | null>(null);
+  const slot = C_WIDTH / points.length;
+  const x = (index: number) => index * slot + slot / 2;
+  const hovered = hover === null ? null : points[hover];
+  const peak = (key: keyof TrendPoint) =>
+    Math.max(0, ...points.map((point) => Number(point[key]) || 0));
+
+  return (
+    <div className="perf-combined">
+      <div className="perf-combined-legend" role="group" aria-label="Measures">
+        {MEASURES.map((measure) => {
+          const off = hidden.has(measure.key);
+          const value = hovered?.[measure.key];
+          return (
+            <button
+              key={measure.key}
+              type="button"
+              aria-pressed={!off}
+              className={`perf-combined-chip ${off ? 'is-off' : ''}`}
+              onClick={() =>
+                setHidden((current) => {
+                  const next = new Set(current);
+                  if (next.has(measure.key)) next.delete(measure.key);
+                  else next.add(measure.key);
+                  return next;
+                })
+              }
+              title={off ? 'Show this line' : 'Hide this line'}
+              onMouseEnter={() => setFocus(off ? null : measure.key)}
+              onMouseLeave={() => setFocus(null)}
+              onFocus={() => setFocus(off ? null : measure.key)}
+              onBlur={() => setFocus(null)}
+            >
+              <i style={{ background: `var(--trend-${measure.slot})` }} />
+              <span>{measure.label}</span>
+              <strong>
+                {hovered
+                  ? value === null || value === undefined
+                    ? '—'
+                    : measure.format(Number(value))
+                  : measure.total(points)}
+              </strong>
+            </button>
+          );
+        })}
+      </div>
+      <div className="perf-combined-plot" onMouseLeave={() => setHover(null)}>
+        <span className="perf-combined-scale">
+          Each line against its own peak
+          {hovered && <> · {tickLabel(hovered.at, bucketHours)}</>}
+        </span>
+        <svg
+          viewBox={`0 0 ${C_WIDTH} ${C_HEIGHT}`}
+          preserveAspectRatio="none"
+          role="img"
+          aria-label={`Trends: ${MEASURES.map((m) => `${m.label} ${m.total(points)}`).join(', ')}.`}
+        >
+          {[0.25, 0.5, 0.75].map((share) => (
+            <line
+              key={share}
+              x1="0"
+              x2={C_WIDTH}
+              y1={C_HEIGHT * share}
+              y2={C_HEIGHT * share}
+              className="perf-combined-grid"
+              vectorEffect="non-scaling-stroke"
+            />
+          ))}
+          <line
+            x1="0"
+            x2={C_WIDTH}
+            y1={C_HEIGHT}
+            y2={C_HEIGHT}
+            className="admin-chart-axis"
+            vectorEffect="non-scaling-stroke"
+          />
+          {MEASURES.filter((measure) => !hidden.has(measure.key))
+            .sort((a, b) => Number(a.key === focus) - Number(b.key === focus))
+            .map((measure) => {
+              const top = peak(measure.key);
+              if (!top) return null;
+              const y = (value: number) =>
+                C_HEIGHT - (value / top) * (C_HEIGHT - 8) - 1;
+              const path = points
+                .map((point, index) =>
+                  point[measure.key] === null
+                    ? null
+                    : `${x(index)},${y(Number(point[measure.key]) || 0)}`,
+                )
+                .reduce<string[][]>(
+                  (runs, spot) => {
+                    if (spot === null) runs.push([]);
+                    else runs.at(-1)!.push(spot);
+                    return runs;
+                  },
+                  [[]],
+                )
+                .filter((run) => run.length)
+                .map((run) =>
+                  run.length === 1 ? `M${run[0]}h0.01` : `M${run.join('L')}`,
+                )
+                .join('');
+              return (
+                <path
+                  key={measure.key}
+                  d={path}
+                  fill="none"
+                  stroke={`var(--trend-${measure.slot})`}
+                  strokeWidth={focus === measure.key ? 3 : 2}
+                  opacity={focus && focus !== measure.key ? 0.12 : 1}
+                  className="perf-combined-line"
+                  strokeLinejoin="round"
+                  strokeLinecap="round"
+                  vectorEffect="non-scaling-stroke"
+                />
+              );
+            })}
+          {hover !== null && (
+            <line
+              x1={x(hover)}
+              x2={x(hover)}
+              y1="0"
+              y2={C_HEIGHT}
+              className="perf-trend-cursor"
+              vectorEffect="non-scaling-stroke"
+            />
+          )}
+          {points.map((point, index) => (
+            <rect
+              key={point.at}
+              x={index * slot}
+              y="0"
+              width={slot}
+              height={C_HEIGHT}
+              fill="transparent"
+              onMouseEnter={() => setHover(index)}
+            />
+          ))}
+        </svg>
+        {hovered && (
+          <div className="perf-combined-dots" aria-hidden="true">
+            {MEASURES.filter(
+              (measure) =>
+                !hidden.has(measure.key) &&
+                hovered[measure.key] !== null &&
+                peak(measure.key) > 0,
+            ).map((measure) => (
+              <i
+                key={measure.key}
+                style={{
+                  left: `${((hover! + 0.5) / points.length) * 100}%`,
+                  top: `${100 - ((Number(hovered[measure.key]) || 0) / peak(measure.key)) * ((C_HEIGHT - 8) / C_HEIGHT) * 100}%`,
+                  background: `var(--trend-${measure.slot})`,
+                }}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+      <div className="perf-trend-axis">
+        <span>{tickLabel(points[0]!.at, bucketHours)}</span>
+        <span>
+          {hovered
+            ? 'Values above are for this moment'
+            : 'Hover to read every measure at one moment · click a measure to hide it'}
+        </span>
+        <span>{tickLabel(points.at(-1)!.at, bucketHours)}</span>
+      </div>
+    </div>
   );
 }

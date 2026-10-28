@@ -2064,3 +2064,113 @@ button.admin-kpi:hover {
   color: var(--ink-2);
   font-size: 11px;
 }
+
+/* ---- Trends on one chart ---- */
+
+.admin-shell {
+  --trend-1: #2a78d6;
+  --trend-2: #eb6834;
+  --trend-3: #1baf7a;
+  --trend-4: #eda100;
+  --trend-5: #e87ba4;
+  --trend-6: #008300;
+  --trend-7: #4a3aa7;
+  --trend-8: #e34948;
+}
+.dark .admin-shell {
+  --trend-1: #3987e5;
+  --trend-2: #d95926;
+  --trend-3: #199e70;
+  --trend-4: #c98500;
+  --trend-5: #d55181;
+  --trend-6: #008300;
+  --trend-7: #9085e9;
+  --trend-8: #e66767;
+}
+.perf-trend-view {
+  margin-left: auto;
+}
+.perf-combined {
+  display: grid;
+  gap: 10px;
+}
+.perf-combined-legend {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 6px;
+}
+.perf-combined-chip {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 2px 7px;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-2);
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.perf-combined-chip i {
+  width: 14px;
+  height: 3px;
+  border-radius: 2px;
+}
+.perf-combined-chip strong {
+  grid-column: 2;
+  color: var(--ink);
+  font: 700 14px var(--display);
+  font-variant-numeric: tabular-nums;
+}
+.perf-combined-chip.is-off {
+  opacity: 0.45;
+}
+.perf-combined-chip.is-off span {
+  text-decoration: line-through;
+}
+.perf-combined-plot {
+  position: relative;
+  padding-top: 20px;
+}
+.perf-combined-scale {
+  position: absolute;
+  top: 0;
+  left: 0;
+  color: var(--ink-3);
+  font-size: 11px;
+}
+.perf-combined-plot svg {
+  display: block;
+  width: 100%;
+  height: 240px;
+  overflow: visible;
+}
+.perf-combined-grid {
+  stroke: var(--line);
+  stroke-width: 1;
+  stroke-dasharray: 2 4;
+}
+.perf-combined-dots {
+  position: absolute;
+  inset: 20px 0 0;
+  pointer-events: none;
+}
+.perf-combined-dots i {
+  position: absolute;
+  width: 9px;
+  height: 9px;
+  border: 2px solid var(--surface);
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+}
+@media (max-width: 640px) {
+  .perf-combined-plot svg {
+    height: 200px;
+  }
+}
+.perf-combined-line {
+  transition: opacity 0.15s ease;
+}
