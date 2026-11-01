@@ -172,24 +172,26 @@ export function useBoardMetrics(options: {
     visible.current.ms = 0;
     // A minute spent mostly in another tab says nothing about the board.
     if (visibleMs < MIN_VISIBLE_MS && !body.errors && !body.reconnects) return;
-    const json = JSON.stringify(body);
-    try {
-      if (leaving && navigator.sendBeacon)
-        navigator.sendBeacon(
-          '/api/telemetry',
-          new Blob([json], { type: 'application/json' }),
-        );
-      else
-        void fetch('/api/telemetry', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: json,
-          keepalive: true,
-          credentials: 'same-origin',
-        }).catch(() => {});
-    } catch {
-      // Reporting must never get in the way of the board.
-    }
+    // Temporarily disabled: keep collecting local metrics and dispatching
+    // BOARD_TIME_EVENT above, but do not send telemetry to the server.
+    // const json = JSON.stringify(body);
+    // try {
+    //   if (leaving && navigator.sendBeacon)
+    //     navigator.sendBeacon(
+    //       '/api/telemetry',
+    //       new Blob([json], { type: 'application/json' }),
+    //     );
+    //   else
+    //     void fetch('/api/telemetry', {
+    //       method: 'POST',
+    //       headers: { 'Content-Type': 'application/json' },
+    //       body: json,
+    //       keepalive: true,
+    //       credentials: 'same-origin',
+    //     }).catch(() => {});
+    // } catch {
+    //   // Reporting must never get in the way of the board.
+    // }
   });
 
   useEffect(() => {
